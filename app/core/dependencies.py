@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
+from uuid import UUID
 
 from app.core.config import settings
 from app.db.session import get_db
@@ -25,7 +26,7 @@ def get_current_user(
 
   return user
 
-def require_company_member(user: User, company_id: int):
+def require_company_member(user: User, company_id: UUID):
   role = user.role_in_company(company_id)
   if role is None:
     raise HTTPException(
@@ -34,11 +35,11 @@ def require_company_member(user: User, company_id: int):
     )
   return role
 
-def require_company_admin(user: User, company_id: int):
+def require_company_manager(user: User, company_id: UUID):
   role = require_company_member(user, company_id)
-  if role != "admin":
+  if role != "manager":
     raise HTTPException(
       status_code=status.HTTP_403_FORBIDDEN,
-      detail="Admin privileges required",
+      detail="Manager privileges required",
     )
 

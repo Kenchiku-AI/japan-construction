@@ -103,6 +103,7 @@ async def signup(
     email=user_in.email,
     hashed_password=hash_password(user_in.password),
     is_active=True,
+    role="user"
   )
 
   db.add(user)

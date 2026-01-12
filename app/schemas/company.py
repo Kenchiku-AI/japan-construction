@@ -5,7 +5,7 @@ from typing import List
 from pydantic import BaseModel, EmailStr
 
 class CompanyRole(str, Enum):
-  admin = "admin"
+  manager = "manager"
   member = "member"
 
 class CompanyBase(BaseModel):
@@ -21,14 +21,14 @@ class CompanyUserBase(BaseModel):
   role: CompanyRole
 
 class CompanyUserRead(CompanyUserBase):
-  user_id: int
+  user_id: str
   email: EmailStr
 
   class Config:
     from_attributes = True
 
 class CompanyRead(CompanyBase):
-  id: int
+  id: str
   created_at: datetime
   updated_at: datetime
   users: List[CompanyUserRead] = []
