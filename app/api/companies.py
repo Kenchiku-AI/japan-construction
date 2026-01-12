@@ -9,6 +9,7 @@ from app.schemas.company import CompanyCreate, CompanyRead
 from app.schemas.project import ProjectCreate, ProjectRead
 from app.schemas.user import UserRead
 from app.core.dependencies import get_current_user, require_company_member, require_company_manager
+from app.core.email import send_project_request_email
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -85,12 +86,32 @@ def create_project(
   db: Session = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  require_company_manager(db, current_user, company_id)
+  company = db.get(Company, company_id)
+  if not company:
+    raise HTTPException(status_code=404, detail="Company not found")
+  
+  if current_user.role == "admin":
+    status_value = ProjectStatus.active
+  else:
+    require_company_manager(db, current_user, company_id)
+
+    if company.can_create_projects:
+      status_value = ProjectStatus.active
+    else:
+      status_value = ProjectStatus.requested
+
+      send_project_request_email(
+        company_name=company.name,
+        project_name=project.name,
+        requested_by=current_user.email,
+      )
 
   project = Project(
     **project_in.model_dump(),
     company_id=company_id,
+    status=status_value,
   )
+
   db.add(project)
   db.commit()
   db.refresh(project)

@@ -38,3 +38,14 @@ def send_invitation_email(email: str, company_name: str, invite_token: str) -> N
   except Exception as e:
     print(f"Error sending email to {email}: {e}")
     raise
+
+def send_project_request_email(company_name: str, project_name: str, requested_by: str):
+  if not settings.SENDGRID_API_KEY:
+    raise RuntimeError("SENDGRID_API_KEY environment variable is not set")
+
+  subject = f"New Project Request: {company_name}"
+  body = f"""
+  Company: {company_name}
+  Project: {project_name}
+  Requested by: {requested_by}
+  """

@@ -11,7 +11,7 @@ class CompanyRole(str, Enum):
 class InvitationBase(BaseModel):
   email: EmailStr
   company_id: str
-  role: CompanyRole = CompanyRole.member
+  role: CompanyRole
 
 class InvitationCreate(InvitationBase):
   pass

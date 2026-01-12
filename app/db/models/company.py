@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, String, DateTime
+from sqlalchemy import Column, String, DateTime, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
@@ -12,6 +12,7 @@ class Company(Base):
 
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
   name = Column(String, nullable=False, index=True)
+  can_create_projects = Column(Boolean, nullable=False, default=False)
 
   company_users = relationship(
     "CompanyUser",
