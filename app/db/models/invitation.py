@@ -12,8 +12,8 @@ class Invitation(Base):
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
   email = Column(String, index=True, nullable=False)
   token_hash = Column(String, unique=True, nullable=False)
-  company_id = Column(UUID(as_uuid=True), ForeignKey("company.id"), nullable=False)
-  role = Column(String, default="member")
+  company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
+  role = Column(String, default="member", nullable=False)
 
   expires_at = Column(DateTime, nullable=False)
   created_at = Column(DateTime, default=datetime.utcnow)

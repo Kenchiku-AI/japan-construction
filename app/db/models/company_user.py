@@ -13,8 +13,8 @@ class CompanyUser(Base):
   __tablename__ = "company_users"
 
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-  user_id = Column(UUID(as_uuid=True), ForeignKey("user.id"), primary_key=True)
-  company_id = Column(UUID(as_uuid=True), ForeignKey("company.id"), primary_key=True)
+  user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True)
+  company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), primary_key=True)
   role = Column(String, default="member", nullable=False)
 
   created_at = Column(DateTime, default=datetime.utcnow)

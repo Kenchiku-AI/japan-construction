@@ -55,6 +55,7 @@ def invite_user(
     token=hashed_token,
     user_id=user.id,
     company_id=company.id,
+    role=payload.role,
     created_by=current_user.id,
     expires_at=expires_at
   )
@@ -68,6 +69,7 @@ def invite_user(
     id=invitation.id,
     email=user.email,
     company_id=company.id,
+    role=invitation.role,
     expires_at=expires_at,
     created_by=current_user.id
   )
@@ -90,7 +92,11 @@ def accept_invitation(token: str, current_user: User = Depends(get_current_user)
     CompanyUser.company_id == company.id
   ).first()
   if not existing_relation:
-    relation = CompanyUser(user_id=user.id, company_id=company.id, role="user")
+    relation = CompanyUser(
+      user_id=user.id, 
+      company_id=company.id, 
+      role=invitation.role
+    )
     db.add(relation)
 
   if not user.is_active:
@@ -104,6 +110,7 @@ def accept_invitation(token: str, current_user: User = Depends(get_current_user)
     id=invitation.id,
     email=user.email,
     company_id=company.id,
+    role=invitation.role,
     expires_at=invitation.expires_at,
     created_by=invitation.created_by
   )
