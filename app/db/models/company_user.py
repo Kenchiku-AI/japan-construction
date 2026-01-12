@@ -1,5 +1,8 @@
-from sqlalchemy import Column, Integer, ForeignKey, String, DateTime, UniqueConstraint
+import uuid
+
+from sqlalchemy import Column, ForeignKey, String, DateTime, UniqueConstraint
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
 
 from app.db.base import Base
@@ -9,9 +12,9 @@ from app.db.models.company import Company
 class CompanyUser(Base):
   __tablename__ = "company_users"
 
-  id = Column(Integer, primary_key=True, index=True)
-  company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
-  user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+  id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+  user_id = Column(UUID(as_uuid=True), ForeignKey("user.id"), primary_key=True)
+  company_id = Column(UUID(as_uuid=True), ForeignKey("company.id"), primary_key=True)
   role = Column(String, default="member", nullable=False)
 
   created_at = Column(DateTime, default=datetime.utcnow)

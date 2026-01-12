@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
+from uuid import UUID
 
 from app.db.session import get_db
 from app.db.models import Company, User, CompanyUser
 from app.schemas.company import CompanyCreate, CompanyRead
 from app.schemas.project import ProjectCreate, ProjectRead
 from app.schemas.user import UserRead
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, require_company_member, require_company_manager
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -23,9 +24,9 @@ def create_company(
   db.refresh(company)
 
   company_user = CompanyUser(
-      company_id=company.id,
-      user_id=current_user.id,
-      role="admin"
+    company_id=company.id,
+    user_id=current_user.id,
+    role="manager"
   )
   db.add(company_user)
   db.commit()
@@ -34,7 +35,7 @@ def create_company(
 
 @router.get("/{company_id}", response_model=CompanyRead)
 def get_company(
-  company_id: int,
+  company_id: UUID,
   current_user: User = Depends(get_current_user),
   db: Session = Depends(get_db),
 ):
@@ -56,7 +57,7 @@ def get_company(
 
 @router.get("/{company_id}/users", response_model=List[UserRead])
 def list_company_users(
-  company_id: int,
+  company_id: UUID,
   current_user: User = Depends(get_current_user),
   db: Session = Depends(get_db),
 ):
@@ -79,12 +80,12 @@ def list_company_users(
   status_code=201,
 )
 def create_project(
-  company_id: int,
+  company_id: UUID,
   project_in: ProjectCreate,
   db: Session = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  require_company_admin(db, current_user, company_id)
+  require_company_manager(db, current_user, company_id)
 
   project = Project(
     **project_in.model_dump(),
@@ -100,7 +101,7 @@ def create_project(
   response_model=list[ProjectRead],
 )
 def list_company_projects(
-  company_id: int,
+  company_id: UUID,
   db: Session = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):

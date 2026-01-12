@@ -12,8 +12,8 @@ class ProjectUpdate(ProjectBase):
   pass
 
 class ProjectRead(ProjectBase):
-  id: int
-  company_id: int
+  id: str
+  company_id: str
   created_at: datetime
   updated_at: datetime
 

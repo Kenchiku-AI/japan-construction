@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from uuid import UUID
 
 from app.db.session import get_db
 from app.db.models import Project, Company
 from app.schemas.project import ProjectUpdate, ProjectRead
-from app.core.dependencies import require_company_member, require_company_admin
+from app.core.dependencies import require_company_member, require_company_manager
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -13,7 +14,7 @@ router = APIRouter(prefix="/projects", tags=["Projects"])
   response_model=ProjectRead,
 )
 def get_project(
-  project_id: int,
+  project_id: UUID,
   db: Session = Depends(get_db),
 ):
   project = db.get(Project, project_id)
@@ -28,7 +29,7 @@ def get_project(
   response_model=ProjectRead,
 )
 def update_project(
-  project_id: int,
+  project_id: UUID,
   project_in: ProjectUpdate,
   db: Session = Depends(get_db),
 ):
@@ -52,14 +53,14 @@ def update_project(
   status_code=status.HTTP_204_NO_CONTENT,
 )
 def delete_project(
-  project_id: int,
+  project_id: UUID,
   db: Session = Depends(get_db),
 ):
   project = db.get(Project, project_id)
   if not project:
     raise HTTPException(status_code=404, detail="Project not found")
 
-  require_company_admin(project.company_id)(db=db)
+  require_company_member(project.company_id)(db=db)
 
   db.delete(project)
   db.commit()

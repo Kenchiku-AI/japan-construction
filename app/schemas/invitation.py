@@ -5,12 +5,12 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional
 
 class CompanyRole(str, Enum):
-  admin = "admin"
+  manager = "manager"
   member = "member"
 
 class InvitationBase(BaseModel):
   email: EmailStr
-  company_id: int
+  company_id: str
   role: CompanyRole = CompanyRole.member
 
 class InvitationCreate(InvitationBase):
@@ -20,9 +20,9 @@ class InvitationAccept(BaseModel):
   token: str
 
 class InvitationRead(BaseModel):
-  id: int
+  id: str
   email: EmailStr
-  company_id: int
+  company_id: str
   role: CompanyRole
   accepted: bool
   created_at: datetime
