@@ -1,36 +1,53 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
-from app.db.session import get_db
-from app.db.models import Company, User, CompanyUser
-from app.schemas.company import CompanyCreate, CompanyRead
-from app.schemas.project import ProjectCreate, ProjectRead
-from app.schemas.user import UserRead
+from app.api.invitations import invite_user
 from app.core.dependencies import get_current_user, require_company_member, require_company_manager
 from app.core.email import send_project_request_email
+from app.db.session import get_db
+from app.db.models import Company, User, CompanyUser
+from app.schemas.company import CompanyCreate, CompanyRead, CompanyUserBase
+from app.schemas.invitation import InvitationCreate
+from app.schemas.project import ProjectCreate, ProjectRead
+from app.schemas.user import UserRead
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
-@router.post("/", response_model=CompanyRead)
+@router.post(
+  "/", 
+  response_model=CompanyRead, 
+  status_code=status.HTTP_201_CREATED
+)
 def create_company(
   company_in: CompanyCreate,
   current_user: User = Depends(get_current_user),
   db: Session = Depends(get_db),
 ):
+  if current_user.role != "admin":
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Only admins can create companies",
+    )
+
   company = Company(name=company_in.name)
   db.add(company)
   db.commit()
   db.refresh(company)
 
-  company_user = CompanyUser(
-    company_id=company.id,
-    user_id=current_user.id,
-    role="manager"
-  )
-  db.add(company_user)
-  db.commit()
+  if company_in.manager_email:
+    invitation_payload = InvitationCreate(
+      email=company_in.manager_email,
+      company_id=company.id,
+      role="manager",
+    )
+
+    invite_user(
+      payload=invitation_payload,
+      current_user=current_user,
+      db=db,
+    )
 
   return company
 
@@ -78,7 +95,7 @@ def list_company_users(
 @router.post(
   "/{company_id}/projects",
   response_model=ProjectRead,
-  status_code=201,
+  status_code=status.HTTP_201_CREATED,
 )
 def create_project(
   company_id: UUID,
@@ -134,3 +151,45 @@ def list_company_projects(
     .all()
   )
 
+@router.put(
+  "/{company_id}/users/{user_id}/role",
+  status_code=status.HTTP_204_NO_CONTENT,
+)
+def update_company_user_role(
+  company_id: UUID,
+  user_id: UUID,
+  payload: CompanyUserBase,
+  db: Session = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  company = db.get(Company, company_id)
+  if not company:
+    raise HTTPException(status_code=404, detail="Company not found")
+
+  if current_user.role != "admin":
+    manager_relation = db.query(CompanyUser).filter(
+      CompanyUser.company_id == company_id,
+      CompanyUser.user_id == current_user.id,
+      CompanyUser.role == "manager",
+    ).first()
+
+    if not manager_relation:
+      raise HTTPException(
+        status_code=403,
+        detail="Forbidden: must be company manager or admin",
+      )
+
+  company_user = db.query(CompanyUser).filter(
+    CompanyUser.company_id == company_id,
+    CompanyUser.user_id == user_id,
+  ).first()
+
+  if not company_user:
+    raise HTTPException(
+      status_code=404,
+      detail="User is not a member of this company",
+    )
+
+  company_user.role = payload.role
+
+  db.commit()

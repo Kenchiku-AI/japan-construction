@@ -27,13 +27,15 @@ def invite_user(
   if not company:
     raise HTTPException(status_code=404, detail="Company not found")
 
-  manager_relation = db.query(CompanyUser).filter(
-    CompanyUser.user_id == current_user.id,
-    CompanyUser.company_id == company.id,
-    CompanyUser.role == "manager"
-  ).first()
-  if not manager_relation:
-    raise HTTPException(status_code=403, detail="Forbidden: must be manager of this company")
+  if current_user.role != "admin":
+    manager_relation = db.query(CompanyUser).filter(
+      CompanyUser.user_id == current_user.id,
+      CompanyUser.company_id == company.id,
+      CompanyUser.role == "manager"
+    ).first()
+    
+    if not manager_relation:
+      raise HTTPException(status_code=403, detail="Forbidden: must be manager of this company")
 
   user = db.query(User).filter(User.email == payload.email).first()
 

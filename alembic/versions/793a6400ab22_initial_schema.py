@@ -1,8 +1,8 @@
-"""add projects
+"""initial schema
 
-Revision ID: 935f1f3fa212
+Revision ID: 793a6400ab22
 Revises: 
-Create Date: 2026-01-12 07:42:18.735731
+Create Date: 2026-01-12 09:50:24.147920
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '935f1f3fa212'
+revision: str = '793a6400ab22'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -24,6 +24,7 @@ def upgrade() -> None:
     op.create_table('companies',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('name', sa.String(), nullable=False),
+    sa.Column('can_create_projects', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('updated_at', sa.DateTime(), nullable=True),
     sa.PrimaryKeyConstraint('id')
@@ -60,7 +61,7 @@ def upgrade() -> None:
     sa.Column('email', sa.String(), nullable=False),
     sa.Column('token_hash', sa.String(), nullable=False),
     sa.Column('company_id', sa.UUID(), nullable=False),
-    sa.Column('role', sa.String(), nullable=True),
+    sa.Column('role', sa.String(), nullable=False),
     sa.Column('expires_at', sa.DateTime(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.ForeignKeyConstraint(['company_id'], ['companies.id'], ),
@@ -73,6 +74,7 @@ def upgrade() -> None:
     sa.Column('name', sa.String(), nullable=False),
     sa.Column('description', sa.String(), nullable=True),
     sa.Column('company_id', sa.UUID(), nullable=False),
+    sa.Column('status', sa.Enum('active', 'completed', 'requested', name='project_status'), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('updated_at', sa.DateTime(), nullable=True),
     sa.ForeignKeyConstraint(['company_id'], ['companies.id'], ),
