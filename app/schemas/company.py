@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, EmailStr
 
@@ -12,6 +12,7 @@ class CompanyBase(BaseModel):
   name: str
 
 class CompanyCreate(CompanyBase):
+  manager_email: Optional[EmailStr] = None
   pass
 
 class CompanyUpdate(BaseModel):
