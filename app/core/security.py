@@ -11,9 +11,10 @@ from fastapi.security import OAuth2PasswordBearer
 
 from app.core.config import settings
 from app.db.models.user import User
-from app.db.session import SessionLocal
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 def hash_password(password: str) -> str:
   return pwd_context.hash(password)
@@ -51,21 +52,6 @@ def decode_token(token: str) -> Dict[str, Any]:
       detail="Could not validate token",
       headers={"WWW-Authenticate": "Bearer"},
     )
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
-
-def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
-  payload = decode_token(token)
-  username: str = payload.get("sub")
-  if username is None:
-    raise HTTPException(status_code=401, detail="Invalid authentication credentials")
-  
-  db = SessionLocal()
-  user = db.query(User).filter(User.username == username).first()
-  db.close()
-  if not user:
-    raise HTTPException(status_code=401, detail="User not found")
-  return user
 
 def generate_access_token_for_user(user: User) -> str:
   return create_access_token({"sub": user.username})

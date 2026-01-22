@@ -9,6 +9,7 @@ class Settings(BaseSettings):
   FRONTEND_URL: str = "http://localhost:3000"
   SENDGRID_API_KEY: str
   FROM_EMAIL: str
+  OPENAI_AI_KEY: str
 
   class Config:
     env_file = ".env"

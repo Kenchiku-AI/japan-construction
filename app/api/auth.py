@@ -2,7 +2,6 @@ from datetime import timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -16,18 +15,18 @@ from app.core.security import (
   hash_token,
   hash_password,
 )
-from app.schemas.auth import TokenSchema, TokenPayload
+from app.schemas.auth import LoginRequest, TokenSchema, TokenPayload
 from app.schemas.user import UserCreate, UserRead
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/login", response_model=TokenSchema)
 async def login(
-  form_data: OAuth2PasswordRequestForm = Depends(),
+  payload: LoginRequest,
   db: AsyncSession = Depends(get_db),
 ):
   result = await db.execute(
-    select(User).where(User.email == form_data.username)
+    select(User).where(User.email == payload.email)
   )
   user = result.scalar_one_or_none()
 
@@ -41,12 +40,13 @@ async def login(
   refresh_token_plain = create_refresh_token()
   hashed_refresh = hash_token(refresh_token_plain)
 
-  db_refresh = RefreshToken(
-    id=uuid4(),
-    user_id=user.id,
-    hashed_token=hashed_refresh,
+  db.add(
+    RefreshToken(
+      id=uuid4(),
+      user_id=user.id,
+      hashed_token=hashed_refresh,
+    )
   )
-  db.add(db_refresh)
   await db.commit()
 
   return TokenSchema(

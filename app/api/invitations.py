@@ -8,7 +8,7 @@ from app.db.models import User, Company, CompanyUser, Invitation
 from app.schemas.invitation import InvitationCreate, InvitationRead
 from app.core.dependencies import get_current_user
 from app.core.security import hash_token, generate_invite_token
-from app.core.email import send_invitation_email
+from app.services.email import send_invitation_email
 
 router = APIRouter(
   prefix="/invitations",

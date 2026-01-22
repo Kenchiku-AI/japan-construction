@@ -45,7 +45,7 @@ def update_project(
         detail="Only active projects can be updated",
       )
 
-    require_company_member(db, current_user, project.company_id)
+    require_company_member(current_user, project.company_id)
 
   for field, value in project_in.model_dump(exclude_unset=True).items():
     setattr(project, field, value)
