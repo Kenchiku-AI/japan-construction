@@ -5,13 +5,13 @@ from uuid import UUID
 
 from app.api.invitations import invite_user
 from app.core.dependencies import get_current_user, require_company_member, require_company_manager
-from app.core.email import send_project_request_email
 from app.db.session import get_db
 from app.db.models import Company, User, CompanyUser
 from app.schemas.company import CompanyCreate, CompanyRead, CompanyUserBase
 from app.schemas.invitation import InvitationCreate
 from app.schemas.project import ProjectCreate, ProjectRead
 from app.schemas.user import UserRead
+from app.services.email import send_project_request_email
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -110,7 +110,7 @@ def create_project(
   if current_user.role == "admin":
     status_value = ProjectStatus.active
   else:
-    require_company_manager(db, current_user, company_id)
+    require_company_manager(current_user, company_id)
 
     if company.can_create_projects:
       status_value = ProjectStatus.active
@@ -143,7 +143,7 @@ def list_company_projects(
   db: Session = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  require_company_member(db, current_user, company_id)
+  require_company_member(current_user, company_id)
 
   return (
     db.query(Project)

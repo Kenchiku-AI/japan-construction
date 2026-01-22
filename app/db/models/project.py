@@ -29,6 +29,7 @@ class Project(Base):
   )
 
   company = relationship("Company", back_populates="projects")
+  daily_reports = relationship("DailyReport", back_populates="project", cascade="all, delete-orphan")
 
   created_at = Column(DateTime, default=datetime.utcnow)
   updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

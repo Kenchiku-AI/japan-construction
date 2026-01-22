@@ -1,6 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, EmailStr
 
@@ -22,7 +23,7 @@ class CompanyUserBase(BaseModel):
   role: CompanyRole
 
 class CompanyUserRead(CompanyUserBase):
-  user_id: str
+  user_id: UUID
   email: EmailStr
 
   class Config:

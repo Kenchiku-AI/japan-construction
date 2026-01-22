@@ -1,65 +1,125 @@
-from fastapi import APIRouter, UploadFile, File, Form
-from app.services import ai_speech, ai_llm, ai_vision, storage, db
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from datetime import date, time
 
-router = APIRouter()
+from app.db.session import get_db
+from app.db.models import DailyReport, Project, User
+from app.schemas.report import DailyReportCreate, DailyReportUpdate, DailyReportRead
+from app.core.dependencies import get_current_user, get_current_user_ws, require_company_manager
+from app.services.openai import transcribe_audio, get_json_from_speech
 
-@router.post("/submit-audio")
-async def submit_audio(
-    project_id: int = Form(...),
-    report_date: str = Form(...),
-    audio_file: UploadFile = File(...)
+router = APIRouter(
+  prefix="/reports",
+  tags=["reports"]
+)
+
+@router.post("/daily", response_model=DailyReportRead, status_code=201)
+def create_daily_report(
+  payload: DailyReportCreate,
+  db: Session = Depends(get_db),
+  current_user: User = Depends(get_current_user),
 ):
-    # save audio to disk
-    path = storage.save_file(audio_file, folder="audio")
-    # transcribe
-    text = ai_speech.transcribe_whisper(path)
-    # store raw text
-    db.save_voice_text(project_id, report_date, text)
-    return {"raw_text": text}
+  project = db.get(Project, payload.project_id)
+  if not project:
+    raise HTTPException(status_code=404, detail="Project not found")
 
+  require_company_manager(current_user, project.company_id)
 
-@router.post("/submit-photos")
-async def submit_photos(
-    project_id: int = Form(...),
-    report_date: str = Form(...),
-    photos: list[UploadFile] = File(...)
-):
-    results = []
-    for f in photos:
-        path = storage.save_file(f, folder="photos")
-        # classify
-        classification = ai_vision.classify_photo(path)
-        db.save_photo(project_id, report_date, path, classification)
-        results.append(classification)
-    return {"results": results}
+  existing_report = db.execute(
+    select(DailyReport).where(
+      DailyReport.project_id == payload.project_id,
+      DailyReport.date == payload.date,
+    )
+  ).scalar_one_or_none()
 
-
-@router.post("/generate")
-def generate_report(
-    project_id: int = Form(...),
-    report_date: str = Form(...),
-    weather: str = Form(...),
-    workers: int = Form(...)
-):
-    # 1) fetch raw text + previous photos
-    raw_notes = db.get_voice_text(project_id, report_date)
-    photos = db.get_photos(project_id, report_date)
-
-    # 2) normalize notes
-    normalized_notes = ai_llm.normalize_text(raw_notes)
-
-    # 3) summarize photo data
-    photo_summary = ai_vision.summarize_photos(photos)
-
-    # 4) structured report
-    structured = ai_llm.generate_daily_report(
-        date=report_date,
-        weather=weather,
-        workers=workers,
-        notes=normalized_notes,
-        photo_summary=photo_summary
+  if existing_report:
+    raise HTTPException(
+      status_code=409,
+      detail="A daily report already exists for this project on this date",
     )
 
-    # 5) persist and return
-    report = db.save_daily_report(project_id, report_date, weather, workers, structured)
-    return report
+  daily_report = DailyReport(**payload.model_dump())
+
+  db.add(daily_report)
+  db.commit()
+  db.refresh(daily_report)
+
+  return daily_report
+
+@router.put("/daily/{report_id}", response_model=DailyReportRead)
+def update_daily_report(
+  report_id: UUID,
+  payload: DailyReportUpdate,
+  db: Session = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  report = db.get(DailyReport, report_id)
+  if not report:
+    raise HTTPException(status_code=404, detail="Report not found")
+
+  if current_user.role != "admin":
+    require_company_member(db, current_user, report.project.company_id)
+
+  for field, value in payload.model_dump(exclude_unset=True).items():
+    setattr(report, field, value)
+
+  db.commit()
+  db.refresh(report)
+  return report
+
+@router.delete("/daily/{report_id}", status_code=204)
+def delete_daily_report(
+  report_id: UUID,
+  db: Session = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  report = db.get(DailyReport, report_id)
+  if not report:
+    raise HTTPException(status_code=404, detail="Daily report not found")
+
+  require_company_manager(current_user, report.project.company_id)
+
+  db.delete(daily_report)
+  db.commit()
+  return None
+
+@router.websocket("/daily/{report_id}/audio")
+async def daily_report_audio(
+  ws: WebSocket,
+  report_id: UUID,
+):
+  await ws.accept()
+
+  db = next(get_db())
+  current_user = await get_current_user_ws(ws)
+
+  report = db.get(DailyReport, report_id)
+  if not report:
+    raise HTTPException(status_code=404, detail="Daily report not found")
+
+  require_company_manager(current_user, report.project.company_id)
+
+  async def on_complete(text: str):
+    json = await get_json_from_speech(text)
+
+    if json.get("start_time"):
+      report.start_time = time.fromisoformat(json["start_time"])
+
+    if json.get("end_time"):
+      report.end_time = time.fromisoformat(json["end_time"])
+
+    if json.get("work_performed"):
+      report.work_performed = json["work_performed"]
+
+    if json.get("weather"):
+      report.weather = json["weather"]
+
+    db.commit()
+    db.refresh(report)
+
+    await ws.send_json({
+      "type": "daily_report_updated",
+      "payload": {"id": str(report.id)},
+    })
+
+  await transcribe_audio(ws, on_complete)
