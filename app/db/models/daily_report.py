@@ -1,8 +1,9 @@
 import uuid
+from datetime import datetime
 from sqlalchemy import Column, String, Date, Time, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from app.db.base_class import Base
+from app.db.base import Base
 from app.db.models.project import Project
 
 class DailyReport(Base):
