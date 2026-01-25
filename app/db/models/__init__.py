@@ -4,3 +4,4 @@ from app.db.models.company import Company
 from app.db.models.company_user import CompanyUser
 from app.db.models.invitation import Invitation
 from app.db.models.project import Project
+from app.db.models.daily_report import DailyReport

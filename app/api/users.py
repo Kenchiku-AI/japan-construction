@@ -4,7 +4,7 @@ from typing import List
 
 from app.db.session import get_db
 from app.db.models.user import User
-from app.schemas.user import UserRead, UserWithCompanies
+from app.schemas.user import UserWithProjects
 from app.core.dependencies import get_current_user
 
 router = APIRouter(
@@ -12,22 +12,44 @@ router = APIRouter(
   tags=["users"],
 )
 
-@router.get("/me", response_model=UserWithCompanies)
+@router.get("/me", response_model=UserWithProjects)
 def read_current_user(
   current_user: User = Depends(get_current_user),
 ):
-  return UserWithCompanies(
+  today = date.today()
+  projects_data = []
+
+  for project in current_user.projects:
+    todays_report_obj = next(
+      (r for r in project.daily_reports if r.created_at.date() == today),
+      None
+    )
+
+    projects_data.append(
+      ProjectRead(
+        id=project.id,
+        name=project.name,
+        company=CompanyRead(
+          id=project.company.id,
+          name=project.company.name,
+        ),
+        todays_report=(
+          DailyReportRead(
+            id=todays_report_obj.id,
+            title=todays_report_obj.title,
+            created_at=todays_report_obj.created_at,
+          )
+          if todays_report_obj
+          else None
+        ),
+      )
+    )
+
+  return UserWithProjects(
     id=current_user.id,
     email=current_user.email,
     is_active=current_user.is_active,
     created_at=current_user.created_at,
     updated_at=current_user.updated_at,
-    companies=[
-      {
-        "company_id": cu.company_id,
-        "company_name": cu.company.name,
-        "role": cu.role,
-      }
-      for cu in current_user.company_users
-    ],
+    projects=projects_data,
   )

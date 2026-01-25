@@ -30,7 +30,7 @@ class CompanyUserRead(CompanyUserBase):
     from_attributes = True
 
 class CompanyRead(CompanyBase):
-  id: str
+  id: UUID
   created_at: datetime
   updated_at: datetime
   users: List[CompanyUserRead] = []

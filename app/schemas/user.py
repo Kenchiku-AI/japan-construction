@@ -1,5 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
+from app.schemas.project import ProjectRead
+from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -10,7 +12,7 @@ class UserCreate(UserBase):
   password: str = Field(..., min_length=6)
 
 class UserRead(UserBase):
-  id: str
+  id: UUID
   created_at: datetime
   updated_at: datetime
   is_active: bool
@@ -18,16 +20,13 @@ class UserRead(UserBase):
   class Config:
     from_attributes = True
 
-class CompanyRole(BaseModel):
-  company_id: str
-  company_name: str
-  role: str
-
-  class Config:
-    from_attributes = True
-
-class UserWithCompanies(UserRead):
-  companies: List[CompanyRole] = []
+class UserWithProjects(BaseModel):
+  id: UUID
+  email: str
+  is_active: bool
+  created_at: datetime
+  updated_at: datetime
+  projects: List[ProjectRead]
 
   class Config:
     from_attributes = True

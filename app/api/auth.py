@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -30,21 +30,22 @@ async def login(
   )
   user = result.scalar_one_or_none()
 
-  if not user or not verify_password(form_data.password, user.hashed_password):
+  if not user or not verify_password(payload.password, user.hashed_password):
     raise HTTPException(
       status_code=status.HTTP_401_UNAUTHORIZED,
       detail="Invalid email or password",
     )
 
   access_token = create_access_token({"sub": str(user.id)})
-  refresh_token_plain = create_refresh_token()
+  refresh_token_plain = create_refresh_token({"sub": str(user.id)})
   hashed_refresh = hash_token(refresh_token_plain)
 
   db.add(
     RefreshToken(
       id=uuid4(),
       user_id=user.id,
-      hashed_token=hashed_refresh,
+      token_hash=hashed_refresh,
+      expires_at=datetime.utcnow() + timedelta(days=30),
     )
   )
   await db.commit()
@@ -83,13 +84,13 @@ async def refresh_token(
     token_type="bearer",
   )
 
-@router.post("/signup", response_model=UserRead)
+@router.post("/signup", response_model=TokenSchema)
 async def signup(
-  user_in: UserCreate,
+  payload: UserCreate,
   db: AsyncSession = Depends(get_db),
 ):
   result = await db.execute(
-    select(User).where(User.email == user_in.email)
+    select(User).where(User.email == payload.email)
   )
   existing_user = result.scalar_one_or_none()
 
@@ -100,8 +101,8 @@ async def signup(
     )
 
   user = User(
-    email=user_in.email,
-    hashed_password=hash_password(user_in.password),
+    email=payload.email,
+    hashed_password=hash_password(payload.password),
     is_active=True,
     role="user"
   )
@@ -110,4 +111,22 @@ async def signup(
   await db.commit()
   await db.refresh(user)
 
-  return user
+  access_token = create_access_token({"sub": str(user.id)})
+  refresh_token_plain = create_refresh_token({"sub": str(user.id)})
+  hashed_refresh = hash_token(refresh_token_plain)
+
+  db.add(
+    RefreshToken(
+      id=uuid4(),
+      user_id=user.id,
+      token_hash=hashed_refresh,
+      expires_at=datetime.utcnow() + timedelta(days=30),
+    )
+  )
+  await db.commit()
+
+  return TokenSchema(
+    access_token=access_token,
+    refresh_token=refresh_token_plain,
+    token_type="bearer",
+  )
