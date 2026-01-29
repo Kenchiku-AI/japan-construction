@@ -4,9 +4,9 @@ from datetime import datetime, timedelta
 import secrets
 
 from app.db.session import get_db
-from app.db.models import User, Company, CompanyUser, Invitation
+from app.db.models import User, Company, Invitation
 from app.schemas.invitation import InvitationCreate, InvitationRead
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, require_company_manager
 from app.core.security import hash_token, generate_invite_token
 from app.services.email import send_invitation_email
 
@@ -23,42 +23,29 @@ def invite_user(
   current_user: User = Depends(get_current_user),
   db: Session = Depends(get_db)
 ):
+  require_company_manager(current_user, payload)
+
   company = db.get(Company, payload.company_id)
   if not company:
     raise HTTPException(status_code=404, detail="Company not found")
 
-  if current_user.role != "admin":
-    manager_relation = db.query(CompanyUser).filter(
-      CompanyUser.user_id == current_user.id,
-      CompanyUser.company_id == company.id,
-      CompanyUser.role == "manager"
-    ).first()
-    
-    if not manager_relation:
-      raise HTTPException(status_code=403, detail="Forbidden: must be manager of this company")
-
   user = db.query(User).filter(User.email == payload.email).first()
+
+  if user and user.company_id is not None:
+    raise HTTPException(
+      status_code=409,
+      detail="User already belongs to a company",
+    )
 
   token = generate_invite_token()
   hashed_token = hash_token(token)
   expires_at = datetime.utcnow() + timedelta(hours=INVITE_EXPIRATION_HOURS)
 
-  if not user:
-    user = User(
-      email=payload.email,
-      full_name=payload.full_name or "",
-      is_active=False,
-      role="user"
-    )
-    db.add(user)
-    db.flush()
-
   invitation = Invitation(
-    token=hashed_token,
-    user_id=user.id,
+    email = payload.email,
+    token_hash = hashed_token,
     company_id=company.id,
     role=payload.role,
-    created_by=current_user.id,
     expires_at=expires_at
   )
   db.add(invitation)
@@ -73,7 +60,6 @@ def invite_user(
     company_id=company.id,
     role=invitation.role,
     expires_at=expires_at,
-    created_by=current_user.id
   )
 
 @router.post("/accept/{token}", response_model=InvitationRead)
@@ -83,36 +69,34 @@ def accept_invitation(token: str, current_user: User = Depends(get_current_user)
 
   if not invitation:
     raise HTTPException(status_code=404, detail="Invitation not found or invalid")
+
   if invitation.expires_at < datetime.utcnow():
     raise HTTPException(status_code=400, detail="Invitation expired")
 
-  user = db.get(User, invitation.user_id)
+  if current_user.id != invitation.user_id:
+    raise HTTPException(status_code=403, detail="Not authorized to accept this invitation")
+
   company = db.get(Company, invitation.company_id)
+  if not company:
+    raise HTTPException(status_code=404, detail="Company not found")
 
-  existing_relation = db.query(CompanyUser).filter(
-    CompanyUser.user_id == user.id,
-    CompanyUser.company_id == company.id
-  ).first()
-  if not existing_relation:
-    relation = CompanyUser(
-      user_id=user.id, 
-      company_id=company.id, 
-      role=invitation.role
+  if current_user.company_id is None:
+    current_user.company_id = invitation.company_id
+  elif current_user.company_id != invitation.company_id:
+    raise HTTPException(
+      status_code=400,
+      detail="User already belongs to a different company",
     )
-    db.add(relation)
-
-  if not user.is_active:
-    user.is_active = True
+  
+  current_user.role = invitation.role
 
   db.delete(invitation)
   db.commit()
-  db.refresh(invitation)
 
   return InvitationRead(
     id=invitation.id,
-    email=user.email,
+    email=current_user.email,
     company_id=company.id,
     role=invitation.role,
     expires_at=invitation.expires_at,
-    created_by=invitation.created_by
   )

@@ -7,23 +7,25 @@ from pydantic import BaseModel, EmailStr, Field
 
 class UserBase(BaseModel):
   email: EmailStr
+  first_name: Optional[str] = None
+  last_name: Optional[str] = None
 
 class UserCreate(UserBase):
-  password: str = Field(..., min_length=6)
+  password: str = Field(..., min_length=8)
 
 class UserRead(UserBase):
   id: UUID
   created_at: datetime
   updated_at: datetime
-  is_active: bool
 
   class Config:
     from_attributes = True
 
 class UserWithProjects(BaseModel):
   id: UUID
+  first_name: str
+  last_name: str
   email: str
-  is_active: bool
   created_at: datetime
   updated_at: datetime
   projects: List[ProjectRead]

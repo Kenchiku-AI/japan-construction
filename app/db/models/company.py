@@ -14,10 +14,9 @@ class Company(Base):
   name = Column(String, nullable=False, index=True)
   can_create_projects = Column(Boolean, nullable=False, default=False)
 
-  company_users = relationship(
-    "CompanyUser",
+  users = relationship(
+    "User",
     back_populates="company",
-    cascade="all, delete-orphan",
   )
 
   projects = relationship(

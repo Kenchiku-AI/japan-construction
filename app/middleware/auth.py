@@ -23,7 +23,7 @@ async def auth_middleware(request: Request, call_next):
 
   try:
     scheme, _, value = token.partition(" ")
-    jwt.decode(value, settings.secret_key, algorithms=["HS256"])
+    jwt.decode(value, settings.SECRET_KEY, algorithms=["HS256"])
   except JWTError:
     return JSONResponse(status_code=401, content={"detail": "Invalid token"})
 

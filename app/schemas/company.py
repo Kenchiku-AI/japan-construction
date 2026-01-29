@@ -5,32 +5,25 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr
 
-class CompanyRole(str, Enum):
-  manager = "manager"
-  member = "member"
-
-class CompanyBase(BaseModel):
-  name: str
-
-class CompanyCreate(CompanyBase):
+class CompanyCreate(BaseModel):
   manager_email: Optional[EmailStr] = None
   pass
 
 class CompanyUpdate(BaseModel):
   name: str | None = None
 
-class CompanyUserBase(BaseModel):
-  role: CompanyRole
-
-class CompanyUserRead(CompanyUserBase):
+class CompanyUserRead(BaseModel):
   user_id: UUID
+  first_name: str
+  last_name: str
   email: EmailStr
 
   class Config:
     from_attributes = True
 
-class CompanyRead(CompanyBase):
+class CompanyRead(BaseModel):
   id: UUID
+  name: str
   created_at: datetime
   updated_at: datetime
   users: List[CompanyUserRead] = []
