@@ -9,15 +9,13 @@ from app.db.models import *
 from app.core.config import settings
 
 config = context.config
-
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
-    url = settings.DATABASE_URL
-
+    url = settings.DATABASE_URL.replace("asyncpg", "psycopg2")
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -30,7 +28,8 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    engine = create_engine(settings.DATABASE_URL)
+    sync_url = settings.DATABASE_URL.replace("asyncpg", "psycopg2")
+    engine = create_engine(sync_url)
     
     with engine.connect() as connection:
         context.configure(

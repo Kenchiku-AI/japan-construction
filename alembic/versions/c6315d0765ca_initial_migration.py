@@ -1,8 +1,8 @@
-"""initial schema
+"""initial migration
 
-Revision ID: 793a6400ab22
+Revision ID: c6315d0765ca
 Revises: 
-Create Date: 2026-01-12 09:50:24.147920
+Create Date: 2026-01-25 22:17:58.634227
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '793a6400ab22'
+revision: str = 'c6315d0765ca'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -31,31 +31,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_companies_id'), 'companies', ['id'], unique=False)
     op.create_index(op.f('ix_companies_name'), 'companies', ['name'], unique=False)
-    op.create_table('users',
-    sa.Column('id', sa.UUID(), nullable=False),
-    sa.Column('email', sa.String(), nullable=False),
-    sa.Column('hashed_password', sa.String(), nullable=False),
-    sa.Column('is_active', sa.Boolean(), nullable=True),
-    sa.Column('role', sa.String(), nullable=False),
-    sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
-    op.create_index(op.f('ix_users_id'), 'users', ['id'], unique=False)
-    op.create_table('company_users',
-    sa.Column('id', sa.UUID(), nullable=False),
-    sa.Column('user_id', sa.UUID(), nullable=False),
-    sa.Column('company_id', sa.UUID(), nullable=False),
-    sa.Column('role', sa.String(), nullable=False),
-    sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.Column('updated_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['company_id'], ['companies.id'], ),
-    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
-    sa.PrimaryKeyConstraint('id', 'user_id', 'company_id'),
-    sa.UniqueConstraint('company_id', 'user_id', name='uq_company_user')
-    )
-    op.create_index(op.f('ix_company_users_id'), 'company_users', ['id'], unique=False)
     op.create_table('invitations',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('email', sa.String(), nullable=False),
@@ -82,6 +57,36 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_projects_company_id'), 'projects', ['company_id'], unique=False)
     op.create_index(op.f('ix_projects_id'), 'projects', ['id'], unique=False)
+    op.create_table('users',
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('email', sa.String(), nullable=False),
+    sa.Column('first_name', sa.String(), nullable=True),
+    sa.Column('last_name', sa.String(), nullable=True),
+    sa.Column('hashed_password', sa.String(), nullable=True),
+    sa.Column('role', sa.String(), nullable=True),
+    sa.Column('company_id', sa.UUID(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['company_id'], ['companies.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
+    op.create_index(op.f('ix_users_id'), 'users', ['id'], unique=False)
+    op.create_table('daily_reports',
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('project_id', sa.UUID(), nullable=False),
+    sa.Column('date', sa.Date(), nullable=False),
+    sa.Column('start_time', sa.Time(), nullable=True),
+    sa.Column('end_time', sa.Time(), nullable=True),
+    sa.Column('work_performed', sa.String(), nullable=True),
+    sa.Column('weather', sa.String(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=True),
+    sa.Column('updated_at', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['project_id'], ['projects.id'], ),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('project_id', 'date', name='uq_project_daily_report')
+    )
+    op.create_index(op.f('ix_daily_reports_id'), 'daily_reports', ['id'], unique=False)
     op.create_table('refresh_tokens',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('user_id', sa.UUID(), nullable=False),
@@ -103,16 +108,16 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_refresh_tokens_token_hash'), table_name='refresh_tokens')
     op.drop_index(op.f('ix_refresh_tokens_id'), table_name='refresh_tokens')
     op.drop_table('refresh_tokens')
+    op.drop_index(op.f('ix_daily_reports_id'), table_name='daily_reports')
+    op.drop_table('daily_reports')
+    op.drop_index(op.f('ix_users_id'), table_name='users')
+    op.drop_index(op.f('ix_users_email'), table_name='users')
+    op.drop_table('users')
     op.drop_index(op.f('ix_projects_id'), table_name='projects')
     op.drop_index(op.f('ix_projects_company_id'), table_name='projects')
     op.drop_table('projects')
     op.drop_index(op.f('ix_invitations_email'), table_name='invitations')
     op.drop_table('invitations')
-    op.drop_index(op.f('ix_company_users_id'), table_name='company_users')
-    op.drop_table('company_users')
-    op.drop_index(op.f('ix_users_id'), table_name='users')
-    op.drop_index(op.f('ix_users_email'), table_name='users')
-    op.drop_table('users')
     op.drop_index(op.f('ix_companies_name'), table_name='companies')
     op.drop_index(op.f('ix_companies_id'), table_name='companies')
     op.drop_table('companies')

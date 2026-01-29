@@ -1,7 +1,7 @@
 from datetime import datetime
 import uuid
 
-from sqlalchemy import Column, String, Boolean, DateTime
+from sqlalchemy import Column, String, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -12,9 +12,10 @@ class User(Base):
 
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
   email = Column(String, unique=True, index=True, nullable=False)
-  hashed_password = Column(String, nullable=False)
-  is_active = Column(Boolean, default=True)
-  role = Column(String, default="user", nullable=False)
+  first_name = Column(String, nullable=True)
+  last_name = Column(String, nullable=True)
+  hashed_password = Column(String, nullable=True)
+  role = Column(String, default="user", nullable=True)
 
   refresh_tokens = relationship(
     "RefreshToken",
@@ -22,10 +23,15 @@ class User(Base):
     cascade="all, delete-orphan",
   )
 
-  company_users = relationship(
-    "CompanyUser",
-    back_populates="user",
-    cascade="all, delete-orphan",
+  company_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("companies.id", ondelete="CASCADE"),
+    nullable=True,
+  )
+
+  company = relationship(
+    "Company",
+    back_populates="users",
   )
 
   created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -35,9 +41,3 @@ class User(Base):
     onupdate=datetime.utcnow,
     nullable=False,
   )
-
-  def role_in_company(self, company_id: int) -> str | None:
-    for cu in self.company_users:
-      if cu.company_id == company_id:
-        return cu.role
-    return None

@@ -6,8 +6,8 @@ from uuid import UUID
 from app.api.invitations import invite_user
 from app.core.dependencies import get_current_user, require_company_member, require_company_manager
 from app.db.session import get_db
-from app.db.models import Company, User, CompanyUser
-from app.schemas.company import CompanyCreate, CompanyRead, CompanyUserBase
+from app.db.models import Company, User
+from app.schemas.company import CompanyCreate, CompanyRead
 from app.schemas.invitation import InvitationCreate
 from app.schemas.project import ProjectCreate, ProjectRead
 from app.schemas.user import UserRead
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/companies", tags=["companies"])
   status_code=status.HTTP_201_CREATED
 )
 def create_company(
-  company_in: CompanyCreate,
+  payload: CompanyCreate,
   current_user: User = Depends(get_current_user),
   db: Session = Depends(get_db),
 ):
@@ -31,14 +31,14 @@ def create_company(
       detail="Only admins can create companies",
     )
 
-  company = Company(name=company_in.name)
+  company = Company(name=payload.name)
   db.add(company)
   db.commit()
   db.refresh(company)
 
-  if company_in.manager_email:
+  if payload.manager_email:
     invitation_payload = InvitationCreate(
-      email=company_in.manager_email,
+      email=payload.manager_email,
       company_id=company.id,
       role="manager",
     )
@@ -57,40 +57,27 @@ def get_company(
   current_user: User = Depends(get_current_user),
   db: Session = Depends(get_db),
 ):
+  require_company_member(current_user, company_id)
+
   company = db.get(Company, company_id)
   if not company:
     raise HTTPException(status_code=404, detail="Company not found")
-
-  # Check that user belongs to company
-  company_user = db.query(CompanyUser).filter_by(
-    company_id=company_id, user_id=current_user.id
-  ).first()
-  if not company_user:
-    raise HTTPException(
-      status_code=403,
-      detail="You are not a member of this company"
-    )
 
   return company
 
 @router.get("/{company_id}/users", response_model=List[UserRead])
 def list_company_users(
-  company_id: UUID,
-  current_user: User = Depends(get_current_user),
-  db: Session = Depends(get_db),
+    company_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-  company_user = db.query(CompanyUser).filter_by(
-    company_id=company_id, user_id=current_user.id
-  ).first()
-  if not company_user:
-    raise HTTPException(
-      status_code=403,
-      detail="You are not a member of this company"
-    )
+  require_company_member(current_user, company_id)
 
-  company_users = db.query(CompanyUser).filter_by(company_id=company_id).all()
-  users = [cu.user for cu in company_users]
-  return users
+  return (
+    db.query(User)
+    .filter(User.company_id == company_id)
+    .all()
+  )
 
 @router.post(
   "/{company_id}/projects",
@@ -150,46 +137,3 @@ def list_company_projects(
     .filter(Project.company_id == company_id)
     .all()
   )
-
-@router.put(
-  "/{company_id}/users/{user_id}/role",
-  status_code=status.HTTP_204_NO_CONTENT,
-)
-def update_company_user_role(
-  company_id: UUID,
-  user_id: UUID,
-  payload: CompanyUserBase,
-  db: Session = Depends(get_db),
-  current_user: User = Depends(get_current_user),
-):
-  company = db.get(Company, company_id)
-  if not company:
-    raise HTTPException(status_code=404, detail="Company not found")
-
-  if current_user.role != "admin":
-    manager_relation = db.query(CompanyUser).filter(
-      CompanyUser.company_id == company_id,
-      CompanyUser.user_id == current_user.id,
-      CompanyUser.role == "manager",
-    ).first()
-
-    if not manager_relation:
-      raise HTTPException(
-        status_code=403,
-        detail="Forbidden: must be company manager or admin",
-      )
-
-  company_user = db.query(CompanyUser).filter(
-    CompanyUser.company_id == company_id,
-    CompanyUser.user_id == user_id,
-  ).first()
-
-  if not company_user:
-    raise HTTPException(
-      status_code=404,
-      detail="User is not a member of this company",
-    )
-
-  company_user.role = payload.role
-
-  db.commit()

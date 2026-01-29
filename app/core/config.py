@@ -6,7 +6,8 @@ class Settings(BaseSettings):
   REFRESH_TOKEN_EXPIRE_DAYS: int = 30
   ALGORITHM: str = "HS256"
   DATABASE_URL: str
-  FRONTEND_URL: str = "http://localhost:3000"
+  WEB_CLIENT_URL: str = "http://localhost:3000"
+  SECURE_COOKIE: bool = False # Set this to True in prod
   SENDGRID_API_KEY: str
   FROM_EMAIL: str
   OPENAI_AI_KEY: str
