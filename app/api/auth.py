@@ -3,22 +3,24 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.core.config import settings
-from app.db.session import get_db
-from app.db.models.user import User
-from app.db.models.refresh_token import RefreshToken
 from app.core.security import (
   verify_password,
   create_access_token,
   create_refresh_token,
-  hash_token,
   hash_password,
+  hash_token,
 )
-from app.schemas.auth import LoginRequest, TokenSchema, TokenPayload
-from app.schemas.user import UserCreate, UserRead
+from app.db.models.refresh_token import RefreshToken
+from app.db.models.user import User
+from app.db.session import get_db
+from app.schemas.auth import LoginRequest, TokenPayload, TokenSchema
+from app.schemas.user import UserCreate
+from app.services.users import build_user_with_projects
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -54,7 +56,11 @@ async def login(
   await db.commit()
 
   if x_client_type == "web":
-    response = JSONResponse(content={"token_type": "bearer"})
+    response = JSONResponse(
+      content={
+        "user": build_user_with_projects(user).model_dump(mode="json")
+      }
+    )
     response.set_cookie(
       key="accessToken",
       value=access_token,
@@ -209,3 +215,24 @@ async def signup(
     refresh_token=refresh_token_plain,
     token_type="bearer",
   )
+
+@router.post("/logout")
+async def logout(
+  request: Request,
+  db: AsyncSession = Depends(get_db),
+):
+  refresh_token = request.cookies.get("refreshToken")
+
+  if refresh_token:
+    await db.execute(
+      delete(RefreshToken).where(
+        RefreshToken.token_hash == hash_token(refresh_token)
+      )
+    )
+    await db.commit()
+
+  response = JSONResponse(content={"success": True})
+  response.delete_cookie("accessToken", path="/")
+  response.delete_cookie("refreshToken", path="/")
+  
+  return response
