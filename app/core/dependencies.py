@@ -1,4 +1,4 @@
-from fastapi import Depends, WebSocket, HTTPException, status
+from fastapi import Depends, WebSocket, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
@@ -10,14 +10,32 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.db.models import User
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(
+  tokenUrl="/auth/login",
+  auto_error=False,
+)
 
 async def get_current_user(
+  request: Request,
   token: str = Depends(oauth2_scheme),
   db: AsyncSession = Depends(get_db),
+  x_client_type: str | None = Header(default=None),
 ) -> User:
+  access_token: str | None = None
+
+  if x_client_type == "web":
+    access_token = request.cookies.get("accessToken")
+  else:
+    access_token = token
+
+  if not access_token:
+    raise HTTPException(
+      status_code=status.HTTP_401_UNAUTHORIZED,
+      detail="Missing access token",
+    )
+
   try:
-    payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+    payload = jwt.decode(access_token, settings.SECRET_KEY, algorithms=["HS256"])
     user_id: str | None = payload.get("sub")
     if user_id is None:
       raise HTTPException(status_code=401, detail="Invalid token")

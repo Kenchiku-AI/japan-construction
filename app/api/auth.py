@@ -57,9 +57,7 @@ async def login(
 
   if x_client_type == "web":
     response = JSONResponse(
-      content={
-        "user": build_user_with_projects(user).model_dump(mode="json")
-      }
+      content=build_user_with_projects(user).model_dump(mode="json")
     )
     response.set_cookie(
       key="accessToken",

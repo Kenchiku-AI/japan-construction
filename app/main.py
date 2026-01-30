@@ -11,9 +11,9 @@ app.middleware("http")(auth_middleware)
 app.add_middleware(
   CORSMiddleware,
   allow_origins=[settings.WEB_CLIENT_URL],
-  allow_credentials=True,     
-  allow_methods=["*"],       
-  allow_headers=["*"],        
+  allow_credentials=True,
+  allow_methods=["*"],
+  allow_headers=["*"],
 )
 
 app.include_router(auth.router)
