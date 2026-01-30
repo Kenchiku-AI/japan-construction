@@ -18,12 +18,21 @@ async def auth_middleware(request: Request, call_next):
     return await call_next(request)
 
   token = request.headers.get("Authorization")
+
+  x_client_type = request.headers.get("x-client-type")
+  if x_client_type == "web" and not token:
+    token = request.cookies.get("accessToken")
+
   if not token:
     return JSONResponse(status_code=401, content={"detail": "Missing token"})
 
   try:
-    scheme, _, value = token.partition(" ")
-    jwt.decode(value, settings.SECRET_KEY, algorithms=["HS256"])
+    if " " in token:
+      scheme, _, token_value = token.partition(" ")
+    else:
+      token_value = token
+
+    jwt.decode(token_value, settings.SECRET_KEY, algorithms=["HS256"])
   except JWTError:
     return JSONResponse(status_code=401, content={"detail": "Invalid token"})
 
