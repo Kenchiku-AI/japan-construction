@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
 from uuid import uuid4
+from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -79,39 +80,32 @@ async def login(
 
   return TokenSchema(
     access_token=access_token,
-    refresh_token=refresh_token_plain,
+    refresh_token=refresh_token,
     token_type="bearer",
   )
 
 @router.post("/refresh", response_model=TokenSchema)
 async def refresh_token(
-  payload: TokenPayload,
   request: Request,
   db: AsyncSession = Depends(get_db),
-  x_client_type: str | None = Header(default=None),
+  payload: Optional[TokenPayload] = Body(None),
 ):
   refresh_token: str | None = None
 
-  if x_client_type == "web":
+  if "refreshToken" in request.cookies:
     refresh_token = request.cookies.get("refreshToken")
-
-    if not refresh_token:
-      raise HTTPException(
-        status_code=401,
-        detail="Missing refresh token cookie",
-      )
-  else:
-    if not payload or not payload.refresh_token:
-      raise HTTPException(
-        status_code=401,
-        detail="Missing refresh token in body",
-      )
-    
+  elif payload and payload.refresh_token:
     refresh_token = payload.refresh_token
+
+  if not refresh_token:
+    raise HTTPException(
+      status_code=401,
+      detail="Missing refresh token",
+    )
 
   result = await db.execute(
     select(RefreshToken).where(
-      RefreshToken.hashed_token == hash_token(refresh_token)
+      RefreshToken.token_hash == hash_token(refresh_token)
     )
   )
   db_token = result.scalar_one_or_none()
@@ -126,15 +120,15 @@ async def refresh_token(
 
   access_token = create_access_token({"sub": str(user.id)})
 
-  if x_client_type == "web":
+  if "refreshToken" in request.cookies:
     response = JSONResponse(content={"token_type": "bearer"})
     response.set_cookie(
-        key="accessToken",
-        value=access_token,
-        httponly=True,
-        secure=settings.SECURE_COOKIE,
-        samesite="lax",
-        path="/",
+      key="accessToken",
+      value=access_token,
+      httponly=True,
+      secure=settings.SECURE_COOKIE,
+      samesite="lax",
+      path="/",
     )
     return response
 
@@ -175,8 +169,8 @@ async def signup(
   await db.refresh(user)
 
   access_token = create_access_token({"sub": str(user.id)})
-  refresh_token_plain = create_refresh_token({"sub": str(user.id)})
-  hashed_refresh_token = hash_token(refresh_token_plain)
+  refresh_token = create_refresh_token({"sub": str(user.id)})
+  hashed_refresh_token = hash_token(refresh_token)
 
   db.add(
     RefreshToken(
@@ -200,7 +194,7 @@ async def signup(
     )
     response.set_cookie(
       key="refreshToken",
-      value=refresh_token_plain,
+      value=refresh_token,
       httponly=True,
       secure=settings.SECURE_COOKIE,
       samesite="lax",
@@ -210,7 +204,7 @@ async def signup(
 
   return TokenSchema(
     access_token=access_token,
-    refresh_token=refresh_token_plain,
+    refresh_token=refresh_token,
     token_type="bearer",
   )
 

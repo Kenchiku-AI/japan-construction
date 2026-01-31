@@ -2,11 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import auth, users, companies, invitations, projects
 from app.core.config import settings
-from app.middleware.auth import auth_middleware
 
 app = FastAPI()
-
-app.middleware("http")(auth_middleware)
 
 app.add_middleware(
   CORSMiddleware,
