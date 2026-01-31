@@ -1,42 +1,66 @@
 from datetime import date
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.schemas.user import UserWithProjects
 from app.schemas.project import ProjectRead, DailyReportRead
 from app.schemas.company import CompanyRead
 from app.db.models.user import User
+from app.db.models.project import Project
 
-def build_user_with_projects(user: User) -> UserWithProjects:
+async def build_user_with_projects(
+  user: User,
+  db: AsyncSession,
+) -> UserWithProjects:
   today = date.today()
-  projects_data = []
+  projects_data: list[ProjectRead] = []
 
-  if user.company:
-    for project in user.company.projects:
-      todays_report_obj = next(
-        (r for r in project.daily_reports if r.created_at.date() == today),
-        None
-      )
+  if user.role == "admin":
+    result = await db.execute(
+      select(Project)
+      .order_by(Project.updated_at.desc())
+      .limit(25)
+    )
+    projects = result.scalars().all()
+  elif user.company:
+    result = await db.execute(
+      select(Project)
+      .where(Project.company_id == user.company.id)
+      .order_by(Project.updated_at.desc())
+      .limit(25)
+    )
+    projects = result.scalars().all()
+  else:
+    projects = []
 
-      projects_data.append(
-        ProjectRead(
-          id=project.id,
-          name=project.name,
-          company=CompanyRead(
-            id=project.company.id,
-            name=project.company.name,
-          ),
-          todays_report=(
-            DailyReportRead(
-              id=todays_report_obj.id,
-              project_id=todays_report_obj.project_id,
-              start_time=todays_report_obj.start_time,
-              end_time=todays_report_obj.end_time,
-              work_performed=todays_report_obj.work_performed,
-              weather=todays_report_obj.weather,
-            )
-            if todays_report_obj
-            else None
-          ),
-        )
+  for project in projects:
+    todays_report_obj = next(
+      (r for r in project.daily_reports if r.created_at.date() == today),
+      None
+    )
+
+    projects_data.append(
+      ProjectRead(
+        id=project.id,
+        name=project.name,
+        company=CompanyRead(
+          id=project.company.id,
+          name=project.company.name,
+        ),
+        todays_report=(
+          DailyReportRead(
+            id=todays_report_obj.id,
+            project_id=todays_report_obj.project_id,
+            start_time=todays_report_obj.start_time,
+            end_time=todays_report_obj.end_time,
+            work_performed=todays_report_obj.work_performed,
+            weather=todays_report_obj.weather,
+          )
+          if todays_report_obj
+          else None
+        ),
       )
+    )
 
   return UserWithProjects(
     id=user.id,

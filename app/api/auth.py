@@ -57,8 +57,9 @@ async def login(
   await db.commit()
 
   if x_client_type == "web":
+    user_with_projects = await build_user_with_projects(user, db)
     response = JSONResponse(
-      content=build_user_with_projects(user).model_dump(mode="json")
+      content=user_with_projects.model_dump(mode="json")
     )
     response.set_cookie(
       key="accessToken",
@@ -183,7 +184,10 @@ async def signup(
   await db.commit()
 
   if x_client_type == "web":
-    response = JSONResponse(content={"token_type": "bearer"})
+    user_with_projects = await build_user_with_projects(user, db)
+    response = JSONResponse(
+      content=user_with_projects.model_dump(mode="json")
+    )
     response.set_cookie(
       key="accessToken",
       value=access_token,
