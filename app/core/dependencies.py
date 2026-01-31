@@ -19,14 +19,8 @@ async def get_current_user(
   request: Request,
   token: str = Depends(oauth2_scheme),
   db: AsyncSession = Depends(get_db),
-  x_client_type: str | None = Header(default=None),
 ) -> User:
-  access_token: str | None = None
-
-  if x_client_type == "web":
-    access_token = request.cookies.get("accessToken")
-  else:
-    access_token = token
+  access_token = request.cookies.get("accessToken") or token
 
   if not access_token:
     raise HTTPException(
@@ -37,14 +31,12 @@ async def get_current_user(
   try:
     payload = jwt.decode(access_token, settings.SECRET_KEY, algorithms=["HS256"])
     user_id: str | None = payload.get("sub")
-    if user_id is None:
+    if not user_id:
       raise HTTPException(status_code=401, detail="Invalid token")
   except JWTError:
     raise HTTPException(status_code=401, detail="Invalid token")
 
-  result = await db.execute(
-    select(User).where(User.id == user_id)
-  )
+  result = await db.execute(select(User).where(User.id == user_id))
   user = result.scalar_one_or_none()
 
   if not user:
