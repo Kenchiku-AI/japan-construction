@@ -1,13 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
-from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-import secrets
 
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+
+from app.core.dependencies import get_current_user, require_company_manager
+from app.core.security import hash_token, generate_invite_token
 from app.db.session import get_db
 from app.db.models import User, Company, Invitation
 from app.schemas.invitation import InvitationCreate, InvitationRead
-from app.core.dependencies import get_current_user, require_company_manager
-from app.core.security import hash_token, generate_invite_token
 from app.services.email import send_invitation_email
 
 router = APIRouter(
@@ -18,18 +19,20 @@ router = APIRouter(
 INVITE_EXPIRATION_HOURS = 48
 
 @router.post("/invite", response_model=InvitationRead)
-def invite_user(
+async def invite_user(
   payload: InvitationCreate,
   current_user: User = Depends(get_current_user),
-  db: Session = Depends(get_db)
-):
+  db: AsyncSession = Depends(get_db),
+  background_tasks: BackgroundTasks = Depends(),
+) -> InvitationRead:
   require_company_manager(current_user, payload)
 
-  company = db.get(Company, payload.company_id)
+  company = await db.get(Company, payload.company_id)
   if not company:
     raise HTTPException(status_code=404, detail="Company not found")
 
-  user = db.query(User).filter(User.email == payload.email).first()
+  result = await db.execute(select(User).filter(User.email == payload.email))
+  user = result.scalars().first()
 
   if user and user.company_id is not None:
     raise HTTPException(
@@ -49,10 +52,10 @@ def invite_user(
     expires_at=expires_at
   )
   db.add(invitation)
-  db.commit()
-  db.refresh(invitation)
+  await db.commit()
+  await db.refresh(invitation)
 
-  background_tasks.add_task(send_invitation_email, user.email, company.name, token)
+  background_tasks.add_task(send_invitation_email, payload.email, company.name, token)
 
   return InvitationRead(
     id=invitation.id,
@@ -63,9 +66,14 @@ def invite_user(
   )
 
 @router.post("/accept/{token}", response_model=InvitationRead)
-def accept_invitation(token: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def accept_invitation(
+  token: str,
+  current_user: User = Depends(get_current_user),
+  db: AsyncSession = Depends(get_db),
+):
   hashed_token = hash_token(token)
-  invitation = db.query(Invitation).filter(Invitation.token == hashed_token).first()
+  result = await db.execute(select(Invitation).filter(Invitation.token_hash == hashed_token))
+  invitation = result.scalars().first()
 
   if not invitation:
     raise HTTPException(status_code=404, detail="Invitation not found or invalid")
@@ -76,7 +84,7 @@ def accept_invitation(token: str, current_user: User = Depends(get_current_user)
   if current_user.id != invitation.user_id:
     raise HTTPException(status_code=403, detail="Not authorized to accept this invitation")
 
-  company = db.get(Company, invitation.company_id)
+  company = await db.get(Company, invitation.company_id)
   if not company:
     raise HTTPException(status_code=404, detail="Company not found")
 
@@ -90,8 +98,8 @@ def accept_invitation(token: str, current_user: User = Depends(get_current_user)
   
   current_user.role = invitation.role
 
-  db.delete(invitation)
-  db.commit()
+  await db.delete(invitation)
+  await db.commit()
 
   return InvitationRead(
     id=invitation.id,
