@@ -10,7 +10,7 @@ class ProjectBase(BaseModel):
   description: str | None = None
 
 class ProjectCreate(ProjectBase):
-  pass
+  company_id: UUID
 
 class ProjectUpdate(ProjectBase):
   pass
