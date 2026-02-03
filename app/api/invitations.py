@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -21,9 +21,9 @@ INVITE_EXPIRATION_HOURS = 48
 @router.post("/invite", response_model=InvitationRead)
 async def invite_user(
   payload: InvitationCreate,
+  background_tasks: BackgroundTasks,
   current_user: User = Depends(get_current_user),
   db: AsyncSession = Depends(get_db),
-  background_tasks: BackgroundTasks = Depends(),
 ) -> InvitationRead:
   require_company_manager(current_user, payload)
 

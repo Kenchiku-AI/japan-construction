@@ -1,9 +1,16 @@
 from datetime import datetime
+from enum import Enum
 from typing import List, Optional
 from app.schemas.project import ProjectRead
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
+
+
+class UserRole(str, Enum):
+  admin = "admin"
+  manager = "manager"
+  user = "user"
 
 class UserBase(BaseModel):
   email: EmailStr
@@ -28,6 +35,7 @@ class UserWithProjects(BaseModel):
   email: str
   created_at: datetime
   updated_at: datetime
+  role: UserRole 
   projects: List[ProjectRead]
 
   class Config:

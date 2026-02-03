@@ -57,7 +57,10 @@ async def create_company(
       detail="Only admins can create companies",
     )
 
-  company = Company(name=payload.name)
+  company = Company(
+    name=payload.name,
+    corporate_number=payload.corporate_number
+  )
   db.add(company)
 
   await db.commit()

@@ -67,6 +67,7 @@ async def build_user_with_projects(
     first_name=user.first_name,
     last_name=user.last_name,
     email=user.email,
+    role=user.role,
     created_at=user.created_at,
     updated_at=user.updated_at,
     projects=projects_data,

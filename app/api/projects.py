@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, case
 
@@ -47,9 +47,9 @@ async def list_projects(
 )
 async def create_project(
   payload: ProjectCreate,
+  background_tasks: BackgroundTasks,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
-  background_tasks: BackgroundTasks = Depends(),
 ):
   company = await db.get(Company, payload.company_id)
   if not company:
