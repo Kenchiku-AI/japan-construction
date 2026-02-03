@@ -21,5 +21,6 @@ class DailyReportRead(BaseModel):
   work_performed: str
   weather: str
 
-  class Config:
-    orm_mode = True
+  model_config = {
+    "from_attributes": True
+  }

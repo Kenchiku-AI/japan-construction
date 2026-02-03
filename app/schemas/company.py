@@ -6,6 +6,8 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr
 
 class CompanyCreate(BaseModel):
+  name: str
+  corporate_number: str
   manager_email: Optional[EmailStr] = None
   pass
 
@@ -24,9 +26,10 @@ class CompanyUserRead(BaseModel):
 class CompanyRead(BaseModel):
   id: UUID
   name: str
+  corporate_number: Optional[str]
   created_at: datetime
   updated_at: datetime
-  users: List[CompanyUserRead] = []
 
-  class Config:
-    from_attributes = True
+  model_config = {
+    "from_attributes": True
+  }

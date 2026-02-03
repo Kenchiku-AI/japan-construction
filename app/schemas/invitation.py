@@ -1,13 +1,8 @@
 # app/schemas/invitations.py
 from datetime import datetime
-from enum import Enum
 from pydantic import BaseModel, EmailStr
 from typing import Optional
-
-class UserRole(str, Enum):
-  admin = "admin"
-  manager = "manager"
-  user = "user"
+from app.schemas.user import UserRole
 
 class InvitationBase(BaseModel):
   email: EmailStr
@@ -21,8 +16,9 @@ class InvitationRead(InvitationBase):
   id: str
   expires_at: datetime
 
-  class Config:
-    orm_mode = True
+  model_config = {
+    "from_attributes": True
+  }
 
 class InvitationAccept(BaseModel):
   token: str

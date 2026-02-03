@@ -22,12 +22,6 @@ class ProjectRead(BaseModel):
   todays_report: Optional[DailyReportRead] = None
   company: CompanyRead
 
-  class Config:
-    orm_mode = True
-
-class CompanyRead(BaseModel):
-  id: UUID
-  name: str
-
-  class Config:
-    orm_mode = True
+  model_config = {
+    "from_attributes": True
+  }

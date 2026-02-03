@@ -1,0 +1,10 @@
+Run script:
+-----------
+docker compose exec web python -m scripts.make_admin
+
+
+Create Alembic migration:
+-------------------------
+docker compose up -d
+docker compose exec web alembic revision --autogenerate -m "MESSAGE GOES HERE"
+docker compose exec web alembic upgrade head
