@@ -8,13 +8,13 @@ from sqlalchemy import select, desc, case
 
 from app.db.session import get_db
 from app.db.models import Project, Company, User, ProjectStatus
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead
+from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectWithCompany
 from app.core.dependencies import get_current_user, require_company_member, require_company_manager
 from app.services.email import send_project_request_email
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
-@router.get("/", response_model=List[ProjectRead])
+@router.get("/", response_model=List[ProjectWithCompany])
 async def list_projects(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user)
@@ -42,7 +42,7 @@ async def list_projects(
 
 @router.post(
   "/",
-  response_model=ProjectRead,
+  response_model=ProjectWithCompany,
   status_code=status.HTTP_201_CREATED,
 )
 async def create_project(
@@ -79,7 +79,7 @@ async def create_project(
 
   return project
 
-@router.put("/{project_id}", response_model=ProjectRead)
+@router.put("/{project_id}", response_model=ProjectWithCompany)
 async def update_project(
   project_id: UUID,
   payload: ProjectUpdate,
