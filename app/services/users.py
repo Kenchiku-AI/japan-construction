@@ -2,18 +2,17 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.user import UserWithProjects
-from app.schemas.project import ProjectRead, DailyReportRead
-from app.schemas.company import CompanyRead
+from app.schemas.user import UserCompanyRead, UserProjectRead, UserWithCompanyAndProjects
+from app.schemas.project import DailyReportRead
 from app.db.models.user import User
 from app.db.models.project import Project
 
-async def build_user_with_projects(
+async def build_user_with_company_and_projects(
   user: User,
   db: AsyncSession,
-) -> UserWithProjects:
+) -> UserWithCompanyAndProjects:
   today = date.today()
-  projects_data: list[ProjectRead] = []
+  projects_data: list[UserProjectRead] = []
 
   if user.role == "admin":
     result = await db.execute(
@@ -40,13 +39,9 @@ async def build_user_with_projects(
     )
 
     projects_data.append(
-      ProjectRead(
+      UserProjectRead(
         id=project.id,
         name=project.name,
-        company=CompanyRead(
-          id=project.company.id,
-          name=project.company.name,
-        ),
         todays_report=(
           DailyReportRead(
             id=todays_report_obj.id,
@@ -62,7 +57,7 @@ async def build_user_with_projects(
       )
     )
 
-  return UserWithProjects(
+  return UserWithCompanyAndProjects(
     id=user.id,
     first_name=user.first_name,
     last_name=user.last_name,
@@ -70,5 +65,14 @@ async def build_user_with_projects(
     role=user.role,
     created_at=user.created_at,
     updated_at=user.updated_at,
+    company=(
+      UserCompanyRead(
+        id=user.company.id,
+        name=user.company.name,
+        corporate_number=user.company.corporate_number,
+      )
+      if user.company
+      else None
+    ),
     projects=projects_data,
   )

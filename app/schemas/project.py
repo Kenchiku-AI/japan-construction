@@ -1,9 +1,10 @@
 from datetime import datetime
 from pydantic import BaseModel
-from app.schemas.daily_report import DailyReportRead
-from app.schemas.company import CompanyRead
 from typing import Optional
 from uuid import UUID
+
+from app.schemas.daily_report import DailyReportRead
+from app.schemas.company import CompanyRead
 
 class ProjectBase(BaseModel):
   name: str
@@ -15,13 +16,13 @@ class ProjectCreate(ProjectBase):
 class ProjectUpdate(ProjectBase):
   pass
 
-class ProjectRead(BaseModel):
+class ProjectRead(ProjectBase):
   id: UUID
-  name: str
-  description: str
   todays_report: Optional[DailyReportRead] = None
-  company: CompanyRead
 
   model_config = {
     "from_attributes": True
   }
+
+class ProjectWithCompany(ProjectRead):
+  company: CompanyRead

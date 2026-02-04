@@ -1,19 +1,25 @@
-from uuid import UUID
+from datetime import date
 from typing import List
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, desc
+from sqlalchemy import desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 
 from app.api.invitations import invite_user
-from app.core.dependencies import get_current_user, require_company_member, require_company_manager
+from app.core.dependencies import get_current_user
+from app.db.models import Company, Project, User
 from app.db.session import get_db
-from app.db.models import Company, User, Project
-from app.schemas.company import CompanyCreate, CompanyRead
+from app.schemas.company import (
+  CompanyCreate,
+  CompanyProjectRead,
+  CompanyRead,
+  CompanyWithProjectsAndUsers,
+)
 from app.schemas.invitation import InvitationCreate
-from app.schemas.project import ProjectCreate, ProjectRead
-from app.schemas.user import UserRead
+from app.schemas.daily_report import DailyReportRead
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -80,3 +86,79 @@ async def create_company(
     )
 
   return company
+
+@router.get(
+  "/{company_id}",
+  response_model=CompanyWithProjectsAndUsers,
+)
+async def get_company(
+  company_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin" and current_user.company_id != company_id:
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Not authorized to view this company",
+    )
+
+  result = await db.execute(
+    select(Company)
+    .options(selectinload(Company.users))
+    .where(Company.id == company_id)
+  )
+  company = result.scalar_one_or_none()
+
+  if not company:
+    raise HTTPException(status_code=404, detail="Company not found")
+
+  result = await db.execute(
+    select(Project)
+    .options(
+      selectinload(Project.company),
+      selectinload(Project.daily_reports),
+    )
+    .where(Project.company_id == company_id)
+    .order_by(Project.updated_at.desc())
+    .limit(25)
+  )
+  projects = result.scalars().all()
+
+  today = date.today()
+  projects_data: list[CompanyProjectRead] = []
+
+  for project in projects:
+    todays_report_obj = next(
+      (
+        r for r in project.daily_reports
+        if r.created_at.date() == today
+      ),
+      None
+    )
+
+    projects_data.append(
+      CompanyProjectRead(
+        id=project.id,
+        name=project.name,
+        description=project.description,
+        todays_report=(
+          DailyReportRead(
+            id=todays_report_obj.id,
+            project_id=todays_report_obj.project_id,
+            start_time=todays_report_obj.start_time,
+            end_time=todays_report_obj.end_time,
+            work_performed=todays_report_obj.work_performed,
+            weather=todays_report_obj.weather,
+          )
+          if todays_report_obj
+          else None
+        ),
+      )
+    )
+
+  return CompanyWithProjectsAndUsers(
+    id=company.id,
+    name=company.name,
+    users=company.users,
+    projects=projects_data,
+  )

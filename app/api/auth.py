@@ -21,7 +21,7 @@ from app.db.models.user import User
 from app.db.session import get_db
 from app.schemas.auth import LoginRequest, TokenPayload, TokenSchema
 from app.schemas.user import UserCreate
-from app.services.users import build_user_with_projects
+from app.services.users import build_user_with_company_and_projects
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -57,7 +57,7 @@ async def login(
   await db.commit()
 
   if x_client_type == "web":
-    user_with_projects = await build_user_with_projects(user, db)
+    user_with_projects = await build_user_with_company_and_projects(user, db)
     response = JSONResponse(
       content=user_with_projects.model_dump(mode="json")
     )
@@ -184,7 +184,7 @@ async def signup(
   await db.commit()
 
   if x_client_type == "web":
-    user_with_projects = await build_user_with_projects(user, db)
+    user_with_projects = await build_user_with_company_and_projects(user, db)
     response = JSONResponse(
       content=user_with_projects.model_dump(mode="json")
     )

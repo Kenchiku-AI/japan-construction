@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr
 
+from app.schemas.daily_report import DailyReportRead
+
 class CompanyCreate(BaseModel):
   name: str
   corporate_number: str
@@ -29,6 +31,34 @@ class CompanyRead(BaseModel):
   corporate_number: Optional[str]
   created_at: datetime
   updated_at: datetime
+
+  model_config = {
+    "from_attributes": True
+  }
+
+class CompanyProjectRead(BaseModel):
+  id: UUID
+  name: str
+  description: str
+  todays_report: Optional[DailyReportRead] = None
+
+  model_config = {
+    "from_attributes": True
+  }
+
+class CompanyUserRead(BaseModel):
+  id: UUID
+  first_name: str
+  last_name: str
+  email: EmailStr
+
+  model_config = {
+    "from_attributes": True
+  }
+
+class CompanyWithProjectsAndUsers(CompanyRead):
+  projects: List[CompanyProjectRead]
+  users: List[CompanyUserRead]
 
   model_config = {
     "from_attributes": True
