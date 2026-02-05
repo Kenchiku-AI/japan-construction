@@ -23,7 +23,7 @@ from app.schemas.daily_report import DailyReportRead
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
-@router.get("/", response_model=List[CompanyRead])
+@router.get("", response_model=List[CompanyRead])
 async def list_companies(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
@@ -159,6 +159,9 @@ async def get_company(
   return CompanyWithProjectsAndUsers(
     id=company.id,
     name=company.name,
+    corporate_number=company.corporate_number,
     users=company.users,
     projects=projects_data,
+    created_at=company.created_at,
+    updated_at=company.updated_at
   )

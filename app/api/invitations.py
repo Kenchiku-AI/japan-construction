@@ -18,7 +18,7 @@ router = APIRouter(
 
 INVITE_EXPIRATION_HOURS = 48
 
-@router.post("/invite", response_model=InvitationRead)
+@router.post("", response_model=InvitationRead)
 async def invite_user(
   payload: InvitationCreate,
   background_tasks: BackgroundTasks,
@@ -59,7 +59,7 @@ async def invite_user(
 
   return InvitationRead(
     id=invitation.id,
-    email=user.email,
+    email=invitation.email,
     company_id=company.id,
     role=invitation.role,
     expires_at=expires_at,
