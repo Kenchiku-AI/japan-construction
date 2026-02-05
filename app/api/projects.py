@@ -14,7 +14,7 @@ from app.services.email import send_project_request_email
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
-@router.get("/", response_model=List[ProjectWithCompany])
+@router.get("", response_model=List[ProjectWithCompany])
 async def list_projects(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user)

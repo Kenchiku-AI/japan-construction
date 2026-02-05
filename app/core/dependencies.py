@@ -90,9 +90,12 @@ def require_company_member(user: User, company_id: UUID):
     )
 
 def require_company_manager(user: User, company_id: UUID):
+  if user.role == "admin":
+    return
+    
   require_company_member(user, company_id)
 
-  if user.company.role != "manager":
+  if user.role != "manager":
     raise HTTPException(
       status_code=status.HTTP_403_FORBIDDEN,
       detail="Manager privileges required",
