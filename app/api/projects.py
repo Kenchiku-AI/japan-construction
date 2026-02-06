@@ -41,7 +41,7 @@ async def list_projects(
   return projects
 
 @router.post(
-  "/",
+  "",
   response_model=ProjectWithCompany,
   status_code=status.HTTP_201_CREATED,
 )
