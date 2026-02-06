@@ -25,7 +25,7 @@ async def invite_user(
   current_user: User = Depends(get_current_user),
   db: AsyncSession = Depends(get_db),
 ) -> InvitationRead:
-  require_company_manager(current_user, payload)
+  require_company_manager(current_user, payload.company_id)
 
   company = await db.get(Company, payload.company_id)
   if not company:

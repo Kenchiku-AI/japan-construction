@@ -7,7 +7,7 @@ from app.db.models.user import User
 async def make_admin():
   async with AsyncSessionLocal() as session:
     result = await session.execute(
-      select(User).where(User.email == "test@example.com")
+      select(User).where(User.email == "admin@example.com")
     )
     user = result.scalar_one_or_none()
 

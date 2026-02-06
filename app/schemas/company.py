@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr
 
 from app.schemas.daily_report import DailyReportRead
+from app.schemas.user import UserRole
 
 class CompanyCreate(BaseModel):
   name: str
@@ -51,6 +52,7 @@ class CompanyUserRead(BaseModel):
   first_name: str
   last_name: str
   email: EmailStr
+  role: UserRole
 
   model_config = {
     "from_attributes": True
