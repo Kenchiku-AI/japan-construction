@@ -71,6 +71,9 @@ async def accept_invitation(
   current_user: User = Depends(get_current_user),
   db: AsyncSession = Depends(get_db),
 ):
+  if current_user.role == "admin":
+    raise HTTPException(status_code=400, detail="Admins cannot accept invitations")
+
   hashed_token = hash_token(token)
   result = await db.execute(select(Invitation).filter(Invitation.token_hash == hashed_token))
   invitation = result.scalars().first()
@@ -80,9 +83,6 @@ async def accept_invitation(
 
   if invitation.expires_at < datetime.utcnow():
     raise HTTPException(status_code=400, detail="Invitation expired")
-
-  if current_user.id != invitation.user_id:
-    raise HTTPException(status_code=403, detail="Not authorized to accept this invitation")
 
   company = await db.get(Company, invitation.company_id)
   if not company:
