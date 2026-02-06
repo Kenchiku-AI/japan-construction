@@ -48,7 +48,7 @@ async def list_companies(
   return companies
 
 @router.post(
-  "/",
+  "",
   response_model=CompanyRead,
   status_code=status.HTTP_201_CREATED,
 )
