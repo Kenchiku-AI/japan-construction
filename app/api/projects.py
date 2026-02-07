@@ -66,7 +66,7 @@ async def get_project(
 
 @router.post(
   "",
-  response_model=ProjectWithCompany,
+  response_model=ProjectRead,
   status_code=status.HTTP_201_CREATED,
 )
 async def create_project(
@@ -94,14 +94,20 @@ async def create_project(
 
   project = Project(
     **payload.model_dump(),
-    status=status_value,
+    status=status_value
   )
 
   db.add(project)
   await db.commit()
   await db.refresh(project)
 
-  return project
+  return ProjectRead(
+    id=project.id,
+    name=project.name,
+    description=project.description,
+    status=project.status,       
+    daily_reports=[]
+  )
 
 @router.put("/{project_id}", response_model=ProjectWithCompany)
 async def update_project(
