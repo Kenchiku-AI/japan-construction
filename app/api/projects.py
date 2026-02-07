@@ -5,10 +5,11 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, case
+from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
-from app.db.models import Project, Company, User, ProjectStatus
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectWithCompany
+from app.db.models import Project, Company, User, ProjectStatus, DailyReport
+from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectWithCompany
 from app.core.dependencies import get_current_user, require_company_member, require_company_manager
 from app.services.email import send_project_request_email
 
@@ -39,6 +40,29 @@ async def list_projects(
   result = await db.execute(stmt)
   projects = result.scalars().all()
   return projects
+
+@router.get("/{project_id}", response_model=ProjectRead)
+async def get_project(
+  project_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = (
+    select(Project)
+    .where(Project.id == project_id)
+    .options(selectinload(Project.daily_reports))
+  )
+
+  result = await db.execute(stmt)
+  project = result.scalars().first()
+
+  if not project:
+    raise HTTPException(status_code=404, detail="Project not found")
+
+  if current_user.role != "admin":
+    require_company_member(current_user, project.company_id)
+
+  return project
 
 @router.post(
   "",
