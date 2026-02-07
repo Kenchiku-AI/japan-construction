@@ -27,4 +27,3 @@ class ProjectRead(ProjectBase):
 
 class ProjectWithCompany(ProjectRead):
   company: CompanyRead
-  
