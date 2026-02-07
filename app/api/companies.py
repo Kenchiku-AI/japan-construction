@@ -104,7 +104,10 @@ async def get_company(
 
   result = await db.execute(
     select(Company)
-    .options(selectinload(Company.users))
+    .options(
+      selectinload(Company.users),
+      selectinload(Company.projects),
+    )
     .where(Company.id == company_id)
   )
   company = result.scalar_one_or_none()
@@ -112,56 +115,18 @@ async def get_company(
   if not company:
     raise HTTPException(status_code=404, detail="Company not found")
 
-  result = await db.execute(
-    select(Project)
-    .options(
-      selectinload(Project.company),
-      selectinload(Project.daily_reports),
-    )
-    .where(Project.company_id == company_id)
-    .order_by(Project.updated_at.desc())
-    .limit(25)
-  )
-  projects = result.scalars().all()
-
-  today = date.today()
-  projects_data: list[CompanyProjectRead] = []
-
-  for project in projects:
-    todays_report_obj = next(
-      (
-        r for r in project.daily_reports
-        if r.created_at.date() == today
-      ),
-      None
-    )
-
-    projects_data.append(
-      CompanyProjectRead(
-        id=project.id,
-        name=project.name,
-        description=project.description,
-        todays_report=(
-          DailyReportRead(
-            id=todays_report_obj.id,
-            project_id=todays_report_obj.project_id,
-            start_time=todays_report_obj.start_time,
-            end_time=todays_report_obj.end_time,
-            work_performed=todays_report_obj.work_performed,
-            weather=todays_report_obj.weather,
-          )
-          if todays_report_obj
-          else None
-        ),
-      )
-    )
+  projects = sorted(
+    company.projects,
+    key=lambda p: p.updated_at,
+    reverse=True,
+  )[:25]
 
   return CompanyWithProjectsAndUsers(
     id=company.id,
     name=company.name,
     corporate_number=company.corporate_number,
     users=company.users,
-    projects=projects_data,
+    projects=projects,
     created_at=company.created_at,
     updated_at=company.updated_at
   )

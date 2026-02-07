@@ -4,7 +4,6 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.user import UserCompanyRead, UserProjectRead, UserWithCompanyAndProjects
-from app.schemas.project import DailyReportRead
 from app.db.models.user import User
 from app.db.models.project import Project
 
@@ -20,6 +19,7 @@ async def build_user_with_company_and_projects(
   if user.role == "admin":
     projects_result = await db.execute(
       select(Project)
+      .options(selectinload(Project.daily_reports))
       .order_by(Project.updated_at.desc())
       .limit(25)
     )
@@ -36,6 +36,7 @@ async def build_user_with_company_and_projects(
 
     projects_result = await db.execute(
       select(Project)
+      .options(selectinload(Project.daily_reports))
       .where(Project.company_id == company.id)
       .order_by(Project.updated_at.desc())
       .limit(25)
@@ -54,18 +55,7 @@ async def build_user_with_company_and_projects(
       UserProjectRead(
         id=project.id,
         name=project.name,
-        todays_report=(
-          DailyReportRead(
-            id=todays_report_obj.id,
-            project_id=todays_report_obj.project_id,
-            start_time=todays_report_obj.start_time,
-            end_time=todays_report_obj.end_time,
-            work_performed=todays_report_obj.work_performed,
-            weather=todays_report_obj.weather,
-          )
-          if todays_report_obj
-          else None
-        ),
+        description=project.description
       )
     )
 

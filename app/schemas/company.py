@@ -41,7 +41,6 @@ class CompanyProjectRead(BaseModel):
   id: UUID
   name: str
   description: str
-  todays_report: Optional[DailyReportRead] = None
 
   model_config = {
     "from_attributes": True
