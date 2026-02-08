@@ -8,3 +8,10 @@ Create Alembic migration:
 docker compose up -d
 docker compose exec web alembic revision --autogenerate -m "MESSAGE GOES HERE"
 docker compose exec web alembic upgrade head
+
+
+Reset db:
+---------
+docker exec -it postgres_db psql -U postgres -c "DROP DATABASE appdb;"
+docker exec -it postgres_db psql -U postgres -c "CREATE DATABASE appdb;"
+rm -rf alembic/versions/*.py

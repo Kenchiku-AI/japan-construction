@@ -5,7 +5,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr
 
-from app.schemas.daily_report import DailyReportRead
 from app.schemas.user import UserRole
 
 class CompanyCreate(BaseModel):

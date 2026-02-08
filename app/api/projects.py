@@ -8,7 +8,7 @@ from sqlalchemy import select, desc, case
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
-from app.db.models import Project, Company, User, ProjectStatus, DailyReport
+from app.db.models import Project, Company, User, ProjectStatus
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectWithCompany
 from app.core.dependencies import get_current_user, require_company_member, require_company_manager
 from app.services.email import send_project_request_email
@@ -50,7 +50,6 @@ async def get_project(
   stmt = (
     select(Project)
     .where(Project.id == project_id)
-    .options(selectinload(Project.daily_reports))
   )
 
   result = await db.execute(stmt)
@@ -105,8 +104,7 @@ async def create_project(
     id=project.id,
     name=project.name,
     description=project.description,
-    status=project.status,       
-    daily_reports=[]
+    status=project.status
   )
 
 @router.put("/{project_id}", response_model=ProjectWithCompany)

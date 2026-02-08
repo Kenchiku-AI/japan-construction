@@ -14,13 +14,16 @@ class Company(Base):
   name = Column(String, nullable=False, index=True)
   corporate_number = Column(String, nullable=True, index=True)
 
-  users = relationship(
-    "User",
-    back_populates="company",
-  )
+  users = relationship("User", back_populates="company")
 
   projects = relationship(
     "Project",
+    back_populates="company",
+    cascade="all, delete-orphan",
+  )
+
+  company_report_templates = relationship(
+    "CompanyReportTemplate",
     back_populates="company",
     cascade="all, delete-orphan",
   )
