@@ -33,7 +33,60 @@ router = APIRouter(
   tags=["reports"]
 )
 
-# TODO: add initial field values to payload
+@router.get(
+  "",
+  response_model=list[ReportRead],
+)
+async def list_reports(
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role == "admin":
+    stmt = (
+      select(Report)
+      .order_by(Report.updated_at.desc())
+      .limit(25)
+      .options(selectinload(Report.fields))
+    )
+
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+  if not current_user.company_id:
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="User is not associated with a company",
+    )
+
+  require_company_manager(current_user, current_user.company_id)
+
+  stmt = (
+    select(Report)
+    .outerjoin(
+      Project,
+      (Report.parent_type == ReportParentType.project)
+      & (Report.parent_id == Project.id),
+    )
+    .where(
+      or_(
+        (
+          (Report.parent_type == ReportParentType.company)
+          & (Report.parent_id == current_user.company_id)
+        ),
+        (
+          (Report.parent_type == ReportParentType.project)
+          & (Project.company_id == current_user.company_id)
+        ),
+      )
+    )
+    .order_by(Report.updated_at.desc())
+    .limit(25)
+    .options(selectinload(Report.fields))
+  )
+
+  result = await db.execute(stmt)
+  return result.scalars().all()
+
 @router.post("", response_model=ReportRead, status_code=status.HTTP_201_CREATED)
 async def create_report(
   payload: ReportCreate,
