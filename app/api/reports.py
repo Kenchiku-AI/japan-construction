@@ -4,7 +4,8 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
 from app.db.models import (
@@ -15,8 +16,9 @@ from app.db.models import (
   ReportTemplate,
   ReportTemplateField,
   ReportParentType,
+  CompanyReportTemplate,
 )
-from app.schemas.report import ReportCreate, ReportUpdate, ReportRead
+from app.schemas.report import ReportCreate, ReportUpdate, ReportRead, ReportTemplateCreate, ReportTemplateRead
 from app.core.dependencies import (
   get_current_user,
   get_current_user_ws,
@@ -25,8 +27,6 @@ from app.core.dependencies import (
 )
 from app.services.reports import can_create_report, get_company_id
 from app.services.openai import transcribe_audio, get_json_from_speech, get_prompt_from_fields
-from app.services.projects import get_project_or_404
-from app.services.companies import get_company_or_404
 
 router = APIRouter(
   prefix="/reports",
@@ -72,11 +72,15 @@ async def create_report(
     fields=[],
   )
 
+  initial_values = payload.field_values or {}
+
   for template_field in template.fields:
+    value = initial_values.get(template_field.id, "")
+
     report_field = ReportField(
       template_field_id=template_field.id,
       type=template_field.type,
-      value="",
+      value=value,
     )
     report.fields.append(report_field)
 
@@ -86,11 +90,101 @@ async def create_report(
 
   return report
 
+#
 # TODO: add update report
+#
 
-# TODO: add create report template
+@router.get(
+  "/templates",
+  response_model=list[ReportTemplateRead],
+)
+async def list_report_templates(
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role == "admin":
+    stmt = (
+      select(ReportTemplate)
+      .where(ReportTemplate.is_global.is_(True))
+      .options(selectinload(ReportTemplate.fields))
+    )
 
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+  if not current_user.company_id:
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="User is not associated with a company",
+    )
+
+  require_company_manager(current_user, current_user.company_id)
+
+  stmt = (
+    select(ReportTemplate)
+    .join(CompanyReportTemplate)
+    .where(CompanyReportTemplate.company_id == current_user.company_id)
+    .options(selectinload(ReportTemplate.fields))
+  )
+
+  result = await db.execute(stmt)
+  return result.scalars().all()
+
+@router.post(
+  "/templates",
+  response_model=ReportTemplateRead,
+  status_code=status.HTTP_201_CREATED,
+)
+async def create_report_template(
+  payload: ReportTemplateCreate,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if payload.company_id:
+    require_company_manager(current_user, payload.company_id)
+  else:
+    if current_user.role != "admin":
+      raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Only admins can create global report templates",
+      )
+
+  template = ReportTemplate(
+    name=payload.name,
+    description=payload.description,
+    unique_by=payload.unique_by,
+    is_global=payload.company_id is None,
+    fields=[],
+  )
+
+  for field in payload.fields:
+    template.fields.append(
+      ReportTemplateField(
+        name=field.name,
+        description=field.description,
+        type=field.type,
+      )
+    )
+
+  db.add(template)
+  await db.flush()
+
+  if payload.company_id:
+    db.add(
+      CompanyReportTemplate(
+        company_id=payload.company_id,
+        report_template_id=template.id,
+      )
+    )
+
+  await db.commit()
+  await db.refresh(template)
+
+  return template
+
+#
 # TODO: add update report template
+#
 
 @router.websocket("/{report_id}/audio")
 async def report_audio(
