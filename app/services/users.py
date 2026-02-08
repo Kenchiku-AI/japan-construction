@@ -19,7 +19,6 @@ async def build_user_with_company_and_projects(
   if user.role == "admin":
     projects_result = await db.execute(
       select(Project)
-      .options(selectinload(Project.daily_reports))
       .order_by(Project.updated_at.desc())
       .limit(25)
     )
@@ -36,7 +35,6 @@ async def build_user_with_company_and_projects(
 
     projects_result = await db.execute(
       select(Project)
-      .options(selectinload(Project.daily_reports))
       .where(Project.company_id == company.id)
       .order_by(Project.updated_at.desc())
       .limit(25)
@@ -46,11 +44,6 @@ async def build_user_with_company_and_projects(
     projects = []
 
   for project in projects:
-    todays_report_obj = next(
-      (r for r in project.daily_reports if r.created_at.date() == today),
-      None
-    )
-
     projects_data.append(
       UserProjectRead(
         id=project.id,

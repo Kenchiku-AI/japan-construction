@@ -19,7 +19,6 @@ from app.schemas.company import (
   CompanyWithProjectsAndUsers,
 )
 from app.schemas.invitation import InvitationCreate
-from app.schemas.daily_report import DailyReportRead
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 

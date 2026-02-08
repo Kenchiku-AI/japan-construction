@@ -6,14 +6,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.db.session import get_db
-from app.db.models import DailyReport, Project, User
-from app.schemas.report import DailyReportCreate, DailyReportUpdate, DailyReportRead
+from app.db.models import Project, User
+from app.schemas.report import ReportCreate, ReportUpdate, ReportRead
 from app.core.dependencies import (
-    get_current_user,
-    get_current_user_ws,
-    require_company_manager,
-    require_company_member,
+  get_current_user,
+  get_current_user_ws,
+  require_company_manager,
+  require_company_member,
 )
+from app.services.reports import can_create_report, get_company_id
 from app.services.openai import transcribe_audio, get_json_from_speech
 
 router = APIRouter(
@@ -21,80 +22,74 @@ router = APIRouter(
   tags=["reports"]
 )
 
-@router.post("/daily", response_model=DailyReportRead, status_code=status.HTTP_201_CREATED)
-async def create_daily_report(
-  payload: DailyReportCreate,
+# TODO: add initial field values to payload
+@router.post("", response_model=ReportRead, status_code=status.HTTP_201_CREATED)
+async def create_report(
+  payload: ReportCreate,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  project = await db.get(Project, payload.project_id)
-  if not project:
-    raise HTTPException(status_code=404, detail="Project not found")
+  stmt = select(ReportTemplate).where(ReportTemplate.id == payload.template_id)
+  result = await db.execute(stmt)
+  template: ReportTemplate = result.scalar_one_or_none()
 
-  require_company_manager(current_user, project.company_id)
+  if not template:
+    raise HTTPException(status_code=404, detail="Report template not found")
 
-  result = await db.execute(
-    select(DailyReport).where(
-      DailyReport.project_id == payload.project_id,
-      DailyReport.date == payload.date,
-    )
+  parent_type = template.parent_type if hasattr(template, "parent_type") else ReportParentType.project
+
+  company_id = await get_company_id(
+    parent_type=parent_type,
+    parent_id=payload.parent_id,
+    db=db
   )
-  existing_report = result.scalar_one_or_none()
+  require_company_manager(current_user, company_id)
 
-  if existing_report:
+  if not await can_create_report(db, template, payload.parent_id, datetime.utcnow()):
     raise HTTPException(
-      status_code=409,
-      detail="A daily report already exists for this project on this date",
+      status_code=400,
+      detail=f"A report for this period ({template.unique_by}) already exists",
     )
 
-  daily_report = DailyReport(**payload.model_dump())
+  if parent_type == ReportParentType.project:
+    parent = await get_project_or_404(payload.parent_id, db)
+  elif parent_type == ReportParentType.company:
+    parent = await get_company_or_404(payload.parent_id, db)
+  else:
+    raise HTTPException(status_code=400, detail=f"Unsupported parent type: {parent_type}")
 
-  db.add(daily_report)
-  await db.commit()
-  await db.refresh(daily_report)
+  report = Report(
+    name=payload.name,
+    template_id=template.id,
+    parent_id=payload.parent_id,
+    parent_type=parent_type,
+    created_at=datetime.utcnow(),
+    updated_at=datetime.utcnow(),
+    fields=[],
+  )
 
-  return daily_report
+  for template_field in template.fields:
+    report_field = ReportField(
+      template_field_id=template_field.id,
+      type=template_field.type,
+      value="",
+    )
+    report.fields.append(report_field)
 
-@router.put("/daily/{report_id}", response_model=DailyReportRead)
-async def update_daily_report(
-  report_id: UUID,
-  payload: DailyReportUpdate,
-  db: AsyncSession = Depends(get_db),
-  current_user: User = Depends(get_current_user),
-):
-  report = await db.get(DailyReport, report_id)
-  if not report:
-    raise HTTPException(status_code=404, detail="Report not found")
-
-  if current_user.role != "admin":
-    require_company_member(current_user, report.project.company_id)
-
-  for field, value in payload.model_dump(exclude_unset=True).items():
-    setattr(report, field, value)
-
+  db.add(report)
   await db.commit()
   await db.refresh(report)
 
   return report
 
-@router.delete("/daily/{report_id}", status_code=204)
-async def delete_daily_report(
-  report_id: UUID,
-  db: AsyncSession = Depends(get_db),
-  current_user: User = Depends(get_current_user),
-):
-  report = await db.get(DailyReport, report_id)
-  if not report:
-    raise HTTPException(status_code=404, detail="Daily report not found")
+# TODO: add update report
 
-  require_company_manager(current_user, report.project.company_id)
+# TODO: add create report template
 
-  await db.delete(report)
-  await db.commit()
-  return None
+# TODO: add update report template
 
-@router.websocket("/daily/{report_id}/audio")
-async def daily_report_audio(
+@router.websocket("/{report_id}/audio")
+async def report_audio(
   ws: WebSocket,
   report_id: UUID,
   db: AsyncSession = Depends(get_db),
@@ -103,34 +98,41 @@ async def daily_report_audio(
 
   current_user = await get_current_user_ws(ws)
 
-  report = await db.get(DailyReport, report_id)
+  report = await db.get(Report, report_id)
   if not report:
     await ws.close(code=1008)
     return
 
-  require_company_manager(current_user, report.project_id)
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db
+  )
+  require_company_manager(current_user, company_id)
 
   async def on_complete(text: str):
-    json = await get_json_from_speech(text)
+    stmt = select(ReportTemplateField).where(
+      ReportTemplateField.template_id == report.template_id
+    )
+    result = await db.execute(stmt)
+    fields: list[ReportTemplateField] = result.scalars().all()
+    
+    prompt = get_prompt_from_fields(fields)
+    json = await get_json_from_speech(text, prompt)
 
-    if "start_time" in json:
-      report.start_time = time.fromisoformat(json["start_time"])
-
-    if "end_time" in json:
-      report.end_time = time.fromisoformat(json["end_time"])
-
-    if "work_performed" in json:
-      report.work_performed = json["work_performed"]
-
-    if "weather" in json:
-      report.weather = json["weather"]
+    # TO DO: Fill in report fields based on json returned
+    #
+    # EXAMPLE:
+    #
+    # if "start_time" in json:
+    #   report.start_time = time.fromisoformat(json["start_time"])
 
     await db.commit()
     await db.refresh(report)
 
     await ws.send_json({
-        "type": "daily_report_updated",
-        "payload": {"id": str(report.id)},
+      "type": "report_updated",
+      "payload": {"id": str(report.id)},
     })
 
   await transcribe_audio(ws, on_complete)

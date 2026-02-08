@@ -3,12 +3,13 @@ import asyncio
 import json
 
 from pydantic import BaseModel
-from typing import Callable, Awaitable, Literal
+from typing import Callable, Awaitable, Literal, List
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.prompts import NORMALIZE_DAILY_REPORT_PROMPT
 from app.schema.agent import PartialTranscript, FinalTranscript
+from app.models.report import ReportTemplateField
 
 openai.api_key = settings.OPENAI_API_KEY
 
@@ -58,17 +59,17 @@ async def transcribe_audio(
   async with stream:
     await asyncio.gather(receive_audio(), receive_events())
 
-async def get_json_from_speech(text: str) -> dict:
+async def get_json_from_speech(speech_text: str, prompt: str) -> dict:
   response = openai.ChatCompletion.create(
     model="gpt-4.1-nano",
     messages=[
       {
         "role": "system",
-        "content": NORMALIZE_DAILY_REPORT_PROMPT,
+        "content": prompt,
       },
       {
         "role": "user",
-        "content": text,
+        "content": speech_text,
       },
     ],
     temperature=0,
@@ -81,3 +82,6 @@ async def get_json_from_speech(text: str) -> dict:
     return json.loads(content)
   except json.JSONDecodeError:
     raise ValueError("Failed to parse normalized daily report JSON")
+
+def get_prompt_from_fields(fields: List[ReportTemplateField]) -> str:
+  return ""
