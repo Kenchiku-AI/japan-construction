@@ -1,12 +1,21 @@
-from datetime import time
+from datetime import datetime, time
 from uuid import UUID
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.db.session import get_db
-from app.db.models import Project, User
+from app.db.models import (
+  Project,
+  User,
+  Report,
+  ReportField,
+  ReportTemplate,
+  ReportTemplateField,
+  ReportParentType,
+)
 from app.schemas.report import ReportCreate, ReportUpdate, ReportRead
 from app.core.dependencies import (
   get_current_user,
@@ -15,7 +24,9 @@ from app.core.dependencies import (
   require_company_member,
 )
 from app.services.reports import can_create_report, get_company_id
-from app.services.openai import transcribe_audio, get_json_from_speech
+from app.services.openai import transcribe_audio, get_json_from_speech, get_prompt_from_fields
+from app.services.projects import get_project_or_404
+from app.services.companies import get_company_or_404
 
 router = APIRouter(
   prefix="/reports",
@@ -50,13 +61,6 @@ async def create_report(
       status_code=400,
       detail=f"A report for this period ({template.unique_by}) already exists",
     )
-
-  if parent_type == ReportParentType.project:
-    parent = await get_project_or_404(payload.parent_id, db)
-  elif parent_type == ReportParentType.company:
-    parent = await get_company_or_404(payload.parent_id, db)
-  else:
-    raise HTTPException(status_code=400, detail=f"Unsupported parent type: {parent_type}")
 
   report = Report(
     name=payload.name,
