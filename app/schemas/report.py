@@ -3,12 +3,13 @@ from uuid import UUID
 from datetime import datetime
 from pydantic import BaseModel
 
-from app.models.report import ReportParentType, ReportFieldType
+from app.models.report import ReportParentType, ReportFieldType, ReportUniqueBy
 
 class ReportCreate(BaseModel):
   name: str
   parent_id: UUID
   template_id: UUID
+  field_values: Optional[Dict[UUID, str]] = None
 
 class ReportFieldRead(BaseModel):
   template_field_id: UUID
@@ -32,3 +33,15 @@ class ReportRead(BaseModel):
   model_config = {
     "from_attributes": True
   }
+
+class ReportTemplateFieldCreate(BaseModel):
+  name: str
+  description: Optional[str] = None
+  type: ReportFieldType
+
+class ReportTemplateCreate(BaseModel):
+  name: str
+  description: Optional[str] = None
+  unique_by: Optional[ReportUniqueBy] = None
+  fields: List[ReportTemplateFieldCreate]
+  company_id: Optional[UUID] = None
