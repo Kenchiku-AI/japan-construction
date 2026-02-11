@@ -18,7 +18,7 @@ from app.db.models import (
   ReportParentType,
   CompanyReportTemplate,
 )
-from app.schemas.report import ReportCreate, ReportUpdate, ReportRead, ReportTemplateCreate, ReportTemplateRead
+from app.schemas.report import ReportCreate, ReportRead, ReportTemplateCreate, ReportTemplateRead
 from app.core.dependencies import (
   get_current_user,
   get_current_user_ws,
@@ -160,6 +160,7 @@ async def list_report_templates(
       select(ReportTemplate)
       .where(ReportTemplate.is_global.is_(True))
       .options(selectinload(ReportTemplate.fields))
+      .order_by(ReportTemplate.updated_at.desc())
     )
 
     result = await db.execute(stmt)
@@ -178,6 +179,7 @@ async def list_report_templates(
     .join(CompanyReportTemplate)
     .where(CompanyReportTemplate.company_id == current_user.company_id)
     .options(selectinload(ReportTemplate.fields))
+    .order_by(ReportTemplate.updated_at.desc())
   )
 
   result = await db.execute(stmt)
@@ -207,6 +209,7 @@ async def create_report_template(
     description=payload.description,
     unique_by=payload.unique_by,
     is_global=payload.company_id is None,
+    parent_type=payload.parent_type,
     fields=[],
   )
 
@@ -231,7 +234,15 @@ async def create_report_template(
     )
 
   await db.commit()
-  await db.refresh(template)
+  
+  stmt = (
+    select(ReportTemplate)
+    .options(selectinload(ReportTemplate.fields))
+    .where(ReportTemplate.id == template.id)
+  )
+
+  result = await db.execute(stmt)
+  template = result.scalar_one()
 
   return template
 

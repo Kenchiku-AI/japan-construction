@@ -14,4 +14,5 @@ pydantic-settings
 pydantic[email]
 python-multipart
 
+openai>=1.0.0
 sendgrid

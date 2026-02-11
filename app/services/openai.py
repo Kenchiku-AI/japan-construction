@@ -8,8 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.prompts import NORMALIZE_DAILY_REPORT_PROMPT
-from app.schema.agent import PartialTranscript, FinalTranscript
-from app.models.report import ReportTemplateField
+from app.db.models.report import ReportTemplateField
 
 openai.api_key = settings.OPENAI_API_KEY
 
