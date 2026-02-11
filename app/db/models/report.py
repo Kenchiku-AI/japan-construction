@@ -41,6 +41,8 @@ class ReportTemplate(Base):
   description = Column(String, nullable=True)
 
   is_global = Column(Boolean, nullable=False, default=False)
+  
+  parent_type = Column(SQLEnum(ReportParentType), nullable=False)
 
   unique_by = Column(
     SQLEnum(ReportUniqueBy, name="report_unique_by"),
@@ -83,7 +85,6 @@ class Report(Base):
   __tablename__ = "reports"
 
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-
   name = Column(String, nullable=False)
 
   template_id = Column(
@@ -115,6 +116,7 @@ class ReportField(Base):
   __tablename__ = "report_fields"
 
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+  name = Column(String, nullable=False)
 
   report_id = Column(
     UUID(as_uuid=True),

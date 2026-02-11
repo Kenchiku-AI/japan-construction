@@ -10,7 +10,7 @@ class Settings(BaseSettings):
   SECURE_COOKIE: bool = False # Set this to True in prod
   SENDGRID_API_KEY: str
   FROM_EMAIL: str
-  OPENAI_AI_KEY: str
+  OPENAI_API_KEY: str
 
   class Config:
     env_file = ".env"
