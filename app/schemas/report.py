@@ -9,7 +9,6 @@ class ReportCreate(BaseModel):
   name: str
   parent_id: UUID
   template_id: UUID
-  field_values: Optional[Dict[UUID, str]] = None
 
 class ReportUpdate(BaseModel):
   name: str

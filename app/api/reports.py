@@ -4,7 +4,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
@@ -93,7 +93,11 @@ async def create_report(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  stmt = select(ReportTemplate).where(ReportTemplate.id == payload.template_id)
+  stmt = (
+    select(ReportTemplate)
+    .where(ReportTemplate.id == payload.template_id)
+    .options(selectinload(ReportTemplate.fields))
+  )
   result = await db.execute(stmt)
   template: ReportTemplate = result.scalar_one_or_none()
 
@@ -122,24 +126,30 @@ async def create_report(
     parent_type=parent_type,
     created_at=datetime.utcnow(),
     updated_at=datetime.utcnow(),
-    fields=[],
   )
 
-  initial_values = payload.field_values or {}
+  db.add(report)
+  await db.flush()
 
   for template_field in template.fields:
-    value = initial_values.get(template_field.id, "")
-
     report_field = ReportField(
+      name=template_field.name,
+      report_id=report.id,
       template_field_id=template_field.id,
       type=template_field.type,
-      value=value,
+      value="",
     )
-    report.fields.append(report_field)
+    db.add(report_field)
 
-  db.add(report)
   await db.commit()
-  await db.refresh(report)
+  
+  stmt = (
+    select(Report)
+    .where(Report.id == report.id)
+    .options(selectinload(Report.fields))
+  )
+  result = await db.execute(stmt)
+  report = result.scalar_one()
 
   return report
 
