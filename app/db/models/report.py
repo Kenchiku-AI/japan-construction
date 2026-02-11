@@ -133,7 +133,7 @@ class ReportField(Base):
   )
 
   type = Column(SQLEnum(ReportFieldType), nullable=False)
-  value = Column(String, nullable=False)
+  value = Column(String, nullable=True)
 
   report = relationship("Report", back_populates="fields")
   template_field = relationship("ReportTemplateField")

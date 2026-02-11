@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.report import Report, ReportTemplate, ReportUniqueBy, ReportParentType
+from app.db.models.project import Project
 
 async def can_create_report(
   db: AsyncSession,
