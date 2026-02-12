@@ -18,7 +18,7 @@ from app.db.models import (
   ReportParentType,
   CompanyReportTemplate,
 )
-from app.schemas.report import ReportCreate, ReportRead, ReportTemplateCreate, ReportTemplateRead
+from app.schemas.report import ReportCreate, ReportRead, ReportTemplateCreate, ReportTemplateRead, ReportUpdate
 from app.core.dependencies import (
   get_current_user,
   get_current_user_ws,
@@ -151,6 +151,8 @@ async def create_report(
   result = await db.execute(stmt)
   report = result.scalar_one()
 
+  report.company_id = company_id
+
   return report
 
 #
@@ -259,6 +261,101 @@ async def create_report_template(
 #
 # TODO: add update report template
 #
+
+@router.get(
+    "/{report_id}",
+    response_model=ReportRead,
+)
+async def get_report(
+    report_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+  stmt = (
+    select(Report)
+    .where(Report.id == report_id)
+    .options(selectinload(Report.fields))
+  )
+
+  result = await db.execute(stmt)
+  report: Report | None = result.scalar_one_or_none()
+
+  if report is None:
+    raise HTTPException(404, "Report not found")
+
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db,
+  )
+
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  report.company_id = company_id
+
+  return report
+  
+@router.patch(
+  "/{report_id}",
+  response_model=ReportRead,
+)
+async def update_report(
+  report_id: UUID,
+  payload: ReportUpdate,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = (
+    select(Report)
+    .where(Report.id == report_id)
+    .options(selectinload(Report.fields))
+  )
+  result = await db.execute(stmt)
+  report: Report | None = result.scalar_one_or_none()
+
+  if not report:
+    raise HTTPException(status_code=404, detail="Report not found")
+
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db,
+  )
+
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  if payload.name is not None:
+    report.name = payload.name
+
+  report.updated_at = datetime.utcnow()
+
+  if payload.field_values:
+    field_map = {f.template_field_id: f for f in report.fields}
+
+    for field_id, value in payload.field_values.items():
+      if field_id not in field_map:
+        raise HTTPException(
+          status_code=400,
+          detail=f"Field {field_id} does not belong to this report",
+        )
+
+      field_map[field_id].value = value
+
+  await db.commit()
+
+  stmt = (
+    select(Report)
+    .where(Report.id == report.id)
+    .options(selectinload(Report.fields))
+  )
+  result = await db.execute(stmt)
+  report = result.scalar_one()
+
+  report.company_id = company_id
+
+  return report
 
 @router.websocket("/{report_id}/audio")
 async def report_audio(
