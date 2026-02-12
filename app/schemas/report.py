@@ -11,12 +11,13 @@ class ReportCreate(BaseModel):
   template_id: UUID
 
 class ReportUpdate(BaseModel):
-  name: str
+  name: Optional[str] = None
   field_values: Optional[Dict[UUID, str]] = None
 
 class ReportFieldRead(BaseModel):
   template_field_id: UUID
   type: ReportFieldType
+  name: str
   value: str
 
   model_config = {
@@ -32,6 +33,7 @@ class ReportRead(BaseModel):
   created_at: datetime
   updated_at: datetime
   fields: List[ReportFieldRead]
+  company_id: Optional[UUID] = None
 
   model_config = {
     "from_attributes": True
