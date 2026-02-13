@@ -258,18 +258,14 @@ async def create_report_template(
 
   return template
 
-#
-# TODO: add update report template
-#
-
 @router.get(
-    "/{report_id}",
-    response_model=ReportRead,
+  "/{report_id}",
+  response_model=ReportRead,
 )
 async def get_report(
-    report_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+  report_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
 ):
   stmt = (
     select(Report)
@@ -405,3 +401,38 @@ async def report_audio(
     })
 
   await transcribe_audio(ws, on_complete)
+
+@router.get(
+  "/templates/{report_template_id}",
+  response_model=ReportRead,
+)
+async def get_report_template(
+  report_template_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = (
+    select(ReportTemplate)
+    .where(ReportTemplate.id == report_template_id)
+    .options(selectinload(ReportTemplate.fields))
+  )
+  # TODO: If user is admin, get report template by id
+  #       if not, check if manager and if so, confirm CompanyReportTemplate for user's company_id exists
+  # stmt = (
+  #   select(ReportTemplate)
+  #   .join(CompanyReportTemplate)
+  #   .where(CompanyReportTemplate.company_id == current_user.company_id)
+  #   .options(selectinload(ReportTemplate.fields))
+  #   .order_by(ReportTemplate.updated_at.desc())
+  # )
+  result = await db.execute(stmt)
+  template: ReportTemplate = result.scalar_one_or_none()
+
+  if not template:
+    raise HTTPException(status_code=404, detail="Report template not found")
+
+  return template
+
+#
+# TODO: add update report template
+#
