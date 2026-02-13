@@ -327,9 +327,8 @@ async def update_report(
 
   report.updated_at = datetime.utcnow()
 
-  # TODO: template_field_id no longer exists - fix this
   if payload.field_values:
-    field_map = {f.template_field_id: f for f in report.fields}
+    field_map = {f.id: f for f in report.fields}
 
     for field_id, value in payload.field_values.items():
       if field_id not in field_map:
