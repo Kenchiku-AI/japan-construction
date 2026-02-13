@@ -117,6 +117,9 @@ class ReportField(Base):
 
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
   name = Column(String, nullable=False)
+  description = Column(String, nullable=True)
+  type = Column(SQLEnum(ReportFieldType), nullable=False)
+  value = Column(String, nullable=True)
 
   report_id = Column(
     UUID(as_uuid=True),
@@ -125,18 +128,7 @@ class ReportField(Base):
     index=True,
   )
 
-  template_field_id = Column(
-    UUID(as_uuid=True),
-    ForeignKey("report_template_fields.id", ondelete="RESTRICT"),
-    nullable=False,
-    index=True,
-  )
-
-  type = Column(SQLEnum(ReportFieldType), nullable=False)
-  value = Column(String, nullable=True)
-
   report = relationship("Report", back_populates="fields")
-  template_field = relationship("ReportTemplateField")
 
 class CompanyReportTemplate(Base):
   __tablename__ = "company_report_templates"

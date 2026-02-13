@@ -134,10 +134,10 @@ async def create_report(
   for template_field in template.fields:
     report_field = ReportField(
       name=template_field.name,
-      report_id=report.id,
-      template_field_id=template_field.id,
+      description=template_field.description,
       type=template_field.type,
       value="",
+      report_id=report.id,
     )
     db.add(report_field)
 
@@ -327,6 +327,7 @@ async def update_report(
 
   report.updated_at = datetime.utcnow()
 
+  # TODO: template_field_id no longer exists - fix this
   if payload.field_values:
     field_map = {f.template_field_id: f for f in report.fields}
 

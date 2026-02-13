@@ -15,7 +15,6 @@ class ReportUpdate(BaseModel):
   field_values: Optional[Dict[UUID, str]] = None
 
 class ReportFieldRead(BaseModel):
-  template_field_id: UUID
   type: ReportFieldType
   name: str
   value: str
