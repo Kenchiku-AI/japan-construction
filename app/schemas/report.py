@@ -15,6 +15,7 @@ class ReportUpdate(BaseModel):
   field_values: Optional[Dict[UUID, str]] = None
 
 class ReportFieldRead(BaseModel):
+  id: UUID
   type: ReportFieldType
   name: str
   value: str
@@ -49,7 +50,12 @@ class ReportTemplateCreate(BaseModel):
   parent_type: ReportParentType
   unique_by: Optional[ReportUniqueBy] = None
   fields: List[ReportTemplateFieldCreate]
-  company_id: Optional[UUID] = None
+
+class ReportTemplateFieldRead(BaseModel):
+  id: UUID
+  name: str
+  description: Optional[str] = None
+  type: ReportFieldType
 
 class ReportTemplateRead(BaseModel):
   id: UUID
@@ -58,5 +64,22 @@ class ReportTemplateRead(BaseModel):
   parent_type: ReportParentType
   unique_by: Optional[ReportUniqueBy] = None
   is_global: bool
-  fields: List[ReportTemplateFieldCreate]
+  fields: List[ReportTemplateFieldRead]
+
+class ReportTemplateFieldUpdate(BaseModel):
+  name: str
+  description: str
+  type: str
+
+
+class ReportTemplateUpdate(BaseModel):
+  name: str | None = None
+  description: str | None = None
+  parent_type: str | None = None
+  unique_by: str | None = None
+  fields: list[ReportTemplateFieldUpdate] | None = None
+
+class ShareReportTemplateRequest(BaseModel):
+  company_id: UUID
+  template_id: UUID
   

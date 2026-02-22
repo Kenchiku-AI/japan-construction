@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.prompts import NORMALIZE_DAILY_REPORT_PROMPT
-from app.db.models.report import ReportTemplateField
+from app.db.models.report import ReportField
 
 openai.api_key = settings.OPENAI_API_KEY
 
@@ -32,8 +32,16 @@ async def transcribe_audio(
 
   async def receive_audio():
     while True:
-      audio_chunk = await ws.receive_bytes()
-      await stream.send_audio(audio_chunk)
+      msg = await ws.receive()
+
+      if msg["type"] == "websocket.disconnect":
+        break
+
+      if "text" in msg and msg["text"] == "STOP":
+        break
+
+      if "bytes" in msg:
+        await stream.send_audio(msg["bytes"])
 
   async def receive_events():
     async for event in stream:
@@ -55,8 +63,13 @@ async def transcribe_audio(
 
         await on_complete(event.text)
 
-  async with stream:
-    await asyncio.gather(receive_audio(), receive_events())
+  try:
+    async with stream:
+      await asyncio.gather(receive_audio(), receive_events())
+  except Exception:
+    pass
+  finally:
+    await ws.close()
 
 async def get_json_from_speech(speech_text: str, prompt: str) -> dict:
   response = openai.ChatCompletion.create(
@@ -82,5 +95,46 @@ async def get_json_from_speech(speech_text: str, prompt: str) -> dict:
   except json.JSONDecodeError:
     raise ValueError("Failed to parse normalized daily report JSON")
 
-def get_prompt_from_fields(fields: List[ReportTemplateField]) -> str:
-  return ""
+def get_prompt_from_fields(fields: list[ReportField], output_language: str) -> str:
+  field_lines = []
+
+  for f in fields:
+    field_lines.append(
+      f'- id: "{f.id}"\n'
+      f'  name: "{f.name}"\n'
+      f'  description: "{f.description}"'
+    )
+
+  field_block = "\n".join(field_lines)
+
+  return f"""
+You are an assistant that extracts structured report data from speech transcripts.
+
+The speech may be in English or Japanese.
+Automatically detect the input language.
+
+Your task:
+Convert the speech into a JSON object.
+
+Rules:
+- Return ONLY valid JSON
+- Do not include explanations
+- Keys must be the field IDs listed below
+- Values must be concise, professional, factual text
+- Remove filler words, rambling, and casual phrasing
+- Normalize wording into formal report language
+- Do not invent information
+- If a field is not mentioned, omit it entirely
+- Do not output null values
+- Do not include fields not listed
+- Output all values in {output_language}
+
+Fields:
+{field_block}
+
+Output format example:
+{{
+  "field_id_1": "Normalized value",
+  "field_id_2": "Another value"
+}}
+""".strip()
