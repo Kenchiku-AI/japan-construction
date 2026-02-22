@@ -1,15 +1,14 @@
-import openai
+from openai import AsyncOpenAI
 import asyncio
 import json
 
 from pydantic import BaseModel
-from typing import Callable, Awaitable, Literal, List
-from sqlalchemy.orm import Session
-
+from typing import Callable, Awaitable, Literal
+from fastapi import WebSocket
 from app.core.config import settings
 from app.db.models.report import ReportField
 
-openai.api_key = settings.OPENAI_API_KEY
+client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
 class PartialTranscript(BaseModel):
   type: Literal["partial_transcript"]
@@ -20,114 +19,105 @@ class FinalTranscript(BaseModel):
   text: str
 
 async def transcribe_audio(
-  ws,
+  ws: WebSocket,
   on_complete: Callable[[str], Awaitable[None]]
 ):
-  stream = openai.audio.transcriptions.stream(
-    model="gpt-4o-transcribe",
-    sample_rate=16000,
-    encoding="pcm16",
-  )
-
   completed = asyncio.Event()
   cancelled = asyncio.Event()
   final_received = asyncio.Event()
 
   full_text_parts: list[str] = []
 
-  async def receive_audio():
-    try:
-      while not cancelled.is_set():
-        msg = await ws.receive()
+  async with client.realtime.connect(
+    model="gpt-4o-realtime-transcribe"
+  ) as session:
 
-        if msg["type"] == "websocket.disconnect":
-          cancelled.set()
-          break
+    await session.configure(
+      input_audio_format="pcm16",
+      input_audio_transcription={"model": "gpt-4o-transcribe"}
+    )
 
-        text = msg.get("text")
-
-        if text == "CANCEL":
-          cancelled.set()
-          break
-
-        if text == "COMPLETE":
-          completed.set()
-          break
-
-        if completed.is_set() or cancelled.is_set():
-          continue
-
-        if msg.get("bytes") is not None:
-          await stream.send_audio(msg["bytes"])
-
-    finally:
+    async def receive_audio():
       try:
-        await stream.finish()
-      except:
-        pass
+        while not cancelled.is_set():
+          msg = await ws.receive()
 
-      if completed.is_set() and not cancelled.is_set():
+          if msg["type"] == "websocket.disconnect":
+            cancelled.set()
+            break
+
+          text = msg.get("text")
+
+          if text == "CANCEL":
+            cancelled.set()
+            break
+
+          if text == "COMPLETE":
+            completed.set()
+            break
+
+          if completed.is_set() or cancelled.is_set():
+            continue
+
+          if msg.get("bytes") is not None:
+            await session.input_audio_buffer.append(
+              audio=msg["bytes"]
+            )
+
+      finally:
         try:
-          await asyncio.wait_for(final_received.wait(), timeout=2)
-        except asyncio.TimeoutError:
+          await session.close()
+        except:
           pass
 
-  async def receive_events():
-    while not cancelled.is_set():
-      if cancelled.is_set():
-        return
+        if completed.is_set() and not cancelled.is_set():
+          try:
+            await asyncio.wait_for(final_received.wait(), timeout=2)
+          except asyncio.TimeoutError:
+            pass
 
-      try:
-        event = await asyncio.wait_for(
-          stream.__anext__(),
-          timeout=0.5
-        )
-      except asyncio.TimeoutError:
-        continue
-      except StopAsyncIteration:
-        return
-
-      if event.type == "transcript.partial":
-        await ws.send_json({
-          "type": "partial_transcript",
-          "text": event.text,
-        })
-
-      if event.type == "transcript.final":
+    async def receive_events():
+      async for event in session:
         if cancelled.is_set():
           return
 
-        full_text_parts.append(event.text)
-        final_received.set()
+        if event.type == "response.audio_transcript.delta":
+          await ws.send_json({
+            "type": "partial_transcript",
+            "text": event.delta,
+          })
+        elif event.type == "response.audio_transcript.done":
+          text = event.transcript.strip()
 
-        await ws.send_json({
-          "type": "final_transcript",
-          "text": event.text,
-        })
+          if text:
+            full_text_parts.append(text)
+            final_received.set()
 
-        if completed.is_set():
-          full_text = " ".join(full_text_parts).strip()
-          await on_complete(full_text)
+            await ws.send_json({
+              "type": "final_transcript",
+              "text": text,
+            })
+        elif event.type == "response.completed":
+          if completed.is_set() and not cancelled.is_set():
+            full_text = " ".join(full_text_parts).strip()
+            await on_complete(full_text)
           return
 
-  try:
-    async with stream:
+    try:
       await asyncio.gather(
         receive_audio(),
         receive_events()
       )
-
-  except Exception as e:
-    print("transcription error:", e)
-
-  finally:
-    try:
-      await ws.close()
-    except:
-      pass
+    except Exception as e:
+      print("transcription error:", e)
+    finally:
+      try:
+        await ws.close()
+      except:
+        pass
 
 async def get_json_from_speech(speech_text: str, prompt: str) -> dict:
-  response = openai.ChatCompletion.create(
+  response = await client.chat.completions.create(
     model="gpt-4.1-nano",
     messages=[
       {
@@ -151,7 +141,7 @@ async def get_json_from_speech(speech_text: str, prompt: str) -> dict:
   try:
     return json.loads(content)
   except json.JSONDecodeError:
-    raise ValueError("Failed to parse normalized daily report JSON")
+    raise ValueError("Failed to parse JSON")
 
 def get_prompt_from_fields(fields: list[ReportField], output_language: str) -> str:
   field_lines = []

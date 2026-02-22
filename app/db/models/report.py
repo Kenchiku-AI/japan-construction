@@ -16,12 +16,6 @@ from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
-class ReportFieldType(str, Enum):
-  string = "string"
-  number = "number"
-  boolean = "boolean"
-  date = "date"
-
 class ReportParentType(str, Enum):
   project = "project"
   company = "company"
@@ -77,7 +71,6 @@ class ReportTemplateField(Base):
 
   name = Column(String, nullable=False)
   description = Column(String, nullable=False)
-  type = Column(SQLEnum(ReportFieldType), nullable=False)
 
   template = relationship("ReportTemplate", back_populates="fields")
 
@@ -118,7 +111,6 @@ class ReportField(Base):
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
   name = Column(String, nullable=False)
   description = Column(String, nullable=False)
-  type = Column(SQLEnum(ReportFieldType), nullable=False)
   value = Column(String, nullable=True)
 
   report_id = Column(
