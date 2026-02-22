@@ -2,7 +2,7 @@ from datetime import datetime, time
 from uuid import UUID
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
@@ -35,7 +35,7 @@ from app.core.dependencies import (
   require_company_member,
 )
 from app.services.reports import can_create_report, get_company_id
-from app.services.openai import transcribe_audio, get_json_from_speech, get_prompt_from_fields
+from app.services.openai import transcribe_and_extract_json
 
 router = APIRouter(
   prefix="/reports",
@@ -162,10 +162,6 @@ async def create_report(
   report.company_id = company_id
 
   return report
-
-#
-# TODO: add update report
-#
 
 @router.get(
   "/templates",
@@ -364,16 +360,22 @@ async def update_report(
   return report
 
 @router.websocket("/{report_id}/audio")
-async def report_audio(ws: WebSocket, report_id: UUID):
+async def report_audio(
+  ws: WebSocket, 
+  report_id: str, 
+  access_token: str, 
+  language: str = "Japanese"
+):
   await ws.accept()
 
-  token = ws.query_params.get("access_token")  
-  output_language = ws.query_params.get("language", "Japanese")
-
   async for db in get_db():
-    current_user = await get_current_user_ws(token, db)
+    current_user = await get_current_user_ws(access_token, db)
 
-    report = await db.get(Report, report_id)
+    result = await db.execute(
+      select(Report).where(Report.id == report_id)
+                    .options(selectinload(Report.fields))
+    )
+    report: Report = result.scalar_one_or_none()
     if not report:
       await ws.close(code=1008)
       return
@@ -385,26 +387,29 @@ async def report_audio(ws: WebSocket, report_id: UUID):
     )
 
     require_company_manager(current_user, company_id)
-
     break
 
-  async def on_complete(text: str):
-    stmt = select(ReportField).where(
-      ReportField.report_id == report.id
+  fields: list[ReportField] = report.fields
+
+  async def on_partial(partial_json: dict):
+    await ws.send_json({"type": "partial_json", "data": partial_json})
+
+  async def on_complete(final_json: dict):
+    await ws.send_json({"type": "final_json", "data": final_json})
+
+  try:
+    await transcribe_and_extract_json(
+      ws=ws,
+      fields=fields,
+      output_language=language,
+      on_partial=on_partial,
+      on_complete=on_complete
     )
-    result = await db.execute(stmt)
-    fields: list[ReportField] = result.scalars().all()
-
-    prompt = get_prompt_from_fields(fields, output_language)
-
-    json_data = await get_json_from_speech(text, prompt)
-
-    await ws.send_json({
-      "type": "report_updated",
-      "payload": json_data,
-    })
-
-  await transcribe_audio(ws, on_complete)
+  except WebSocketDisconnect:
+    print("WebSocket disconnected")
+  except Exception as e:
+    await ws.send_json({"type": "error", "message": str(e)})
+    await ws.close()
 
 @router.get(
   "/templates/{report_template_id}",
