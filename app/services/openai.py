@@ -7,7 +7,6 @@ from typing import Callable, Awaitable, Literal, List
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.prompts import NORMALIZE_DAILY_REPORT_PROMPT
 from app.db.models.report import ReportField
 
 openai.api_key = settings.OPENAI_API_KEY
@@ -30,46 +29,102 @@ async def transcribe_audio(
     encoding="pcm16",
   )
 
+  completed = asyncio.Event()
+  cancelled = asyncio.Event()
+  final_received = asyncio.Event()
+
+  full_text_parts: list[str] = []
+
   async def receive_audio():
-    while True:
-      msg = await ws.receive()
+    try:
+      while not cancelled.is_set():
+        msg = await ws.receive()
 
-      if msg["type"] == "websocket.disconnect":
-        break
+        if msg["type"] == "websocket.disconnect":
+          cancelled.set()
+          break
 
-      if "text" in msg and msg["text"] == "STOP":
-        break
+        text = msg.get("text")
 
-      if "bytes" in msg:
-        await stream.send_audio(msg["bytes"])
+        if text == "CANCEL":
+          cancelled.set()
+          break
+
+        if text == "COMPLETE":
+          completed.set()
+          break
+
+        if completed.is_set() or cancelled.is_set():
+          continue
+
+        if msg.get("bytes") is not None:
+          await stream.send_audio(msg["bytes"])
+
+    finally:
+      try:
+        await stream.finish()
+      except:
+        pass
+
+      if completed.is_set() and not cancelled.is_set():
+        try:
+          await asyncio.wait_for(final_received.wait(), timeout=2)
+        except asyncio.TimeoutError:
+          pass
 
   async def receive_events():
-    async for event in stream:
-      if event.type == "transcript.partial":
-        await ws.send_json(
-          PartialTranscript(
-            type="partial_transcript",
-            text=event.text,
-          ).model_dump()
+    while not cancelled.is_set():
+      if cancelled.is_set():
+        return
+
+      try:
+        event = await asyncio.wait_for(
+          stream.__anext__(),
+          timeout=0.5
         )
+      except asyncio.TimeoutError:
+        continue
+      except StopAsyncIteration:
+        return
+
+      if event.type == "transcript.partial":
+        await ws.send_json({
+          "type": "partial_transcript",
+          "text": event.text,
+        })
 
       if event.type == "transcript.final":
-        await ws.send_json(
-          FinalTranscript(
-            type="final_transcript",
-            text=event.text,
-          ).model_dump()
-        )
+        if cancelled.is_set():
+          return
 
-        await on_complete(event.text)
+        full_text_parts.append(event.text)
+        final_received.set()
+
+        await ws.send_json({
+          "type": "final_transcript",
+          "text": event.text,
+        })
+
+        if completed.is_set():
+          full_text = " ".join(full_text_parts).strip()
+          await on_complete(full_text)
+          return
 
   try:
     async with stream:
-      await asyncio.gather(receive_audio(), receive_events())
-  except Exception:
-    pass
+      await asyncio.gather(
+        receive_audio(),
+        receive_events()
+      )
+
+  except Exception as e:
+    print("transcription error:", e)
+
   finally:
-    await ws.close()
+    try:
+      await ws.close()
+    except:
+      pass
 
 async def get_json_from_speech(speech_text: str, prompt: str) -> dict:
   response = openai.ChatCompletion.create(
@@ -88,7 +143,10 @@ async def get_json_from_speech(speech_text: str, prompt: str) -> dict:
     response_format={"type": "json_object"},
   )
 
-  content = response.choices[0].message.content
+  msg = response.choices[0].message
+  content = msg.content if isinstance(msg.content, str) else "".join(
+    part.get("text","") for part in msg.content
+  )
 
   try:
     return json.loads(content)
@@ -128,6 +186,7 @@ Rules:
 - Do not output null values
 - Do not include fields not listed
 - Output all values in {output_language}
+- Output must be valid RFC8259 JSON
 
 Fields:
 {field_block}
