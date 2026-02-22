@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
 from app.db.models import (
+  Company,
   Project,
   User,
   Report,
@@ -18,7 +19,15 @@ from app.db.models import (
   ReportParentType,
   CompanyReportTemplate,
 )
-from app.schemas.report import ReportCreate, ReportRead, ReportTemplateCreate, ReportTemplateRead, ReportUpdate
+from app.schemas.report import (
+  ReportCreate, 
+  ReportRead, 
+  ReportTemplateCreate, 
+  ReportTemplateRead, 
+  ReportUpdate,
+  ReportTemplateUpdate,
+  ShareReportTemplateRequest
+)
 from app.core.dependencies import (
   get_current_user,
   get_current_user_ws,
@@ -207,20 +216,23 @@ async def create_report_template(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  if payload.company_id:
-    require_company_manager(current_user, payload.company_id)
-  else:
-    if current_user.role != "admin":
-      raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Only admins can create global report templates",
-      )
+  if current_user.role not in {"admin", "manager"}:
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Only admins or managers can create templates",
+    )
+  
+  if current_user.role == "manager" and not current_user.company_id:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="Manager must belong to a company",
+    )
 
   template = ReportTemplate(
     name=payload.name,
     description=payload.description,
     unique_by=payload.unique_by,
-    is_global=payload.company_id is None,
+    is_global=current_user.role == "admin",
     parent_type=payload.parent_type,
     fields=[],
   )
@@ -237,10 +249,10 @@ async def create_report_template(
   db.add(template)
   await db.flush()
 
-  if payload.company_id:
+  if current_user.role == "manager":
     db.add(
       CompanyReportTemplate(
-        company_id=payload.company_id,
+        company_id=current_user.company_id,
         report_template_id=template.id,
       )
     )
@@ -354,12 +366,11 @@ async def update_report(
   return report
 
 @router.websocket("/{report_id}/audio")
-async def report_audio(
-  ws: WebSocket,
-  report_id: UUID,
-  db: AsyncSession = Depends(get_db),
-):
+async def report_audio(ws: WebSocket, report_id: UUID):
   await ws.accept()
+
+  init = await ws.receive_json()
+  output_language = init.get("language", "English")
 
   current_user = await get_current_user_ws(ws)
 
@@ -376,55 +387,54 @@ async def report_audio(
   require_company_manager(current_user, company_id)
 
   async def on_complete(text: str):
-    stmt = select(ReportTemplateField).where(
-      ReportTemplateField.template_id == report.template_id
+    stmt = select(ReportField).where(
+      ReportField.report_id == report.id
     )
     result = await db.execute(stmt)
-    fields: list[ReportTemplateField] = result.scalars().all()
-    
-    prompt = get_prompt_from_fields(fields)
-    json = await get_json_from_speech(text, prompt)
+    fields: list[ReportField] = result.scalars().all()
 
-    # TO DO: Fill in report fields based on json returned
-    #
-    # EXAMPLE:
-    #
-    # if "start_time" in json:
-    #   report.start_time = time.fromisoformat(json["start_time"])
+    prompt = get_prompt_from_fields(fields, output_language)
 
-    await db.commit()
-    await db.refresh(report)
+    json_data = await get_json_from_speech(text, prompt)
 
     await ws.send_json({
       "type": "report_updated",
-      "payload": {"id": str(report.id)},
+      "payload": json_data,
     })
 
   await transcribe_audio(ws, on_complete)
 
 @router.get(
   "/templates/{report_template_id}",
-  response_model=ReportRead,
+  response_model=ReportTemplateRead,
 )
 async def get_report_template(
   report_template_id: UUID,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  stmt = (
-    select(ReportTemplate)
-    .where(ReportTemplate.id == report_template_id)
-    .options(selectinload(ReportTemplate.fields))
-  )
-  # TODO: If user is admin, get report template by id
-  #       if not, check if manager and if so, confirm CompanyReportTemplate for user's company_id exists
-  # stmt = (
-  #   select(ReportTemplate)
-  #   .join(CompanyReportTemplate)
-  #   .where(CompanyReportTemplate.company_id == current_user.company_id)
-  #   .options(selectinload(ReportTemplate.fields))
-  #   .order_by(ReportTemplate.updated_at.desc())
-  # )
+  if current_user.role == "admin":
+    stmt = (
+      select(ReportTemplate)
+      .where(ReportTemplate.id == report_template_id)
+      .options(selectinload(ReportTemplate.fields))
+    )
+  elif current_user.role == "manager":
+    stmt = (
+      select(ReportTemplate)
+      .join(CompanyReportTemplate, CompanyReportTemplate.report_template_id == ReportTemplate.id)
+      .where(
+        ReportTemplate.id == report_template_id,
+        CompanyReportTemplate.company_id == current_user.company_id
+      )
+      .options(selectinload(ReportTemplate.fields))
+    )
+  else:
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Not authorized to view this report template",
+    )
+
   result = await db.execute(stmt)
   template: ReportTemplate = result.scalar_one_or_none()
 
@@ -433,6 +443,135 @@ async def get_report_template(
 
   return template
 
-#
-# TODO: add update report template
-#
+@router.patch(
+  "/templates/{report_template_id}",
+  response_model=ReportTemplateRead,
+)
+async def update_report_template(
+  report_template_id: UUID,
+  payload: ReportTemplateUpdate,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = (
+    select(ReportTemplate)
+    .options(selectinload(ReportTemplate.fields))
+    .where(ReportTemplate.id == report_template_id)
+  )
+  result = await db.execute(stmt)
+  template = result.scalar_one_or_none()
+
+  if not template:
+    raise HTTPException(status_code=404, detail="Template not found")
+
+  if template.is_global:
+    if current_user.role != "admin":
+      raise HTTPException(
+        status_code=403,
+        detail="Only admins can update global templates",
+      )
+  else:
+    if current_user.role not in {"admin", "manager"}:
+      raise HTTPException(status_code=403, detail="Not authorized")
+
+    if current_user.role == "manager":
+      link_stmt = select(CompanyReportTemplate).where(
+        CompanyReportTemplate.company_id == current_user.company_id,
+        CompanyReportTemplate.report_template_id == template.id,
+      )
+      link = (await db.execute(link_stmt)).scalar_one_or_none()
+
+      if not link:
+        raise HTTPException(
+          status_code=403,
+          detail="Cannot edit template belonging to another company",
+        )
+
+  if payload.name is not None:
+    template.name = payload.name
+
+  if payload.description is not None:
+    template.description = payload.description
+
+  if payload.unique_by is not None:
+    template.unique_by = payload.unique_by
+
+  if payload.parent_type is not None:
+    template.parent_type = payload.parent_type
+
+  if payload.fields is not None:
+    for f in template.fields:
+      await db.delete(f)
+
+    await db.flush()
+
+    template.fields = [
+      ReportTemplateField(
+        name=f.name,
+        description=f.description,
+        type=f.type,
+      )
+      for f in payload.fields
+    ]
+
+  await db.commit()
+
+  result = await db.execute(stmt)
+  return result.scalar_one()
+
+@router.post(
+  "/templates/share",
+  status_code=status.HTTP_201_CREATED,
+)
+async def share_report_template(
+  payload: ShareReportTemplateRequest,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin":
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Only admins can share report templates",
+    )
+
+  template_stmt = select(ReportTemplate).where(
+    ReportTemplate.id == payload.template_id
+  )
+  template = (await db.execute(template_stmt)).scalar_one_or_none()
+
+  if not template:
+    raise HTTPException(status_code=404, detail="Report template not found")
+
+  if not template.is_global:
+    raise HTTPException(
+      status_code=400,
+      detail="Only global templates can be shared with companies",
+    )
+
+  company_stmt = select(Company).where(Company.id == payload.company_id)
+  company = (await db.execute(company_stmt)).scalar_one_or_none()
+
+  if not company:
+    raise HTTPException(status_code=404, detail="Company not found")
+
+  existing_stmt = select(CompanyReportTemplate).where(
+    CompanyReportTemplate.company_id == payload.company_id,
+    CompanyReportTemplate.report_template_id == payload.template_id,
+  )
+  existing = (await db.execute(existing_stmt)).scalar_one_or_none()
+
+  if existing:
+    raise HTTPException(
+      status_code=409,
+      detail="Company already has this template",
+    )
+
+  link = CompanyReportTemplate(
+    company_id=payload.company_id,
+    report_template_id=payload.template_id,
+  )
+
+  db.add(link)
+  await db.commit()
+
+  return {"message": "Template shared successfully"}

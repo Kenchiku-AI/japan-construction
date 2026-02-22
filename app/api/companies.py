@@ -46,6 +46,35 @@ async def list_companies(
 
   return companies
 
+@router.get("/search", response_model=List[CompanyRead])
+async def search_companies(
+  q: str,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin":
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Only admins can search companies",
+    )
+
+  search = f"%{q.lower()}%"
+
+  stmt = (
+    select(Company)
+    .where(
+      func.lower(Company.name).like(search)
+      | Company.corporate_number.like(search)
+    )
+    .order_by(Company.name.asc())
+    .limit(25)
+  )
+
+  result = await db.execute(stmt)
+  companies = result.scalars().all()
+
+  return companies
+
 @router.post(
   "",
   response_model=CompanyRead,
