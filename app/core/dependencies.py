@@ -44,39 +44,20 @@ async def get_current_user(
 
   return user
 
-async def get_current_user_ws(ws: WebSocket) -> User:
-  token = (
-    ws.cookies.get("access_token")
-    or ws.query_params.get("access_token")
-  )
-
+async def get_current_user_ws(token: str, db: AsyncSession) -> User:
   if not token:
-    await ws.close(code=status.WS_1008_POLICY_VIOLATION)
     raise RuntimeError("Missing access token")
 
   try:
-    payload = jwt.decode(
-      token,
-      settings.SECRET_KEY,
-      algorithms=["HS256"],
-    )
+    payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
     user_id = payload.get("sub")
   except JWTError:
-    await ws.close(code=status.WS_1008_POLICY_VIOLATION)
     raise RuntimeError("Invalid access token")
 
-  if not user_id:
-    await ws.close(code=status.WS_1008_POLICY_VIOLATION)
-    raise RuntimeError("Invalid token payload")
-
-  db: Session = next(get_db())
-  user = db.get(User, user_id)
-
+  user = await db.get(User, user_id)
   if not user:
-    await ws.close(code=status.WS_1008_POLICY_VIOLATION)
     raise RuntimeError("User not found")
 
-  ws.state.user = user
   return user
 
 def require_company_member(user: User, company_id: UUID):

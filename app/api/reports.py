@@ -144,7 +144,6 @@ async def create_report(
     report_field = ReportField(
       name=template_field.name,
       description=template_field.description,
-      type=template_field.type,
       value="",
       report_id=report.id,
     )
@@ -242,7 +241,6 @@ async def create_report_template(
       ReportTemplateField(
         name=field.name,
         description=field.description,
-        type=field.type,
       )
     )
 
@@ -369,22 +367,26 @@ async def update_report(
 async def report_audio(ws: WebSocket, report_id: UUID):
   await ws.accept()
 
-  init = await ws.receive_json()
-  output_language = init.get("language", "English")
+  token = ws.query_params.get("access_token")  
+  output_language = ws.query_params.get("language", "Japanese")
 
-  current_user = await get_current_user_ws(ws)
+  async for db in get_db():
+    current_user = await get_current_user_ws(token, db)
 
-  report = await db.get(Report, report_id)
-  if not report:
-    await ws.close(code=1008)
-    return
+    report = await db.get(Report, report_id)
+    if not report:
+      await ws.close(code=1008)
+      return
 
-  company_id = await get_company_id(
-    parent_type=report.parent_type,
-    parent_id=report.parent_id,
-    db=db
-  )
-  require_company_manager(current_user, company_id)
+    company_id = await get_company_id(
+      parent_type=report.parent_type,
+      parent_id=report.parent_id,
+      db=db
+    )
+
+    require_company_manager(current_user, company_id)
+
+    break
 
   async def on_complete(text: str):
     stmt = select(ReportField).where(
@@ -509,7 +511,6 @@ async def update_report_template(
       ReportTemplateField(
         name=f.name,
         description=f.description,
-        type=f.type,
       )
       for f in payload.fields
     ]
