@@ -67,7 +67,21 @@ Output format example:
   last_audio_time = asyncio.get_event_loop().time()
   last_sent_fields: dict[str, str] = {}
 
-  async with client.realtime.connect(model="gpt-4o-mini-realtime-preview") as session:
+  async with client.realtime.connect(model="gpt-realtime-mini") as connection:
+    await connection.session.update(
+      session={
+        "audio": {
+          "input": {
+            "transcription": {
+              "model": "gpt-4o-mini-transcribe",
+              "partial_results": True
+            }
+          },
+          "turn_detection": {"type": "none"}
+        }
+      }
+    )
+
     async def receive_audio():
       nonlocal last_audio_time
 
@@ -106,14 +120,14 @@ Output format example:
           if chunk is None:
             break
 
-          await session.send({
+          await connection.send({
             "type": "input_audio_buffer.append",
             "audio": base64.b64encode(chunk).decode()
           })
 
           await asyncio.sleep(0)
 
-        await session.send({"type": "input_audio_buffer.commit"})
+        await connection.send({"type": "input_audio_buffer.commit"})
       except Exception as e:
         cancelled.set()
         await safe_send(ws, {"type": "error", "message": str(e)})
@@ -143,13 +157,13 @@ Output format example:
           return
 
         try:
-          event = await asyncio.wait_for(session.recv(), timeout=0.5)
+          event = await asyncio.wait_for(connection.recv(), timeout=0.5)
         except asyncio.TimeoutError:
           continue
         except StopAsyncIteration:
           break
 
-        print("event received:", event)
+        print("event received - type:", event.type)
 
         if event.type == "transcript.partial":
           current_partial = event.text
@@ -206,19 +220,17 @@ async def get_json_from_speech(
   prompt: str,
   output_language: str = "English"
 ) -> dict:
-  """
-  Convert speech text into structured JSON using ChatCompletion,
-  enforcing the desired output language.
-  """
   response = await client.chat.completions.create(
     model="gpt-4.1-nano",
     messages=[
-      {"role": "system", "content": f"{prompt}\nOutput all values in {output_language}."},
+      {"role": "system", "content": prompt},
       {"role": "user", "content": speech_text},
     ],
     temperature=0,
     response_format={"type": "json_object"},
   )
+
+  print("JSON from speech", response)
 
   msg = response.choices[0].message
   content = msg.content if isinstance(msg.content, str) else "".join(
