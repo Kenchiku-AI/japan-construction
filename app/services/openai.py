@@ -182,8 +182,8 @@ Output format example:
             )
 
             await send_field_diffs(partial_json)
-          except Exception:
-            pass
+          except Exception as e:
+            print("partial transcript error:", e)
         elif event.type == "transcript.final":
           full_text_parts.append(event.text)
           await safe_send(ws, {"type": "final_transcript", "text": event.text})
@@ -193,6 +193,7 @@ Output format example:
             final_json = await get_json_from_speech(full_text, prompt, output_language)
             await send_field_diffs(final_json, is_final=True)
           except Exception as e:
+            print("final transcript error:", e)
             await safe_send(ws, {"type": "error", "message": str(e)})
           return
 
@@ -218,7 +219,7 @@ Output format example:
 async def get_json_from_speech(
   speech_text: str,
   prompt: str,
-  output_language: str = "English"
+  output_language: str = "Japanese"
 ) -> dict:
   response = await client.chat.completions.create(
     model="gpt-4.1-nano",
