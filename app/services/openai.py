@@ -1,5 +1,6 @@
 from openai import AsyncOpenAI
 import asyncio
+import base64
 import json
 
 from pydantic import BaseModel
@@ -56,16 +57,29 @@ Output format example:
 }}
 """.strip()
 
-  session = await client.realtime.connect(model="gpt-4o-realtime")
-
   completed = asyncio.Event()
   cancelled = asyncio.Event()
   full_text_parts: list[str] = []
+  audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+  last_processed_length = 0
+  last_audio_time = asyncio.get_event_loop().time()
+
+  print("hellooooooooooooooooooooo")
+
+  session = await client.realtime.connect(model="gpt-4o-realtime-preview")
+  print("WHATS UPPPPPPPPPPPPPPPPPPPPP")
 
   async def receive_audio():
+    nonlocal last_audio_time
+
     try:
       while not cancelled.is_set():
-        msg = await ws.receive()
+        try:
+          msg = await ws.receive()
+        except Exception:
+          cancelled.set()
+          break
+
         if msg["type"] == "websocket.disconnect":
           cancelled.set()
           break
@@ -73,23 +87,47 @@ Output format example:
         text = msg.get("text")
         if text == "CANCEL":
           cancelled.set()
+          await audio_queue.put(None)
           break
         if text == "COMPLETE":
           completed.set()
           break
 
         if msg.get("bytes") is not None:
-          await session.send(
-            {"type": "input_audio_buffer.append", "audio": msg["bytes"]}
-          )
+          print("GOT BYTES MESSAGE!!!!!", msg["type"], base64.b64encode(msg["bytes"]).decode("utf-8")[:20])
+          last_audio_time = asyncio.get_event_loop().time()
+          await audio_queue.put(msg["bytes"])
     finally:
-        try:
-          await session.send({"type": "input_audio_buffer.commit"})
-        except:
-          pass
+      await audio_queue.put(None)
+  
+  async def send_audio():
+    try:
+      while True:
+        chunk = await audio_queue.get()
+
+        if chunk is None:
+          break
+
+        await session.send({
+          "type": "input_audio_buffer.append",
+          "audio": base64.b64encode(chunk).decode()
+        })
+
+        await asyncio.sleep(0)
+
+      await session.send({"type": "input_audio_buffer.commit"})
+    except Exception as e:
+      cancelled.set()
+      await safe_send(ws, {"type": "error", "message": str(e)})
 
   async def receive_events():
+    nonlocal last_processed_length
+
     while not cancelled.is_set():
+      if asyncio.get_event_loop().time() - last_audio_time > 30:
+        cancelled.set()
+        return
+
       try:
         event = await asyncio.wait_for(session.__anext__(), timeout=0.5)
       except asyncio.TimeoutError:
@@ -97,65 +135,93 @@ Output format example:
       except StopAsyncIteration:
         break
 
+      print("EVENT!", event)
+
       if event.type == "transcript.partial":
-        full_text_parts.append(event.text)
-        await ws.send_json({"type": "partial_transcript", "text": event.text})
+        current_partial = event.text
+        await safe_send(ws, {"type": "partial_transcript", "text": event.text})
 
         try:
-          partial_text = " ".join(full_text_parts).strip()
+          partial_text = " ".join(full_text_parts + [current_partial])
+
+          if len(partial_text) - last_processed_length < 25:
+            continue
+
+          last_processed_length = len(partial_text)
+
           partial_json = await get_json_from_speech(
             partial_text, prompt, output_language
           )
           await on_partial(partial_json)
         except Exception:
           pass
-
       elif event.type == "transcript.final":
         full_text_parts.append(event.text)
-        await ws.send_json({"type": "final_transcript", "text": event.text})
+        await safe_send(ws, {"type": "final_transcript", "text": event.text})
         full_text = " ".join(full_text_parts).strip()
+        
         try:
           final_json = await get_json_from_speech(full_text, prompt, output_language)
           await on_complete(final_json)
         except Exception as e:
-          await ws.send_json({"type": "error", "message": str(e)})
+          await safe_send(ws, {"type": "error", "message": str(e)})
         return
 
   try:
-    async with session:
-      await asyncio.gather(receive_audio(), receive_events())
+    tasks = [
+      asyncio.create_task(receive_audio()),
+      asyncio.create_task(send_audio()),
+      asyncio.create_task(receive_events()),
+    ]
+
+    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+    for t in pending:
+      t.cancel()
+  except Exception as e:
+    await safe_send(ws, {"type": "error", "message": str(e)})
   finally:
+    try:
+      await session.close()
+    except:
+      pass
+
     try:
       await ws.close()
     except:
       pass
 
-
 async def get_json_from_speech(
-    speech_text: str,
-    prompt: str,
-    output_language: str = "English"
+  speech_text: str,
+  prompt: str,
+  output_language: str = "English"
 ) -> dict:
-    """
-    Convert speech text into structured JSON using ChatCompletion,
-    enforcing the desired output language.
-    """
-    response = await client.chat.completions.create(
-        model="gpt-4.1-nano",
-        messages=[
-            {"role": "system", "content": f"{prompt}\nOutput all values in {output_language}."},
-            {"role": "user", "content": speech_text},
-        ],
-        temperature=0,
-        response_format={"type": "json_object"},
-    )
+  """
+  Convert speech text into structured JSON using ChatCompletion,
+  enforcing the desired output language.
+  """
+  response = await client.chat.completions.create(
+    model="gpt-4.1-nano",
+    messages=[
+      {"role": "system", "content": f"{prompt}\nOutput all values in {output_language}."},
+      {"role": "user", "content": speech_text},
+    ],
+    temperature=0,
+    response_format={"type": "json_object"},
+  )
 
-    msg = response.choices[0].message
-    content = msg.content if isinstance(msg.content, str) else "".join(
-        part.get("text", "") for part in msg.content
-    )
+  msg = response.choices[0].message
+  content = msg.content if isinstance(msg.content, str) else "".join(
+    part.get("text", "") for part in msg.content
+  )
 
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        raise ValueError("Failed to parse normalized daily report JSON")
+  try:
+    return json.loads(content)
+  except json.JSONDecodeError:
+    raise ValueError("Failed to parse normalized daily report JSON")
+
+async def safe_send(ws, data):
+  try:
+    await ws.send_json(data)
+  except RuntimeError:
+    pass

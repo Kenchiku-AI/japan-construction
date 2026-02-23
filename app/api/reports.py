@@ -376,7 +376,9 @@ async def report_audio(
                     .options(selectinload(Report.fields))
     )
     report: Report = result.scalar_one_or_none()
+
     if not report:
+      print("no report!")
       await ws.close(code=1008)
       return
 
