@@ -378,7 +378,6 @@ async def report_audio(
     report: Report = result.scalar_one_or_none()
 
     if not report:
-      print("no report!")
       await ws.close(code=1008)
       return
 
