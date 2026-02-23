@@ -67,10 +67,7 @@ Output format example:
   last_audio_time = asyncio.get_event_loop().time()
   last_sent_fields: dict[str, str] = {}
 
-  print("hellooooooooooooooooooooo")
-
   async with client.realtime.connect(model="gpt-4o-realtime-preview") as session:
-    print("WHATS UPPPPPPPPPPPPPPPPPPPPP")
     async def receive_audio():
       nonlocal last_audio_time
 
@@ -96,7 +93,6 @@ Output format example:
             break
 
           if msg.get("bytes") is not None:
-            print("GOT BYTES MESSAGE!!!!!", msg["type"], base64.b64encode(msg["bytes"]).decode("utf-8")[:20])
             last_audio_time = asyncio.get_event_loop().time()
             await audio_queue.put(msg["bytes"])
       finally:
@@ -147,13 +143,11 @@ Output format example:
           return
 
         try:
-          event = await asyncio.wait_for(session.__anext__(), timeout=0.5)
+          event = await asyncio.wait_for(session.recv(), timeout=0.5)
         except asyncio.TimeoutError:
           continue
         except StopAsyncIteration:
           break
-
-        print("EVENT!", event)
 
         if event.type == "transcript.partial":
           current_partial = event.text
