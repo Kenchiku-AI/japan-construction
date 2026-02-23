@@ -59,10 +59,13 @@ Output format example:
 
   completed = asyncio.Event()
   cancelled = asyncio.Event()
+
   full_text_parts: list[str] = []
   audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+
   last_processed_length = 0
   last_audio_time = asyncio.get_event_loop().time()
+  last_sent_fields: dict[str, str] = {}
 
   print("hellooooooooooooooooooooo")
 
@@ -120,6 +123,22 @@ Output format example:
       cancelled.set()
       await safe_send(ws, {"type": "error", "message": str(e)})
 
+  async def send_field_diffs(new_json: dict, is_final=False):  # NEW
+    changed = {}
+
+    for k, v in new_json.items():
+      if last_sent_fields.get(k) != v:
+        changed[k] = v
+        last_sent_fields[k] = v
+
+    if changed:
+      await safe_send(ws, {
+        "type": "field_update" if not is_final else "final_fields",
+        "fields": changed
+      })
+
+      await on_partial(changed) if not is_final else await on_complete(new_json)
+
   async def receive_events():
     nonlocal last_processed_length
 
@@ -152,7 +171,8 @@ Output format example:
           partial_json = await get_json_from_speech(
             partial_text, prompt, output_language
           )
-          await on_partial(partial_json)
+
+          await send_field_diffs(partial_json)
         except Exception:
           pass
       elif event.type == "transcript.final":
@@ -162,7 +182,7 @@ Output format example:
         
         try:
           final_json = await get_json_from_speech(full_text, prompt, output_language)
-          await on_complete(final_json)
+          await send_field_diffs(final_json, is_final=True)
         except Exception as e:
           await safe_send(ws, {"type": "error", "message": str(e)})
         return
