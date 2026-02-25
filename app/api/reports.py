@@ -392,19 +392,11 @@ async def report_audio(
 
   fields: list[ReportField] = report.fields
 
-  async def on_partial(partial_json: dict):
-    await ws.send_json({"type": "partial_json", "data": partial_json})
-
-  async def on_complete(final_json: dict):
-    await ws.send_json({"type": "final_json", "data": final_json})
-
   try:
     await transcribe_and_extract_json(
       ws=ws,
       fields=fields,
-      output_language=language,
-      on_partial=on_partial,
-      on_complete=on_complete
+      output_language=language
     )
   except WebSocketDisconnect:
     print("WebSocket disconnected")

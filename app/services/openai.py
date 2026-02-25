@@ -16,9 +16,7 @@ client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 async def transcribe_and_extract_json(
   ws: WebSocket,
   fields: List[ReportField],
-  output_language: str,
-  on_partial: Callable[[dict], Awaitable[None]],
-  on_complete: Callable[[dict], Awaitable[None]],
+  output_language: str
 ):
   field_lines = [
     f'- id: "{f.id}"\n  name: "{f.name}"\n  description: "{f.description}"'
@@ -41,44 +39,42 @@ Fields:
 {field_block}
 """.strip()
 
+  print("prompt:", prompt)
+
   cancelled = asyncio.Event()
   audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
-
-
-  full_text_parts: list[str] = []
   last_sent_fields: dict[str, str] = {}
-  last_processed_length = 0
 
-  async with client.realtime.connect(
-    model="gpt-realtime-mini",
-    audio={
-      "input": {
-        "format": {"type": "audio/pcm", "rate": 24000},
-        "transcription": {"model": "gpt-4o-mini-transcribe"},
-        "turn_detection": None,
+  SILENCE_TIMEOUT = 10
+  last_audio_time = asyncio.get_event_loop().time()
+
+  async with client.realtime.connect(model="gpt-realtime-mini") as connection:
+    await connection.session.update(
+      session={
+        "type": "realtime",
+        "audio": {
+          "input": {
+            "transcription": {
+              "model": "gpt-4o-mini-transcribe"
+            }
+          }
+        }
       }
-    }
-  ) as connection:
-    # await connection.session.update(
-    #   session={
-    #     "audio": {
-    #       "input": {
-    #         "transcription": {
-    #           "model": "gpt-4o-mini-transcribe",
-    #           "partial_results": True
-    #         }
-    #       },
-    #       "turn_detection": {"type": "none"}
-    #     }
-    #   }
-    # )
+    )
 
     async def receive_audio():
       nonlocal last_audio_time
 
       try:
         while not cancelled.is_set():
-          msg = await ws.receive()
+          try:
+            msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+          except asyncio.TimeoutError:
+            if asyncio.get_event_loop().time() - last_audio_time > SILENCE_TIMEOUT:
+              cancelled.set()
+              await audio_queue.put(None)
+              return
+            continue
 
           if msg["type"] == "websocket.disconnect":
             cancelled.set()
@@ -91,20 +87,21 @@ Fields:
             break
 
           if msg.get("bytes") is not None:
+            last_audio_time = asyncio.get_event_loop().time()
             await audio_queue.put(msg["bytes"])
-      finally:
+      except Exception as e:
+        cancelled.set()
         await audio_queue.put(None)
+        await safe_send(ws, {"type": "error", "message": str(e)})
     
     async def send_audio():
       try:
-        while True:
+        while not cancelled.is_set():
           chunk = await audio_queue.get()
 
           if chunk is None:
-            await connection.send({
-              "type": "input_audio_buffer.commit"
-            })
-            return
+            await connection.send({"type": "input_audio_buffer.commit"})
+            continue
 
           await connection.send({
             "type": "input_audio_buffer.append",
@@ -115,67 +112,74 @@ Fields:
         await safe_send(ws, {"type": "error", "message": str(e)})
 
     async def receive_events():
-      nonlocal last_processed_length
+      buffer = ""
+      last_emit_time = asyncio.get_event_loop().time()
+      last_processed_length = 0
+      MIN_INTERVAL = 1
+      SENTENCE_END = (".", "?", "!", "。", "？", "！")
 
       async for event in connection:
         if cancelled.is_set():
           break
 
         etype = getattr(event, "type", None)
--
-        if etype == "response.output_audio_transcript.delta":
+
+        if etype == "conversation.item.input_audio_transcription.delta":
           delta = event.delta
           if not delta:
             continue
 
-          full_text_parts.append(delta)
+          buffer += delta
+          confidence = getattr(event, "confidence", None)
 
-          combined = "".join(full_text_parts)
+          await safe_send(ws, {"type": "partial_transcript", "text": buffer})
 
-          if len(combined) <= last_processed_length:
-            continue
+          now = asyncio.get_event_loop().time()
 
-          last_processed_length = len(combined)
+          ended_sentence = buffer.endswith(SENTENCE_END)
 
-          await safe_send(ws, {
-            "type": "partial_transcript",
-            "text": combined
-          })
+          time_trigger = (
+            (now - last_emit_time) > MIN_INTERVAL
+            and len(buffer) - last_processed_length > 20
+          )
 
-          try:
-            partial_json = await get_json_from_speech(
-              combined, prompt, output_language
-            )
+          should_process = ended_sentence or time_trigge
 
-            changed = {
-              k: v for k, v in partial_json.items()
-              if last_sent_fields.get(k) != v
-            }
+          if should_process:
+            last_emit_time = now
 
-            if changed:
-              last_sent_fields.update(changed)
-              await on_partial(changed)
-          except Exception:
-            pass
-        elif etype == "response.output_audio_transcript.done":
-          final_text = event.transcript or ""
-          full_text_parts.append(final_text)
+            new_text = buffer[last_processed_length:].strip()
 
-          combined = "".join(full_text_parts)
+            if not new_text:
+              continue
 
-          await safe_send(ws, {
-            "type": "final_transcript",
-            "text": combined
-          })
+            last_processed_length = len(buffer)
 
-          try:
-            final_json = await get_json_from_speech(
-              combined, prompt, output_language
-            )
-            await on_complete(final_json)
-          except Exception as e:
-            await safe_send(ws, {"type": "error", "message": str(e)})
-          return
+            try:
+              partial_json = await get_json_from_speech(new_text, prompt)
+
+              changed_fields = {
+                k: v for k, v in partial_json.items()
+                if last_sent_fields.get(k) != v
+              }
+
+              if changed_fields:
+                last_sent_fields.update(changed_fields)
+                await safe_send(ws, {"type": "partial_json", "data": changed_fields})
+            except Exception:
+              pass
+        elif etype == "conversation.item.input_audio_transcription.completed":
+          final_text = buffer.strip()
+          buffer = ""
+
+          await safe_send(ws, {"type": "final_transcript", "text": final_text})
+
+          if final_text:
+            try:
+              final_json = await get_json_from_speech(final_text, prompt)
+              await safe_send(ws, {"type": "final_json", "data": final_json})
+            except Exception as e:
+              await safe_send(ws, {"type": "error", "message": str(e)})
         elif etype == "error":
           cancelled.set()
           await safe_send(ws, {
@@ -190,12 +194,9 @@ Fields:
       asyncio.create_task(receive_events()),
     ]
 
-    done, pending = await asyncio.wait(
-      tasks,
-      return_when=asyncio.FIRST_COMPLETED
-    )
+    await cancelled.wait()
 
-    for t in pending:
+    for t in tasks:
       t.cancel()
 
   try:
@@ -205,8 +206,7 @@ Fields:
 
 async def get_json_from_speech(
   speech_text: str,
-  prompt: str,
-  output_language: str = "Japanese"
+  prompt: str
 ) -> dict:
   response = await client.chat.completions.create(
     model="gpt-4.1-nano",
@@ -218,12 +218,10 @@ async def get_json_from_speech(
     response_format={"type": "json_object"},
   )
 
-  print("JSON from speech", response)
-
   msg = response.choices[0].message
-  content = msg.content if isinstance(msg.content, str) else "".join(
-    part.get("text", "") for part in msg.content
-  )
+  content = msg.content or ""
+  if not isinstance(content, str):
+    content = "".join(part.get("text", "") for part in content)
 
   try:
     return json.loads(content)
