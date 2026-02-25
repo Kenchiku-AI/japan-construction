@@ -1,7 +1,11 @@
+from openai import AsyncOpenAI
 from typing import List
 import json
+
+from app.core.config import settings
 from app.db.models.report import ReportField
-from app.services.openai import client
+
+client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
 async def transcribe_and_extract_json(
   speech_text: str,
