@@ -26,6 +26,8 @@ from app.schemas.report import (
   ReportTemplateRead, 
   ReportUpdate,
   ReportTemplateUpdate,
+  ReportSpeechRequest,
+  ReportSpeechResponse,
   ShareReportTemplateRequest
 )
 from app.core.dependencies import (
@@ -359,19 +361,43 @@ async def update_report(
 
   return report
 
-@router.post("/speech", response_model=JSONResponse)
-async def speech(
-  payload: ReportSpeechRequest,
-  fields: List[ReportField],
-  output_language: str = "Japanese"
+@router.post(
+  "/{report_id}/speech",
+  response_model=ReportSpeechResponse,
+)
+async def report_speech(
+  report_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
 ):
+  stmt = (
+    select(Report)
+    .where(Report.id == report_id)
+    .options(selectinload(Report.fields))
+  )
+
+  result = await db.execute(stmt)
+  report: Report | None = result.scalar_one_or_none()
+
+  if report is None:
+    raise HTTPException(404, "Report not found")
+
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db,
+  )
+
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
   try:
     changed_fields = await transcribe_and_extract_json(
       speech_text=payload.text,
-      fields=fields,
-      output_language=output_language
+      fields=report.fields,
+      output_language=payload.output_language
     )
-    return {"data": changed_fields}
+    return ReportSpeechResponse(field_values=changed_fields)
   except Exception as e:
     raise HTTPException(
       status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
