@@ -26,6 +26,8 @@ from app.schemas.report import (
   ReportTemplateRead, 
   ReportUpdate,
   ReportTemplateUpdate,
+  ReportSpeechRequest,
+  ReportSpeechResponse,
   ShareReportTemplateRequest
 )
 from app.core.dependencies import (
@@ -359,50 +361,49 @@ async def update_report(
 
   return report
 
-@router.websocket("/{report_id}/audio")
-async def report_audio(
-  ws: WebSocket, 
-  report_id: str, 
-  access_token: str, 
-  language: str = "Japanese"
+@router.post(
+  "/{report_id}/speech",
+  response_model=ReportSpeechResponse,
+)
+async def report_speech(
+  report_id: UUID,
+  payload: ReportSpeechRequest,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
 ):
-  await ws.accept()
+  stmt = (
+    select(Report)
+    .where(Report.id == report_id)
+    .options(selectinload(Report.fields))
+  )
 
-  async for db in get_db():
-    current_user = await get_current_user_ws(access_token, db)
+  result = await db.execute(stmt)
+  report: Report | None = result.scalar_one_or_none()
 
-    result = await db.execute(
-      select(Report).where(Report.id == report_id)
-                    .options(selectinload(Report.fields))
-    )
-    report: Report = result.scalar_one_or_none()
+  if report is None:
+    raise HTTPException(404, "Report not found")
 
-    if not report:
-      await ws.close(code=1008)
-      return
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db,
+  )
 
-    company_id = await get_company_id(
-      parent_type=report.parent_type,
-      parent_id=report.parent_id,
-      db=db
-    )
-
+  if current_user.role != "admin":
     require_company_manager(current_user, company_id)
-    break
-
-  fields: list[ReportField] = report.fields
 
   try:
-    await transcribe_and_extract_json(
-      ws=ws,
-      fields=fields,
-      output_language=language
+    changed_fields = await transcribe_and_extract_json(
+      speech_text=payload.text,
+      fields=report.fields,
+      output_language=payload.output_language
     )
-  except WebSocketDisconnect:
-    print("WebSocket disconnected")
+    return ReportSpeechResponse(field_values=changed_fields)
   except Exception as e:
-    await ws.send_json({"type": "error", "message": str(e)})
-    await ws.close()
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Error extracting JSON: {str(e)}"
+    )
 
 @router.get(
   "/templates/{report_template_id}",
