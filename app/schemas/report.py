@@ -68,7 +68,6 @@ class ReportTemplateFieldUpdate(BaseModel):
   description: str
   type: str
 
-
 class ReportTemplateUpdate(BaseModel):
   name: str | None = None
   description: str | None = None
@@ -80,3 +79,9 @@ class ShareReportTemplateRequest(BaseModel):
   company_id: UUID
   template_id: UUID
   
+class ReportSpeechRequest(BaseModel):
+  text: str
+  output_language: str
+
+class ReportSpeechResponse(BaseModel):
+  field_values: dict
