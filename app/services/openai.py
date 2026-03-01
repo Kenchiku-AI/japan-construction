@@ -19,34 +19,61 @@ async def transcribe_and_extract_json(
   field_block = "\n".join(field_lines)
 
   prompt = f"""
-You extract structured report data from speech.
+You are a strict JSON extraction engine.
 
-Rules:
-- Return ONLY valid JSON
-- Keys must match listed field IDs
-- Omit fields not mentioned
-- Do not hallucinate
-- Normalize wording professionally
-- Output language: {output_language}
+Return ONLY a JSON object in this exact format:
 
-Fields:
+{{
+  "<field_id>": "<spoken value>"
+}}
+
+STRICT RULES:
+- Output ONLY valid JSON
+- All keys MUST be a field id
+- Values must be the spoken value only
+- NEVER return field names or descriptions
+- NEVER return field metadata
+- If a field is not spoken, omit it
+- If none spoken, return {{ "field_values": {{}} }}
+
+STYLE RULES:
+- Rewrite statements as neutral, formal report entries
+- Remove conversational wording
+- Remove pronouns when possible
+- Do NOT use first person or third person
+- Prefer passive or declarative form
+- Keep original meaning exactly
+- Do NOT add new information
+
+Examples:
+Speech: "we finished the roof"
+Output: "Roof installation completed"
+
+Speech: "it rained today"
+Output: "Rain occurred throughout the day"
+
+Speech: "we installed the wiring"
+Output: "Electrical wiring installed"
+
+Output language: {output_language}
+
+FIELDS:
 {field_block}
 """.strip()
 
-  response = await client.chat.completions.create(
-    model="gpt-4.1-nano",
-    messages=[
-      {"role": "system", "content": prompt},
-      {"role": "user", "content": speech_text},
-    ],
-    temperature=0,
-    response_format={"type": "json_object"},
-  )
+  try:
+    response = await client.responses.create(
+      model="gpt-4.1-mini",
+      input=[
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": speech_text},
+      ],
+      temperature=0
+    )
+  except Exception as e:
+    print("Error:", e)
 
-  msg = response.choices[0].message
-  content = msg.content or ""
-  if not isinstance(content, str):
-    content = "".join(part.get("text", "") for part in content)
+  content = response.output_text.strip()
 
   try:
     parsed = json.loads(content)
