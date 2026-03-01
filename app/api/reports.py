@@ -367,6 +367,7 @@ async def update_report(
 )
 async def report_speech(
   report_id: UUID,
+  payload: ReportSpeechRequest,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
