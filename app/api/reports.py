@@ -405,6 +405,45 @@ async def report_speech(
       detail=f"Error extracting JSON: {str(e)}"
     )
 
+@router.delete(
+  "/{report_id}",
+  status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_report(
+  report_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = (
+    select(Report)
+    .where(Report.id == report_id)
+    .options(selectinload(Report.fields))
+  )
+
+  result = await db.execute(stmt)
+  report: Report | None = result.scalar_one_or_none()
+
+  if report is None:
+    raise HTTPException(status_code=404, detail="Report not found")
+
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db,
+  )
+
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  for field in report.fields:
+    await db.delete(field)
+
+  await db.delete(report)
+
+  await db.commit()
+
+  return None
+
 @router.get(
   "/templates/{report_template_id}",
   response_model=ReportTemplateRead,
@@ -575,3 +614,64 @@ async def share_report_template(
   await db.commit()
 
   return {"message": "Template shared successfully"}
+
+@router.delete(
+  "/templates/{report_template_id}",
+  status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_report_template(
+  report_template_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = (
+    select(ReportTemplate)
+    .options(selectinload(ReportTemplate.fields))
+    .where(ReportTemplate.id == report_template_id)
+  )
+
+  result = await db.execute(stmt)
+  template: ReportTemplate | None = result.scalar_one_or_none()
+
+  if not template:
+    raise HTTPException(status_code=404, detail="Template not found")
+
+  if template.is_global:
+    if current_user.role != "admin":
+      raise HTTPException(
+        status_code=403,
+        detail="Only admins can delete global templates",
+      )
+  else:
+    if current_user.role not in {"admin", "manager"}:
+      raise HTTPException(status_code=403, detail="Not authorized")
+
+    if current_user.role == "manager":
+      link_stmt = select(CompanyReportTemplate).where(
+        CompanyReportTemplate.company_id == current_user.company_id,
+        CompanyReportTemplate.report_template_id == template.id,
+      )
+      link = (await db.execute(link_stmt)).scalar_one_or_none()
+
+      if not link:
+        raise HTTPException(
+          status_code=403,
+          detail="Cannot delete template belonging to another company",
+        )
+
+  link_stmt = select(CompanyReportTemplate).where(
+    CompanyReportTemplate.report_template_id == template.id
+  )
+  links = (await db.execute(link_stmt)).scalars().all()
+
+  for link in links:
+    await db.delete(link)
+
+  for field in template.fields:
+    await db.delete(field)
+
+  await db.delete(template)
+
+  await db.commit()
+
+  return None
