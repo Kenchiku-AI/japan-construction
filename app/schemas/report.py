@@ -17,7 +17,8 @@ class ReportUpdate(BaseModel):
 class ReportFieldRead(BaseModel):
   id: UUID
   name: str
-  value: str
+  value: str | None = None
+  order: int
 
   model_config = {
     "from_attributes": True
@@ -41,6 +42,7 @@ class ReportRead(BaseModel):
 class ReportTemplateFieldCreate(BaseModel):
   name: str
   description: Optional[str] = None
+  order: int
 
 class ReportTemplateCreate(BaseModel):
   name: str
@@ -53,6 +55,7 @@ class ReportTemplateFieldRead(BaseModel):
   id: UUID
   name: str
   description: Optional[str] = None
+  order: int
 
 class ReportTemplateRead(BaseModel):
   id: UUID
@@ -66,7 +69,7 @@ class ReportTemplateRead(BaseModel):
 class ReportTemplateFieldUpdate(BaseModel):
   name: str
   description: str
-  type: str
+  order: int
 
 class ReportTemplateUpdate(BaseModel):
   name: str | None = None
