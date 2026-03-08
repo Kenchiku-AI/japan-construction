@@ -148,6 +148,7 @@ async def create_report(
       description=template_field.description,
       value="",
       report_id=report.id,
+      order=template_field.order,
     )
     db.add(report_field)
 
@@ -162,6 +163,8 @@ async def create_report(
   report = result.scalar_one()
 
   report.company_id = company_id
+
+  report.fields.sort(key=lambda f: f.order)
 
   return report
 
@@ -239,6 +242,7 @@ async def create_report_template(
       ReportTemplateField(
         name=field.name,
         description=field.description,
+        order=field.order,
       )
     )
 
@@ -263,6 +267,8 @@ async def create_report_template(
 
   result = await db.execute(stmt)
   template = result.scalar_one()
+
+  template.fields.sort(key=lambda f: f.order)
 
   return template
 
@@ -297,6 +303,8 @@ async def get_report(
     require_company_manager(current_user, company_id)
 
   report.company_id = company_id
+
+  report.fields.sort(key=lambda f: f.order)
 
   return report
   
@@ -358,6 +366,8 @@ async def update_report(
   report = result.scalar_one()
 
   report.company_id = company_id
+
+  report.fields.sort(key=lambda f: f.order)
 
   return report
 
@@ -549,6 +559,7 @@ async def update_report_template(
       ReportTemplateField(
         name=f.name,
         description=f.description,
+        order=f.order
       )
       for f in payload.fields
     ]

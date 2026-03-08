@@ -10,6 +10,7 @@ from sqlalchemy import (
   Enum as SQLEnum,
   ForeignKey,
   Index,
+  Integer
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -71,6 +72,7 @@ class ReportTemplateField(Base):
 
   name = Column(String, nullable=False)
   description = Column(String, nullable=False)
+  order = Column(Integer, nullable=False)
 
   template = relationship("ReportTemplate", back_populates="fields")
 
@@ -112,6 +114,7 @@ class ReportField(Base):
   name = Column(String, nullable=False)
   description = Column(String, nullable=False)
   value = Column(String, nullable=True)
+  order = Column(Integer, nullable=False)
 
   report_id = Column(
     UUID(as_uuid=True),
