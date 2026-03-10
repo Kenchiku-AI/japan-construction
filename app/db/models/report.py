@@ -171,25 +171,17 @@ class ReportImage(Base):
   __tablename__ = "report_images"
 
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-
-  report_id = Column(
-    UUID(as_uuid=True),
-    ForeignKey("reports.id", ondelete="CASCADE"),
-    nullable=False,
-    index=True,
-  )
-
+  report_id = Column(UUID(as_uuid=True), ForeignKey("reports.id", ondelete="CASCADE"), nullable=False)
   image_url = Column(String, nullable=False)
+  status = Column(String, nullable=False, default="pending")
 
   report = relationship("Report", back_populates="images")
-
+  
   tags = relationship(
     "ReportImageTag",
-    secondary="report_image_tag_links",
-    back_populates="images",
+    secondary="report_image_tags_link",
+    back_populates="images"
   )
-
-  created_at = Column(DateTime, default=datetime.utcnow)
 
 class ReportImageTag(Base):
   __tablename__ = "report_image_tags"

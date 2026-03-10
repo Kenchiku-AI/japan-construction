@@ -81,3 +81,46 @@ FIELDS:
     raise ValueError("Failed to parse normalized JSON from speech")
 
   return parsed
+
+async def get_image_tags(image_url: str) -> list[dict]:
+  prompt = f"""
+You are an expert in construction site images.
+
+Look at the image at the URL: {image_url}
+
+Return a JSON array of objects with the following fields:
+
+[
+  {{
+    "name": "<short tag name>",
+    "description": "<detailed description of what this tag represents in the context of construction reports>"
+  }}
+]
+
+Include all relevant elements visible in the image (equipment, progress, safety, site conditions, etc.).
+Return ONLY valid JSON.
+"""
+
+  response = await client.responses.create(
+    model="gpt-4.1-mini",
+    input=[
+      {"role": "system", "content": "You are a construction site image analyzer."},
+      {"role": "user", "content": prompt}
+    ],
+    temperature=0
+  )
+
+  content = response.output_text.strip()
+
+  import json
+  try:
+    tags = json.loads(content)
+  except json.JSONDecodeError:
+    raise ValueError(f"Failed to parse image tags JSON: {content}")
+
+  valid_tags = []
+  for t in tags:
+    if "name" in t and "description" in t:
+      valid_tags.append({"name": t["name"], "description": t["description"]})
+
+  return valid_tags

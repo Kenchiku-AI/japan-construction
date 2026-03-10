@@ -27,5 +27,16 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  image_worker:
+    build: .
+    container_name: image_processing_worker
+    command: python -m app.workers.image_worker
+    env_file:
+      - .env
+    depends_on:
+      - db
+    volumes:
+      - .:/app
+
 volumes:
   postgres_data:
