@@ -180,7 +180,7 @@ class ReportImage(Base):
   
   tags = relationship(
     "ReportImageTag",
-    secondary="report_image_tags_link",
+    secondary="report_image_tag_links",
     back_populates="images"
   )
 
