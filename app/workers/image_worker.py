@@ -36,6 +36,8 @@ def parse_s3_key(key: str):
   return report_id, uuid.UUID(image_id)
 
 async def process_message(message):
+  image_id = None
+
   try:
     body = json.loads(message["Body"])
     record = body["Records"][0]
@@ -67,19 +69,13 @@ async def process_message(message):
       image.status = "processing"
       await db.commit()
 
-    try:
+      try:
         tags = await get_image_tags(image_url)
       except Exception as e:
-        async with async_session() as db:
-          image.status = "failed"
-          await db.commit()
+        image.status = "failed"
+        await db.commit()
         logger.exception(f"AI tagging failed for image {image_id}: {e}")
         return
-
-    async with async_session() as db:
-      stmt = select(ReportImage).where(ReportImage.id == image_id)
-      result = await db.execute(stmt)
-      image = result.scalar_one()
 
       for tag_data in tags:
         stmt_tag = select(ReportImageTag).where(
@@ -119,17 +115,18 @@ async def process_message(message):
   except Exception as e:
     logger.exception(f"Failed to process message: {e}")
 
-    try:
-      async with async_session() as db:
-        stmt = select(ReportImage).where(ReportImage.id == image_id)
-        result = await db.execute(stmt)
-        image = result.scalar_one_or_none()
+    if image_id:
+      try:
+        async with async_session() as db:
+          stmt = select(ReportImage).where(ReportImage.id == image_id)
+          result = await db.execute(stmt)
+          image = result.scalar_one_or_none()
 
-        if image:
-          image.status = "failed"
-          await db.commit()
-    except Exception:
-        pass
+          if image:
+            image.status = "failed"
+            await db.commit()
+      except Exception:
+          pass
 
 async def run_worker():
   logger.info("Image worker started")
