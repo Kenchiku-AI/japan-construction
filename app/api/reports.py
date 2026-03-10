@@ -2,7 +2,7 @@ from datetime import datetime, time
 from uuid import UUID
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
@@ -38,6 +38,7 @@ from app.core.dependencies import (
 )
 from app.services.reports import can_create_report, get_company_id
 from app.services.openai import transcribe_and_extract_json
+from app.services.s3 import s3_client, BUCKET_NAME
 
 router = APIRouter(
   prefix="/reports",
@@ -370,6 +371,59 @@ async def update_report(
   report.fields.sort(key=lambda f: f.order)
 
   return report
+
+@router.post("/{report_id}/upload")
+async def upload_report_image(
+  report_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = select(Report).where(Report.id == report_id)
+  result = await db.execute(stmt)
+  report = result.scalar_one_or_none()
+
+  if report is None:
+    raise HTTPException(404, "Report not found")
+
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db,
+  )
+
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  image_id = uuid.uuid4()
+
+  key = f"reports/{report_id}/{image_id}.jpg"
+
+  upload_url = s3_client.generate_presigned_url(
+    "put_object",
+    Params={
+      "Bucket": BUCKET_NAME,
+      "Key": key,
+      "ContentType": "image/jpeg",
+    },
+    ExpiresIn=3600,
+  )
+
+  image_url = f"https://{BUCKET_NAME}.s3.amazonaws.com/{key}"
+
+  report_image = ReportImage(
+    id=image_id,
+    report_id=report_id,
+    image_url=image_url,
+  )
+
+  db.add(report_image)
+  await db.commit()
+
+  return {
+    "upload_url": upload_url,
+    "image_id": image_id,
+    "image_url": image_url
+  }
 
 @router.post(
   "/{report_id}/speech",

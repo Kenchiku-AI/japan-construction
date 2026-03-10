@@ -22,6 +22,12 @@ class Company(Base):
     cascade="all, delete-orphan",
   )
 
+  image_tags = relationship(
+    "ReportImageTag",
+    back_populates="company",
+    cascade="all, delete-orphan",
+  )
+
   company_report_templates = relationship(
     "CompanyReportTemplate",
     back_populates="company",
