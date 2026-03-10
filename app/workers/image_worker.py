@@ -13,6 +13,7 @@ from app.db.session import async_session
 from app.db.models import ReportImage, ReportImageTag, ReportImageTagLink
 from app.services.openai import get_image_tags
 from app.services.s3 import s3_client, BUCKET_NAME
+from app.services.reports import get_company_id
 from app.core.config import settings
 
 QUEUE_URL = settings.SQS_QUEUE_URL
@@ -46,11 +47,6 @@ async def process_message(message):
 
     report_id, image_id = parse_s3_key(key)
 
-    image_url = s3_client.generate_presigned_url(
-      ClientMethod="get_object",
-      Params={"Bucket": BUCKET_NAME, "Key": key},
-      ExpiresIn=3600,
-    )
     logger.info(f"Processing image {image_id}")
 
     async with async_session() as db:
@@ -69,44 +65,56 @@ async def process_message(message):
       image.status = "processing"
       await db.commit()
 
-      try:
-        tags = await get_image_tags(image_url)
-      except Exception as e:
-        image.status = "failed"
-        await db.commit()
-        logger.exception(f"AI tagging failed for image {image_id}: {e}")
-        return
+      image_url = s3_client.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={"Bucket": BUCKET_NAME, "Key": key},
+        ExpiresIn=600,
+      )
+
+      tags = await get_image_tags(image_url)
+
+      company_id = await get_company_id(
+        parent_type=image.report.parent_type,
+        parent_id=image.report.parent_id,
+        db=db,
+      )
 
       for tag_data in tags:
-        stmt_tag = select(ReportImageTag).where(
-          ReportImageTag.name == tag_data["name"],
-          ReportImageTag.company_id == image.report.company_id
-        )
-        existing_tag = (await db.execute(stmt_tag)).scalar_one_or_none()
-
-        if existing_tag:
-          tag = existing_tag
-        else:
-          tag = ReportImageTag(
+        insert_stmt = (
+          insert(ReportImageTag)
+          .values(
+            company_id=company_id,
             name=tag_data["name"],
-            description=tag_data.get("description", ""),
-            company_id=image.report.company_id
+            description=tag_data.get("description")
           )
-          db.add(tag)
-          await db.flush()
-
-        stmt_link = select(ReportImageTagLink).where(
-          ReportImageTagLink.report_image_id == image.id,
-          ReportImageTagLink.tag_id == tag.id
+          .on_conflict_do_nothing(
+            index_elements=["company_id", "name"]
+          )
+          .returning(ReportImageTag.id)
         )
-        existing_link = (await db.execute(stmt_link)).scalar_one_or_none()
 
-        if not existing_link:
-          link = ReportImageTagLink(
+        result = await db.execute(insert_stmt)
+        tag_id = result.scalar_one_or_none()
+
+        if tag_id:
+          tag = await db.get(ReportImageTag, tag_id)
+        else:
+          stmt = select(ReportImageTag).where(
+            ReportImageTag.company_id == company_id,
+            ReportImageTag.name == tag_data["name"],
+          )
+          tag = (await db.execute(stmt)).scalar_one()
+
+        link_insert = (
+          insert(ReportImageTagLink)
+          .values(
             report_image_id=image.id,
             tag_id=tag.id
           )
-          db.add(link)
+          .on_conflict_do_nothing()
+        )
+
+        await db.execute(link_insert)
 
       image.status = "completed"
       await db.commit()
@@ -127,6 +135,7 @@ async def process_message(message):
             await db.commit()
       except Exception:
           pass
+    raise e
 
 async def run_worker():
   logger.info("Image worker started")
