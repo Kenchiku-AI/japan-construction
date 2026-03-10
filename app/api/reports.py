@@ -408,12 +408,11 @@ async def upload_report_image(
     ExpiresIn=3600,
   )
 
-  image_url = f"https://{BUCKET_NAME}.s3.amazonaws.com/{key}"
-
   report_image = ReportImage(
     id=image_id,
     report_id=report_id,
-    image_url=image_url,
+    image_url=key,
+    status="pending"
   )
 
   db.add(report_image)
@@ -422,7 +421,6 @@ async def upload_report_image(
   return {
     "upload_url": upload_url,
     "image_id": image_id,
-    "image_url": image_url
   }
 
 @router.post(
