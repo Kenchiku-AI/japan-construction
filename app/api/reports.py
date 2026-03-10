@@ -372,6 +372,50 @@ async def update_report(
 
   return report
 
+@router.get("/{report_id}/images")
+async def list_report_images(
+  report_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = select(Report).where(Report.id == report_id)
+  result = await db.execute(stmt)
+  report: Report | None = result.scalar_one_or_none()
+  if not report:
+    raise HTTPException(404, "Report not found")
+
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db,
+  )
+
+  if not company_id:
+    raise HTTPException(500, "Report does not have an associated company")
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  stmt_images = select(ReportImage).where(ReportImage.report_id == report_id)
+  result = await db.execute(stmt_images)
+  images: list[ReportImage] = result.scalars().all()
+
+  image_list = []
+  for img in images:
+    download_url = s3_client.generate_presigned_url(
+      "get_object",
+      Params={"Bucket": BUCKET_NAME, "Key": img.image_url},
+      ExpiresIn=3600,
+    )
+    image_list.append({
+      "id": img.id,
+      "status": img.status,
+      "download_url": download_url,
+      "created_at": img.created_at,
+      "updated_at": img.updated_at,
+    })
+
+  return image_list
+
 @router.post("/{report_id}/upload")
 async def upload_report_image(
   report_id: UUID,
@@ -395,7 +439,6 @@ async def upload_report_image(
     require_company_manager(current_user, company_id)
 
   image_id = uuid.uuid4()
-
   key = f"reports/{report_id}/{image_id}.jpg"
 
   upload_url = s3_client.generate_presigned_url(
@@ -405,6 +448,12 @@ async def upload_report_image(
       "Key": key,
       "ContentType": "image/jpeg",
     },
+    ExpiresIn=300,
+  )
+
+  download_url = s3_client.generate_presigned_url(
+    "get_object",
+    Params={"Bucket": BUCKET_NAME, "Key": key},
     ExpiresIn=3600,
   )
 
@@ -420,6 +469,7 @@ async def upload_report_image(
 
   return {
     "upload_url": upload_url,
+    "download_url": download_url,
     "image_id": image_id,
   }
 
