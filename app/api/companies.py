@@ -158,3 +158,29 @@ async def get_company(
     created_at=company.created_at,
     updated_at=company.updated_at
   )
+
+@router.post("/{company_id}/image-tags")
+async def create_tag(
+  company_id: UUID,
+  name: str,
+  description: str | None = None,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin" and current_user.company_id != company_id:
+    raise HTTPException(
+      status_code=403,
+      detail="Not authorized"
+    )
+
+  tag = ReportImageTag(
+    company_id=company_id,
+    name=name,
+    description=description
+  )
+
+  db.add(tag)
+  await db.commit()
+  await db.refresh(tag)
+
+  return tag
