@@ -10,7 +10,8 @@ from sqlalchemy import (
   Enum as SQLEnum,
   ForeignKey,
   Index,
-  Integer
+  Integer,
+  UniqueConstraint
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -207,6 +208,10 @@ class ReportImageTag(Base):
   )
 
   created_at = Column(DateTime, default=datetime.utcnow)
+
+  __table_args__ = (
+    UniqueConstraint("company_id", "name", name="uq_company_tag_name"),
+  )
 
 class ReportImageTagLink(Base):
   __tablename__ = "report_image_tag_links"
