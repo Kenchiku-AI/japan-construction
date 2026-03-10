@@ -159,7 +159,7 @@ async def get_company(
     updated_at=company.updated_at
   )
 
-@router.post("/{company_id}/image-tags")
+@router.post("/{company_id}/tags")
 async def create_tag(
   company_id: UUID,
   name: str,
