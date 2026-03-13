@@ -11,4 +11,5 @@ from app.db.models.report import (
   Report,
   ReportField,
   CompanyReportTemplate,
+  ReportImageTag
 )
