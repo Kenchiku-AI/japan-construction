@@ -63,3 +63,11 @@ class CompanyWithProjectsAndUsers(CompanyRead):
   model_config = {
     "from_attributes": True
   }
+
+class ReportImageTagCreate(BaseModel):
+  name: str
+  description: str
+
+class ReportImageTagUpdate(BaseModel):
+  name: str | None = None
+  description: str | None = None

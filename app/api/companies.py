@@ -3,20 +3,22 @@ from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.api.invitations import invite_user
-from app.core.dependencies import get_current_user
-from app.db.models import Company, Project, User
+from app.core.dependencies import get_current_user, require_company_manager
+from app.db.models import Company, Project, User, ReportImageTag
 from app.db.session import get_db
 from app.schemas.company import (
   CompanyCreate,
   CompanyProjectRead,
   CompanyRead,
   CompanyWithProjectsAndUsers,
+  ReportImageTagCreate,
+  ReportImageTagUpdate
 )
 from app.schemas.invitation import InvitationCreate
 
@@ -159,11 +161,9 @@ async def get_company(
     updated_at=company.updated_at
   )
 
-@router.post("/{company_id}/tags")
-async def create_tag(
+@router.get("/{company_id}/tags")
+async def get_tags(
   company_id: UUID,
-  name: str,
-  description: str | None = None,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
@@ -173,10 +173,31 @@ async def create_tag(
       detail="Not authorized"
     )
 
+  stmt = (
+    select(ReportImageTag)
+    .where(ReportImageTag.company_id == company_id)
+    .order_by(ReportImageTag.name.asc())
+  )
+
+  result = await db.execute(stmt)
+  tags = result.scalars().all()
+
+  return tags
+
+@router.post("/{company_id}/tags")
+async def create_tag(
+  company_id: UUID,
+  payload: ReportImageTagCreate,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
   tag = ReportImageTag(
     company_id=company_id,
-    name=name,
-    description=description
+    name=payload.name,
+    description=payload.description
   )
 
   db.add(tag)
@@ -184,3 +205,74 @@ async def create_tag(
   await db.refresh(tag)
 
   return tag
+
+@router.patch("/{company_id}/tags/{tag_id}")
+async def update_tag(
+  company_id: UUID,
+  tag_id: UUID,
+  payload: ReportImageTagUpdate,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  stmt = (
+    select(ReportImageTag)
+    .where(
+      ReportImageTag.id == tag_id,
+      ReportImageTag.company_id == company_id
+    )
+  )
+
+  result = await db.execute(stmt)
+  tag = result.scalar_one_or_none()
+
+  if not tag:
+    raise HTTPException(
+      status_code=404,
+      detail="Tag not found"
+    )
+
+  if payload.name is not None:
+    tag.name = payload.name
+
+  if payload.description is not None:
+    tag.description = payload.description
+
+  await db.commit()
+  await db.refresh(tag)
+
+  return tag
+
+@router.delete("/{company_id}/tags/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tag(
+  company_id: UUID,
+  tag_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  stmt = (
+    select(ReportImageTag)
+    .where(
+      ReportImageTag.id == tag_id,
+      ReportImageTag.company_id == company_id
+    )
+  )
+
+  result = await db.execute(stmt)
+  tag = result.scalar_one_or_none()
+
+  if not tag:
+    raise HTTPException(
+      status_code=404,
+      detail="Tag not found"
+    )
+
+  await db.delete(tag)
+  await db.commit()
+
+  return None
