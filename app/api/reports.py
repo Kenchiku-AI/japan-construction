@@ -1,5 +1,5 @@
 from datetime import datetime, time
-from uuid import UUID
+from uuid import UUID, uuid4
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File
@@ -17,6 +17,7 @@ from app.db.models import (
   ReportTemplate,
   ReportTemplateField,
   ReportParentType,
+  ReportImage,
   CompanyReportTemplate,
 )
 from app.schemas.report import (
@@ -438,7 +439,7 @@ async def upload_report_image(
   if current_user.role != "admin":
     require_company_manager(current_user, company_id)
 
-  image_id = uuid.uuid4()
+  image_id = uuid4()
   key = f"reports/{report_id}/{image_id}.jpg"
 
   upload_url = s3_client.generate_presigned_url(

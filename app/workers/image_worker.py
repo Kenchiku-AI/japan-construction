@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import insert
 
-from app.db.session import async_session
+from app.db.session import AsyncSessionLocal
 from app.db.models import ReportImage, ReportImageTag, ReportImageTagLink
 from app.services.openai import get_image_tags
 from app.services.s3 import s3_client, BUCKET_NAME
@@ -49,7 +49,7 @@ async def process_message(message):
 
     logger.info(f"Processing image {image_id}")
 
-    async with async_session() as db:
+    async with AsyncSessionLocal() as db:
       stmt = select(ReportImage).where(ReportImage.id == image_id)
       result = await db.execute(stmt)
       image = result.scalar_one_or_none()
@@ -125,7 +125,7 @@ async def process_message(message):
 
     if image_id:
       try:
-        async with async_session() as db:
+        async with AsyncSessionLocal() as db:
           stmt = select(ReportImage).where(ReportImage.id == image_id)
           result = await db.execute(stmt)
           image = result.scalar_one_or_none()
