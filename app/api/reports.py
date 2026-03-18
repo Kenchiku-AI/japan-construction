@@ -422,7 +422,6 @@ async def list_report_images(
       "status": img.status,
       "download_url": download_url,
       "created_at": img.created_at,
-      "updated_at": img.updated_at,
       "width": img.width,
       "height": img.height
     })
