@@ -29,7 +29,8 @@ from app.schemas.report import (
   ReportTemplateUpdate,
   ReportSpeechRequest,
   ReportSpeechResponse,
-  ShareReportTemplateRequest
+  ShareReportTemplateRequest,
+  ReportImageCreate
 )
 from app.core.dependencies import (
   get_current_user,
@@ -428,10 +429,10 @@ async def list_report_images(
 
   return image_list
 
-@router.post("/{report_id}/upload")
-async def upload_report_image(
+@router.post("/{report_id}/images")
+async def create_report_image(
   report_id: UUID,
-  payload: ReportSpeechRequest,
+  payload: ReportImageCreate,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
