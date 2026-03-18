@@ -177,6 +177,7 @@ class ReportImage(Base):
   status = Column(String, nullable=False, default="pending")
   width = Column(Integer, nullable=True)
   height = Column(Integer, nullable=True)
+  created_at = Column(DateTime, default=datetime.utcnow)
 
   report = relationship("Report", back_populates="images")
   
