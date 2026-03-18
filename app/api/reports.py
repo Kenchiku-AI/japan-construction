@@ -165,8 +165,8 @@ async def create_report(
   report = result.scalar_one()
 
   report.company_id = company_id
-
   report.fields.sort(key=lambda f: f.order)
+  report.photo_count = 0
 
   return report
 
@@ -286,7 +286,10 @@ async def get_report(
   stmt = (
     select(Report)
     .where(Report.id == report_id)
-    .options(selectinload(Report.fields))
+    .options(
+      selectinload(Report.fields),
+      selectinload(Report.images),
+    )
   )
 
   result = await db.execute(stmt)
@@ -305,8 +308,8 @@ async def get_report(
     require_company_manager(current_user, company_id)
 
   report.company_id = company_id
-
   report.fields.sort(key=lambda f: f.order)
+  report.photo_count = len(report.images)
 
   return report
   
@@ -323,7 +326,10 @@ async def update_report(
   stmt = (
     select(Report)
     .where(Report.id == report_id)
-    .options(selectinload(Report.fields))
+    .options(
+      selectinload(Report.fields),
+      selectinload(Report.images),
+    )
   )
   result = await db.execute(stmt)
   report: Report | None = result.scalar_one_or_none()
@@ -362,14 +368,17 @@ async def update_report(
   stmt = (
     select(Report)
     .where(Report.id == report.id)
-    .options(selectinload(Report.fields))
+    .options(
+      selectinload(Report.fields),
+      selectinload(Report.images),
+    )
   )
   result = await db.execute(stmt)
   report = result.scalar_one()
 
   report.company_id = company_id
-
   report.fields.sort(key=lambda f: f.order)
+  report.photo_count = len(report.images)
 
   return report
 
@@ -413,6 +422,8 @@ async def list_report_images(
       "download_url": download_url,
       "created_at": img.created_at,
       "updated_at": img.updated_at,
+      "width": img.width,
+      "height": img.height
     })
 
   return image_list
@@ -420,6 +431,7 @@ async def list_report_images(
 @router.post("/{report_id}/upload")
 async def upload_report_image(
   report_id: UUID,
+  payload: ReportSpeechRequest,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
@@ -462,7 +474,9 @@ async def upload_report_image(
     id=image_id,
     report_id=report_id,
     image_url=key,
-    status="pending"
+    status="pending",
+    width=payload.width,
+    height=payload.height
   )
 
   db.add(report_image)

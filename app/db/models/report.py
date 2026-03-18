@@ -175,6 +175,8 @@ class ReportImage(Base):
   report_id = Column(UUID(as_uuid=True), ForeignKey("reports.id", ondelete="CASCADE"), nullable=False)
   image_url = Column(String, nullable=False)
   status = Column(String, nullable=False, default="pending")
+  width = Column(Integer, nullable=True)
+  height = Column(Integer, nullable=True)
 
   report = relationship("Report", back_populates="images")
   

@@ -34,6 +34,7 @@ class ReportRead(BaseModel):
   updated_at: datetime
   fields: List[ReportFieldRead]
   company_id: Optional[UUID] = None
+  photo_count: int = 0
 
   model_config = {
     "from_attributes": True
@@ -88,3 +89,7 @@ class ReportSpeechRequest(BaseModel):
 
 class ReportSpeechResponse(BaseModel):
   field_values: dict
+
+class ReportImageCreate(BaseModel):
+  width: int
+  height: int
