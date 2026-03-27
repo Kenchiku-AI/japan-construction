@@ -18,6 +18,8 @@ from app.db.models import (
   ReportTemplateField,
   ReportParentType,
   ReportImage,
+  ReportImageTag,
+  ReportImageTagLink,
   CompanyReportTemplate,
 )
 from app.schemas.report import (
@@ -30,7 +32,9 @@ from app.schemas.report import (
   ReportSpeechRequest,
   ReportSpeechResponse,
   ShareReportTemplateRequest,
-  ReportImageCreate
+  ReportImageCreate,
+  ReportImageUpdate,
+  ReportImageTagCreate
 )
 from app.core.dependencies import (
   get_current_user,
@@ -406,24 +410,44 @@ async def list_report_images(
   if current_user.role != "admin":
     require_company_manager(current_user, company_id)
 
-  stmt_images = select(ReportImage).where(ReportImage.report_id == report_id)
+  stmt_images = (
+    select(ReportImage)
+    .where(ReportImage.report_id == report_id)
+    .options(
+      selectinload(ReportImage.tag_links)
+      .selectinload(ReportImageTagLink.tag)
+    )
+  )
   result = await db.execute(stmt_images)
   images: list[ReportImage] = result.scalars().all()
 
   image_list = []
+
   for img in images:
     download_url = s3_client.generate_presigned_url(
       "get_object",
       Params={"Bucket": BUCKET_NAME, "Key": img.image_url},
       ExpiresIn=3600,
     )
+
+    tags = [
+      {
+        "link_id": link.id,
+        "name": link.tag.name
+      }
+      for link in img.tag_links
+    ]
+
     image_list.append({
       "id": img.id,
+      "report_id": report_id,
       "status": img.status,
       "download_url": download_url,
       "created_at": img.created_at,
       "width": img.width,
-      "height": img.height
+      "height": img.height,
+      "description": img.description,
+      "tags": tags
     })
 
   return image_list
@@ -475,6 +499,7 @@ async def create_report_image(
     report_id=report_id,
     image_url=key,
     status="pending",
+    description="",
     width=payload.width,
     height=payload.height
   )
@@ -483,10 +508,205 @@ async def create_report_image(
   await db.commit()
 
   return {
+    "id": image_id,
+    "report_id": report_id,
+    "status": "pending",
     "upload_url": upload_url,
     "download_url": download_url,
-    "image_id": image_id,
+    "created_at": report_image.created_at,
+    "width": payload.width,
+    "height": payload.height,
+    "tags": []
   }
+
+@router.patch(
+  "/{report_id}/images/{image_id}",
+)
+async def update_report_image(
+  report_id: UUID,
+  image_id: UUID,
+  payload: ReportImageUpdate,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = select(Report).where(Report.id == report_id)
+  result = await db.execute(stmt)
+  report: Report | None = result.scalar_one_or_none()
+
+  if not report:
+    raise HTTPException(404, "Report not found")
+
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db,
+  )
+
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  stmt = (
+    select(ReportImage)
+    .where(
+      ReportImage.id == image_id,
+      ReportImage.report_id == report_id,
+    )
+    .options(
+      selectinload(ReportImage.tag_links).selectinload("tag")
+    )
+  )
+  result = await db.execute(stmt)
+  image: ReportImage | None = result.scalar_one_or_none()
+
+  if not image:
+    raise HTTPException(404, "Image not found")
+
+  if payload.description is not None:
+    image.description = payload.description
+
+  await db.commit()
+
+  tags = [
+    {"link_id": link.id, "name": link.tag.name}
+    for link in image.tag_links
+  ]
+
+  return {
+    "id": image.id,
+    "report_id": report_id,
+    "description": image.description,
+    "status": image.status,
+    "width": image.width,
+    "height": image.height,
+    "created_at": image.created_at,
+    "tags": tags,
+  }
+
+@router.post(
+  "/{report_id}/images/{image_id}/tags",
+  status_code=status.HTTP_201_CREATED,
+)
+async def create_report_image_tag(
+  report_id: UUID,
+  image_id: UUID,
+  payload: ReportImageTagCreate,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = select(Report).where(Report.id == report_id)
+  result = await db.execute(stmt)
+  report: Report | None = result.scalar_one_or_none()
+
+  if not report:
+    raise HTTPException(404, "Report not found")
+
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db,
+  )
+
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  stmt = select(ReportImage).where(
+    ReportImage.id == image_id,
+    ReportImage.report_id == report_id,
+  )
+  result = await db.execute(stmt)
+  image = result.scalar_one_or_none()
+
+  if not image:
+    raise HTTPException(404, "Image not found")
+
+  stmt = select(ReportImageTag).where(
+    ReportImageTag.id == payload.tag_id,
+    ReportImageTag.company_id == company_id,
+  )
+  result = await db.execute(stmt)
+  tag = result.scalar_one_or_none()
+
+  if not tag:
+    raise HTTPException(404, "Tag not found")
+
+  stmt = select(ReportImageTagLink).where(
+    ReportImageTagLink.report_image_id == image_id,
+    ReportImageTagLink.tag_id == payload.tag_id,
+  )
+  result = await db.execute(stmt)
+  existing = result.scalar_one_or_none()
+
+  if existing:
+    raise HTTPException(
+      status_code=409,
+      detail="Tag already attached to this image",
+    )
+
+  link = ReportImageTagLink(
+    id=uuid4(),
+    report_image_id=image_id,
+    tag_id=payload.tag_id,
+  )
+
+  db.add(link)
+  await db.commit()
+
+  return {
+    "link_id": link.id,
+    "name": tag.name
+  }
+
+@router.delete(
+  "/{report_id}/images/{image_id}/tags/{link_id}",
+  status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_report_image_tag(
+  report_id: UUID,
+  image_id: UUID,
+  link_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = select(Report).where(Report.id == report_id)
+  result = await db.execute(stmt)
+  report: Report | None = result.scalar_one_or_none()
+
+  if not report:
+    raise HTTPException(404, "Report not found")
+
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db,
+  )
+
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  stmt = select(ReportImage).where(
+    ReportImage.id == image_id,
+    ReportImage.report_id == report_id,
+  )
+  result = await db.execute(stmt)
+  image = result.scalar_one_or_none()
+
+  if not image:
+    raise HTTPException(404, "Image not found")
+
+  stmt = select(ReportImageTagLink).where(
+    ReportImageTagLink.id == link_id,
+    ReportImageTagLink.report_image_id == image_id,
+  )
+  result = await db.execute(stmt)
+  link = result.scalar_one_or_none()
+
+  if not link:
+    raise HTTPException(404, "Tag link not found")
+
+  await db.delete(link)
+  await db.commit()
+
+  return None
 
 @router.post(
   "/{report_id}/speech",
@@ -567,6 +787,67 @@ async def delete_report(
 
   await db.delete(report)
 
+  await db.commit()
+
+  return None
+
+@router.delete(
+  "/{report_id}/images/{image_id}",
+  status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_report_image(
+  report_id: UUID,
+  image_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = select(Report).where(Report.id == report_id)
+  result = await db.execute(stmt)
+  report: Report | None = result.scalar_one_or_none()
+
+  if not report:
+    raise HTTPException(404, "Report not found")
+
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db,
+  )
+
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  stmt = select(ReportImage).where(
+    ReportImage.id == image_id,
+    ReportImage.report_id == report_id,
+  )
+  result = await db.execute(stmt)
+  image: ReportImage | None = result.scalar_one_or_none()
+
+  if not image:
+    raise HTTPException(404, "Image not found")
+
+  stmt_links = select(ReportImageTagLink).where(
+    ReportImageTagLink.report_image_id == image_id
+  )
+  result = await db.execute(stmt_links)
+  links = result.scalars().all()
+
+  for link in links:
+    await db.delete(link)
+
+  try:
+    s3_client.delete_object(
+      Bucket=BUCKET_NAME,
+      Key=image.image_url,
+    )
+  except Exception as e:
+    raise HTTPException(
+      status_code=500,
+      detail=f"Failed to delete image from storage: {str(e)}"
+    )
+
+  await db.delete(image)
   await db.commit()
 
   return None

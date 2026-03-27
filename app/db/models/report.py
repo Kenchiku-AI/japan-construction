@@ -177,14 +177,15 @@ class ReportImage(Base):
   status = Column(String, nullable=False, default="pending")
   width = Column(Integer, nullable=True)
   height = Column(Integer, nullable=True)
+  description = Column(String, nullable=True)
   created_at = Column(DateTime, default=datetime.utcnow)
 
   report = relationship("Report", back_populates="images")
   
-  tags = relationship(
-    "ReportImageTag",
-    secondary="report_image_tag_links",
-    back_populates="images"
+  tag_links = relationship(
+    "ReportImageTagLink",
+    back_populates="image",
+    cascade="all, delete-orphan",
   )
 
 class ReportImageTag(Base):
@@ -204,13 +205,13 @@ class ReportImageTag(Base):
 
   company = relationship("Company", back_populates="image_tags")
 
-  images = relationship(
-    "ReportImage",
-    secondary="report_image_tag_links",
-    back_populates="tags",
-  )
-
   created_at = Column(DateTime, default=datetime.utcnow)
+
+  tag_links = relationship(
+    "ReportImageTagLink",
+    back_populates="tag",
+    cascade="all, delete-orphan",
+  )
 
   __table_args__ = (
     UniqueConstraint("company_id", "name", name="uq_company_tag_name"),
@@ -219,14 +220,26 @@ class ReportImageTag(Base):
 class ReportImageTagLink(Base):
   __tablename__ = "report_image_tag_links"
 
+  id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
   report_image_id = Column(
     UUID(as_uuid=True),
     ForeignKey("report_images.id", ondelete="CASCADE"),
-    primary_key=True,
+    nullable=False,
   )
 
   tag_id = Column(
     UUID(as_uuid=True),
     ForeignKey("report_image_tags.id", ondelete="CASCADE"),
-    primary_key=True,
+    nullable=False,
+  )
+
+  image = relationship(
+    "ReportImage",
+    back_populates="tag_links"
+  )
+
+  tag = relationship(
+    "ReportImageTag",
+    back_populates="tag_links"
   )
