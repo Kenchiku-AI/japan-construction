@@ -93,3 +93,9 @@ class ReportSpeechResponse(BaseModel):
 class ReportImageCreate(BaseModel):
   width: int
   height: int
+
+class ReportImageUpdate(BaseModel):
+  description: Optional[str] = None
+
+class ReportImageTagCreate(BaseModel):
+  tag_id: UUID

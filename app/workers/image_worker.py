@@ -6,6 +6,7 @@ import logging
 from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy.future import select
 from sqlalchemy import insert
 
@@ -50,7 +51,11 @@ async def process_message(message):
     logger.info(f"Processing image {image_id}")
 
     async with AsyncSessionLocal() as db:
-      stmt = select(ReportImage).where(ReportImage.id == image_id)
+      stmt = (
+        select(ReportImage)
+        .options(selectinload(ReportImage.report))
+        .where(ReportImage.id == image_id)
+      )
       result = await db.execute(stmt)
       image = result.scalar_one_or_none()
 
@@ -126,7 +131,11 @@ async def process_message(message):
     if image_id:
       try:
         async with AsyncSessionLocal() as db:
-          stmt = select(ReportImage).where(ReportImage.id == image_id)
+          stmt = (
+            select(ReportImage)
+            .options(selectinload(ReportImage.report))
+            .where(ReportImage.id == image_id)
+          )
           result = await db.execute(stmt)
           image = result.scalar_one_or_none()
 
