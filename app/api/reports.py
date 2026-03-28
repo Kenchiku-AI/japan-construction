@@ -432,6 +432,7 @@ async def list_report_images(
 
     tags = [
       {
+        "tag_id": link.tag.id,
         "link_id": link.id,
         "name": link.tag.name
       }
@@ -567,7 +568,11 @@ async def update_report_image(
   await db.commit()
 
   tags = [
-    {"link_id": link.id, "name": link.tag.name}
+    {
+      "tag_id": link.tag.id,
+      "link_id": link.id, 
+      "name": link.tag.name
+    }
     for link in image.tag_links
   ]
 
@@ -652,6 +657,7 @@ async def create_report_image_tag(
   await db.commit()
 
   return {
+    "tag_id": tag.id,
     "link_id": link.id,
     "name": tag.name
   }
