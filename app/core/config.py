@@ -16,6 +16,7 @@ class Settings(BaseSettings):
   AWS_REGION: str
   S3_BUCKET: str
   SQS_QUEUE_URL: str
+  REDIS_URL: str = "redis://redis:6379"
 
   class Config:
     env_file = ".env"

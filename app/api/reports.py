@@ -445,6 +445,7 @@ async def list_report_images(
       "status": img.status,
       "download_url": download_url,
       "created_at": img.created_at,
+      "created_by": img.created_by,
       "width": img.width,
       "height": img.height,
       "description": img.description,
@@ -498,6 +499,7 @@ async def create_report_image(
   report_image = ReportImage(
     id=image_id,
     report_id=report_id,
+    created_by=current_user.id,
     image_url=key,
     status="pending",
     description="",
@@ -1090,3 +1092,29 @@ async def delete_report_template(
   await db.commit()
 
   return None
+
+@router.websocket("/images/ws")
+async def report_image_ws(
+  ws: WebSocket,
+  access_token: str
+):
+  async for db in get_db():
+    try:
+      current_user = await get_current_user_ws(access_token, db)
+    except Exception:
+      await ws.close(code=1008)
+      return
+
+    break
+
+  user_id = str(current_user.id)
+
+  from app.services.ws_manager import manager
+
+  await manager.connect(user_id, ws)
+
+  try:
+    while True:
+      await ws.receive_text()
+  except WebSocketDisconnect:
+    manager.disconnect(user_id, ws)
