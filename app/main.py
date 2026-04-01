@@ -3,7 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import auth, users, companies, invitations, projects, reports
 from app.core.config import settings
 
+import asyncio
+from app.services.ws_listener import start_ws_listener
+
 app = FastAPI()
+
+@app.on_event("startup")
+async def start_ws_background_tasks():
+  asyncio.create_task(start_ws_listener())
 
 app.add_middleware(
   CORSMiddleware,

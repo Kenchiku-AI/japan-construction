@@ -179,6 +179,7 @@ class ReportImage(Base):
   height = Column(Integer, nullable=True)
   description = Column(String, nullable=True)
   created_at = Column(DateTime, default=datetime.utcnow)
+  created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
   report = relationship("Report", back_populates="images")
   
@@ -242,4 +243,12 @@ class ReportImageTagLink(Base):
   tag = relationship(
     "ReportImageTag",
     back_populates="tag_links"
+  )
+
+  __table_args__ = (
+    UniqueConstraint(
+      "report_image_id",
+      "tag_id",
+      name="uq_report_image_tag"
+    ),
   )

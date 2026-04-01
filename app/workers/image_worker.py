@@ -3,18 +3,18 @@ import json
 import asyncio
 import uuid
 import logging
-from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.future import select
-from sqlalchemy import insert
+from sqlalchemy.dialects.postgresql import insert
 
 from app.db.session import AsyncSessionLocal
 from app.db.models import ReportImage, ReportImageTag, ReportImageTagLink
 from app.services.openai import get_image_tags
 from app.services.s3 import s3_client, BUCKET_NAME
 from app.services.reports import get_company_id
+from app.services.ws_events import publish_image_tags_ready
 from app.core.config import settings
 
 QUEUE_URL = settings.SQS_QUEUE_URL
@@ -47,7 +47,6 @@ async def process_message(message):
     key = record["s3"]["object"]["key"]
 
     report_id, image_id = parse_s3_key(key)
-
     logger.info(f"Processing image {image_id}")
 
     async with AsyncSessionLocal() as db:
@@ -62,7 +61,6 @@ async def process_message(message):
       if not image:
         logger.warning(f"Image not found: {image_id}")
         return
-
       if image.status != "pending":
         logger.info(f"Image already processed or in progress: {image_id}")
         return
@@ -76,53 +74,51 @@ async def process_message(message):
         ExpiresIn=600,
       )
 
-      tags = await get_image_tags(image_url)
+      async with AsyncSessionLocal() as tag_db:
+        stmt = select(ReportImageTag)
+        result = await tag_db.execute(stmt)
+        tags_list = result.scalars().all()
 
-      company_id = await get_company_id(
-        parent_type=image.report.parent_type,
-        parent_id=image.report.parent_id,
-        db=db,
-      )
+      tag_ids = await get_image_tags(image_url, tags_list)
+      tag_lookup = {str(t.id): t for t in tags_list}
+      links = []
+      tags_payload = []
 
-      for tag_data in tags:
-        insert_stmt = (
-          insert(ReportImageTag)
-          .values(
-            company_id=company_id,
-            name=tag_data["name"],
-            description=tag_data.get("description")
-          )
-          .on_conflict_do_nothing(
-            index_elements=["company_id", "name"]
-          )
-          .returning(ReportImageTag.id)
-        )
+      for tag_id in tag_ids:
+        tag_obj = tag_lookup.get(tag_id)
 
-        result = await db.execute(insert_stmt)
-        tag_id = result.scalar_one_or_none()
+        if not tag_obj:
+          logger.warning("Tag ID returned by OpenAI not found in DB: %s", tag_id)
+          continue
 
-        if tag_id:
-          tag = await db.get(ReportImageTag, tag_id)
-        else:
-          stmt = select(ReportImageTag).where(
-            ReportImageTag.company_id == company_id,
-            ReportImageTag.name == tag_data["name"],
-          )
-          tag = (await db.execute(stmt)).scalar_one()
+        link_id = uuid.uuid4()
+        links.append({
+          "id": link_id,
+          "report_image_id": image.id,
+          "tag_id": tag_id
+        })
 
-        link_insert = (
-          insert(ReportImageTagLink)
-          .values(
-            report_image_id=image.id,
-            tag_id=tag.id
-          )
-          .on_conflict_do_nothing()
-        )
+        tags_payload.append({
+          "tag_id": tag_id,
+          "link_id": link_id,
+          "name": tag_obj.name
+        })
 
+      if links:
+        link_insert = insert(ReportImageTagLink).values(links).on_conflict_do_nothing()
         await db.execute(link_insert)
 
       image.status = "completed"
       await db.commit()
+
+      await publish_image_tags_ready(
+        str(image.created_by),
+        {
+          "type": "image_tags_ready",
+          "image_id": image.id,
+          "tags": tags_payload
+        }
+      )
 
     logger.info(f"Image {image_id} processed successfully")
   except Exception as e:
@@ -138,17 +134,16 @@ async def process_message(message):
           )
           result = await db.execute(stmt)
           image = result.scalar_one_or_none()
-
           if image:
             image.status = "failed"
             await db.commit()
       except Exception:
-          pass
+        pass
     raise e
 
 async def run_worker():
   logger.info("Image worker started")
-
+  
   while True:
     try:
       response = sqs.receive_message(
@@ -156,20 +151,15 @@ async def run_worker():
         MaxNumberOfMessages=5,
         WaitTimeSeconds=20
       )
-
       messages = response.get("Messages", [])
-
       for message in messages:
         await process_message(message)
-
         sqs.delete_message(
           QueueUrl=QUEUE_URL,
           ReceiptHandle=message["ReceiptHandle"]
         )
-
     except Exception as e:
       logger.exception(f"SQS polling error: {e}")
-
       await asyncio.sleep(5)
 
 if __name__ == "__main__":
