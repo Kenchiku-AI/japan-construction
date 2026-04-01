@@ -126,10 +126,6 @@ Rules:
 
   content = response.output[0].content[0].text.strip()
 
-  print("RESPONSE", response)
-
-  print("CONTENT", content)
-
   try:
     tag_ids = json.loads(content)
   except json.JSONDecodeError:
@@ -137,7 +133,5 @@ Rules:
 
   if not isinstance(tag_ids, list):
     raise ValueError(f"Invalid tag response format: {tag_ids}")
-
-  print("TAG IDS", tag_ids)
 
   return tag_ids
