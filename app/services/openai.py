@@ -1,9 +1,9 @@
 from openai import AsyncOpenAI
-from typing import List
+from typing import List, Iterable
 import json
 
 from app.core.config import settings
-from app.db.models.report import ReportField
+from app.db.models.report import ReportField, ReportImageTag
 
 client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
@@ -82,45 +82,56 @@ FIELDS:
 
   return parsed
 
-async def get_image_tags(image_url: str) -> list[dict]:
+async def get_image_tags(image_url: str, tags: Iterable[ReportImageTag]) -> list[str]:
+  tag_list = [
+    {
+      "id": str(tag.id),
+      "name": tag.name,
+      "description": tag.description
+    }
+    for tag in tags
+  ]
+
+  tag_list_json = json.dumps(tag_list, indent=2)
+
   prompt = f"""
 You are an expert in construction site images.
 
 Look at the image at the URL: {image_url}
 
-Return a JSON array of objects with the following fields:
+Below is a list of available tags that may apply to this image.
 
-[
-  {{
-    "name": "<short tag name>",
-    "description": "<detailed description of what this tag represents in the context of construction reports>"
-  }}
-]
+{tag_list_json}
 
-Include all relevant elements visible in the image (equipment, progress, safety, site conditions, etc.).
-Return ONLY valid JSON.
+Return ONLY a JSON array containing the IDs of the tags that apply to the image.
+
+Example:
+
+["uuid1", "uuid2", "uuid3"]
+
+Rules:
+- Only return tag IDs that exist in the provided list
+- Do not invent tags
+- Return only valid JSON
 """
 
   response = await client.responses.create(
     model="gpt-4.1-mini",
     input=[
-      {"role": "system", "content": "You are a construction site image analyzer."},
+      {"role": "system", "content": "You are a construction site image classifier."},
       {"role": "user", "content": prompt}
     ],
     temperature=0
   )
 
-  content = response.output_text.strip()
+  content = response.output[0].content[0].text.strip()
 
-  import json
   try:
-    tags = json.loads(content)
+    tag_ids = json.loads(content)
   except json.JSONDecodeError:
-    raise ValueError(f"Failed to parse image tags JSON: {content}")
+    raise ValueError(f"Failed to parse tag IDs JSON: {content}")
 
-  valid_tags = []
-  for t in tags:
-    if "name" in t and "description" in t:
-      valid_tags.append({"name": t["name"], "description": t["description"]})
+  if not isinstance(tag_ids, list):
+    raise ValueError(f"Invalid tag response format: {tag_ids}")
 
-  return valid_tags
+  return tag_ids
