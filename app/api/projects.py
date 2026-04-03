@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
 from app.db.models import Project, Company, User, ProjectStatus
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectWithCompany
+from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectWithReports, ProjectWithCompany
 from app.core.dependencies import get_current_user, require_company_member, require_company_manager
 from app.services.email import send_project_request_email
 
@@ -25,13 +25,19 @@ async def list_projects(
       case((Project.status == ProjectStatus.requested, 0), else_=1),
       desc(Project.updated_at)
     ]
-    stmt = select(Project).order_by(*order_by_clause).limit(25)
+    stmt = (
+      select(Project)
+      .options(selectinload(Project.company))
+      .order_by(*order_by_clause)
+      .limit(25)
+    )
   else:
     if current_user.company_id is None:
       return []
 
     stmt = (
       select(Project)
+      .options(selectinload(Project.company))
       .where(Project.company_id == current_user.company_id)
       .order_by(desc(Project.updated_at))
       .limit(25)
@@ -41,7 +47,7 @@ async def list_projects(
   projects = result.scalars().all()
   return projects
 
-@router.get("/{project_id}", response_model=ProjectRead)
+@router.get("/{project_id}", response_model=ProjectWithReports)
 async def get_project(
   project_id: UUID,
   db: AsyncSession = Depends(get_db),
@@ -50,6 +56,7 @@ async def get_project(
   stmt = (
     select(Project)
     .where(Project.id == project_id)
+    .options(selectinload(Project.reports))
   )
 
   result = await db.execute(stmt)
@@ -65,7 +72,7 @@ async def get_project(
 
 @router.post(
   "",
-  response_model=ProjectRead,
+  response_model=ProjectWithReports,
   status_code=status.HTTP_201_CREATED,
 )
 async def create_project(
@@ -100,14 +107,15 @@ async def create_project(
   await db.commit()
   await db.refresh(project)
 
-  return ProjectRead(
+  return ProjectWithReports(
     id=project.id,
     name=project.name,
     description=project.description,
-    status=project.status
+    status=project.status,
+    reports=[]
   )
 
-@router.put("/{project_id}", response_model=ProjectWithCompany)
+@router.patch("/{project_id}", response_model=ProjectWithReports)
 async def update_project(
   project_id: UUID,
   payload: ProjectUpdate,
@@ -124,12 +132,20 @@ async def update_project(
         status_code=403,
         detail="Only active projects can be updated",
       )
-    require_company_member(current_user, project.company_id)
+    require_company_manager(current_user, project.company_id)
 
   for field, value in payload.model_dump(exclude_unset=True).items():
     setattr(project, field, value)
 
   await db.commit()
-  await db.refresh(project)
+
+  stmt = (
+    select(Project)
+    .where(Project.id == project_id)
+    .options(selectinload(Project.reports))
+  )
+
+  result = await db.execute(stmt)
+  project = result.scalars().first()
 
   return project

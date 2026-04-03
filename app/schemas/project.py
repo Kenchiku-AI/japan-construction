@@ -1,6 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 
 from app.schemas.company import CompanyRead
@@ -13,7 +13,8 @@ class ProjectCreate(ProjectBase):
   company_id: UUID
 
 class ProjectUpdate(ProjectBase):
-  pass
+  name: str | None = None
+  description: str | None = None
 
 class ProjectRead(ProjectBase):
   id: UUID
@@ -25,3 +26,17 @@ class ProjectRead(ProjectBase):
 
 class ProjectWithCompany(ProjectRead):
   company: CompanyRead
+
+class ProjectReportRead(BaseModel):
+  id: UUID
+  name: str
+  created_at: datetime
+  updated_at: datetime
+
+  model_config = {
+    "from_attributes": True
+  }
+
+class ProjectWithReports(ProjectRead):
+  reports: List[ProjectReportRead] = []
+  
