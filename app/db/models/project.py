@@ -3,11 +3,12 @@ import uuid
 
 from datetime import datetime
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, and_
+from sqlalchemy.orm import relationship, foreign
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.base import Base
+from app.db.models.report import Report, ReportParentType
 
 class ProjectStatus(str, enum.Enum):
   active = "active"
@@ -29,6 +30,15 @@ class Project(Base):
   )
 
   company = relationship("Company", back_populates="projects")
+
+  reports = relationship(
+    "Report",
+    primaryjoin=and_(
+      foreign(Report.parent_id) == id,
+      Report.parent_type == ReportParentType.project
+    ),
+    viewonly=True
+  )
 
   created_at = Column(DateTime, default=datetime.utcnow)
   updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
