@@ -22,12 +22,6 @@ class ReportParentType(str, Enum):
   project = "project"
   company = "company"
 
-class ReportUniqueBy(str, Enum):
-  day = "day"
-  week = "week"
-  month = "month"
-  year = "year"
-
 class ReportTemplate(Base):
   __tablename__ = "report_templates"
 
@@ -39,11 +33,6 @@ class ReportTemplate(Base):
   is_global = Column(Boolean, nullable=False, default=False)
   
   parent_type = Column(SQLEnum(ReportParentType), nullable=False)
-
-  unique_by = Column(
-    SQLEnum(ReportUniqueBy, name="report_unique_by"),
-    nullable=True,
-  )
 
   fields = relationship(
     "ReportTemplateField",

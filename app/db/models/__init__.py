@@ -5,7 +5,6 @@ from app.db.models.invitation import Invitation
 from app.db.models.project import Project, ProjectStatus
 from app.db.models.report import (
   ReportParentType,
-  ReportUniqueBy,
   ReportTemplate,
   ReportTemplateField,
   Report,
