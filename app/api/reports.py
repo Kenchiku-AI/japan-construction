@@ -555,7 +555,7 @@ async def update_report_image(
       ReportImage.report_id == report_id,
     )
     .options(
-      selectinload(ReportImage.tag_links).selectinload("tag")
+      selectinload(ReportImage.tag_links).selectinload(ReportImageTagLink.tag)
     )
   )
   result = await db.execute(stmt)
