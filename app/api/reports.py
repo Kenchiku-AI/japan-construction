@@ -42,7 +42,7 @@ from app.core.dependencies import (
   require_company_manager,
   require_company_member,
 )
-from app.services.reports import can_create_report, get_company_id
+from app.services.reports import get_company_id
 from app.services.openai import transcribe_and_extract_json
 from app.services.s3 import s3_client, BUCKET_NAME
 
@@ -130,12 +130,6 @@ async def create_report(
     db=db
   )
   require_company_manager(current_user, company_id)
-
-  if not await can_create_report(db, template, payload.parent_id, datetime.utcnow()):
-    raise HTTPException(
-      status_code=400,
-      detail=f"A report for this period ({template.unique_by}) already exists",
-    )
 
   report = Report(
     name=payload.name,
@@ -238,7 +232,6 @@ async def create_report_template(
   template = ReportTemplate(
     name=payload.name,
     description=payload.description,
-    unique_by=payload.unique_by,
     is_global=current_user.role == "admin",
     parent_type=payload.parent_type,
     fields=[],
@@ -948,9 +941,6 @@ async def update_report_template(
 
   if payload.description is not None:
     template.description = payload.description
-
-  if payload.unique_by is not None:
-    template.unique_by = payload.unique_by
 
   if payload.parent_type is not None:
     template.parent_type = payload.parent_type
