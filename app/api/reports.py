@@ -45,6 +45,7 @@ from app.core.dependencies import (
 from app.services.reports import get_company_id
 from app.services.openai import transcribe_and_extract_json
 from app.services.s3 import s3_client, BUCKET_NAME
+from app.services.ws_manager import manager
 
 router = APIRouter(
   prefix="/reports",
@@ -1087,20 +1088,23 @@ async def delete_report_template(
 @router.websocket("/images/ws")
 async def report_image_ws(
   ws: WebSocket,
-  access_token: str
+  access_token: str | None = None
 ):
+  token = access_token or ws.cookies.get("accessToken")
+
+  if not token:
+    await ws.close(code=1008)
+    return
+
   async for db in get_db():
     try:
-      current_user = await get_current_user_ws(access_token, db)
+      current_user = await get_current_user_ws(token, db)
     except Exception:
       await ws.close(code=1008)
       return
-
     break
 
   user_id = str(current_user.id)
-
-  from app.services.ws_manager import manager
 
   await manager.connect(user_id, ws)
 
@@ -1109,3 +1113,4 @@ async def report_image_ws(
       await ws.receive_text()
   except WebSocketDisconnect:
     manager.disconnect(user_id, ws)
+    await ws.close()
