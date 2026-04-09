@@ -420,7 +420,7 @@ async def list_report_images(
     download_url = s3_client.generate_presigned_url(
       "get_object",
       Params={"Bucket": BUCKET_NAME, "Key": img.image_url},
-      ExpiresIn=3600,
+      ExpiresIn=86400,
     )
 
     tags = [
@@ -487,7 +487,7 @@ async def create_report_image(
   download_url = s3_client.generate_presigned_url(
     "get_object",
     Params={"Bucket": BUCKET_NAME, "Key": key},
-    ExpiresIn=3600,
+    ExpiresIn=86400,
   )
 
   report_image = ReportImage(
