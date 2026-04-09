@@ -479,6 +479,7 @@ async def create_report_image(
       "Bucket": BUCKET_NAME,
       "Key": key,
       "ContentType": "image/jpeg",
+      "CacheControl": "public, max-age=31536000, immutable",
     },
     ExpiresIn=300,
   )
