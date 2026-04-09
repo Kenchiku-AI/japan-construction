@@ -94,40 +94,40 @@ async def get_image_tags(image_url: str, tags: Iterable[ReportImageTag]) -> list
 
   tag_list_json = json.dumps(tag_list, indent=2)
 
-  prompt = f"""
-You are an expert in construction site images.
-
-Look at the image at the URL: {image_url}
-
+  response = await client.responses.create(
+    model="gpt-4.1-mini",
+    temperature=0,
+    input=[
+      {
+        "role": "system",
+        "content": "You are a construction site image classifier."
+      },
+      {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": f"""
 Below is a list of available tags that may apply to this image.
 
 {tag_list_json}
 
 Return ONLY a JSON array containing the IDs of the tags that apply to the image.
-
-Example:
-
-["uuid1", "uuid2", "uuid3"]
-
-Rules:
-- Only return tag IDs that exist in the provided list
-- Do not invent tags
-- Return only valid JSON
 """
-
-  response = await client.responses.create(
-    model="gpt-4.1-mini",
-    input=[
-      {"role": "system", "content": "You are a construction site image classifier."},
-      {"role": "user", "content": prompt}
-    ],
-    temperature=0
+            },
+            {
+              "type": "input_image",
+              "image_url": image_url
+            }
+          ]
+      }
+    ]
   )
 
-  content = response.output[0].content[0].text.strip()
+  print("OPEN AI RESPONSE", response)
 
   try:
-    tag_ids = json.loads(content)
+    tag_ids = json.loads(response.output_text)
   except json.JSONDecodeError:
     raise ValueError(f"Failed to parse tag IDs JSON: {content}")
 
