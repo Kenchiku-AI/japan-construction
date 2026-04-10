@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.db.session import AsyncSessionLocal
 from app.db.models import ReportImage, ReportImageTag, ReportImageTagLink, Company
-from app.services.openai import get_image_tags
+from app.services.openai import get_image_tags_and_description
 from app.services.s3 import s3_client, BUCKET_NAME
 from app.services.reports import get_company_id
 from app.services.ws_events import publish_image_tags_ready
