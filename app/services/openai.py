@@ -1,6 +1,7 @@
 from openai import AsyncOpenAI
 from typing import List, Iterable
 import json
+import re
 
 from app.core.config import settings
 from app.db.models.report import ReportField, ReportImageTag
@@ -99,51 +100,33 @@ async def get_image_tags_and_description(
   tag_list_json = json.dumps(tag_list, indent=2)
 
   if include_description:
-    schema = {
-      "type": "object",
-      "properties": {
-        "tags": {
-          "type": "array",
-          "items": {"type": "string"}
-        },
-        "description": {
-          "type": "string"
-        }
-      },
-      "required": ["tags", "description"]
-    }
-
     description_instruction = """
 Also include a professional, concise description (1-2 sentences)
-suitable for a construction report. Focus only on visible facts
-such as work being performed, equipment, and safety conditions.
+suitable for a construction report. Focus only on visible facts.
 Do not speculate. Use precise, formal language suitable for construction documentation.
 Avoid vague terms like "some", "various", or "etc."
 """
-  else:
-    schema = {
-      "type": "object",
-      "properties": {
-        "tags": {
-          "type": "array",
-          "items": {"type": "string"}
-        }
-      },
-      "required": ["tags"]
-    }
+    json_format = """
+Return ONLY valid JSON in this format:
 
+{
+  "tags": ["tag_id_1", "tag_id_2"],
+  "description": "Short professional description"
+}
+"""
+  else:
     description_instruction = ""
+    json_format = """
+Return ONLY valid JSON in this format:
+
+{
+  "tags": ["tag_id_1", "tag_id_2"]
+}
+"""
 
   response = await client.responses.create(
     model="gpt-4.1-mini",
     temperature=0,
-    response_format={
-      "type": "json_schema",
-      "json_schema": {
-        "name": "image_analysis",
-        "schema": schema
-      }
-    },
     input=[
       {
         "role": "system",
@@ -159,10 +142,14 @@ Below is a list of available tags that may apply to this image.
 
 {tag_list_json}
 
+{json_format}
+
 Select all tags that clearly apply to the image.
 Only select tags that are visually present.
 Do not infer or guess beyond what is visible.
 If no tags apply, return an empty array.
+
+Return ONLY JSON. Do not include any extra text.
 
 {description_instruction}
 """
@@ -176,4 +163,13 @@ If no tags apply, return an empty array.
     ]
   )
 
-  return response.output[0].content[0].json
+  print("OPEN AI RESPONSE...", response)
+
+  return safe_json_loads(response.output_text)
+
+def safe_json_loads(text: str):
+  match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
+  if not match:
+    raise ValueError(f"No JSON found in: {text}")
+
+  return json.loads(match.group())
