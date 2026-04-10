@@ -10,7 +10,7 @@ from sqlalchemy.future import select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.db.session import AsyncSessionLocal
-from app.db.models import ReportImage, ReportImageTag, ReportImageTagLink
+from app.db.models import ReportImage, ReportImageTag, ReportImageTagLink, Company
 from app.services.openai import get_image_tags
 from app.services.s3 import s3_client, BUCKET_NAME
 from app.services.reports import get_company_id
@@ -74,12 +74,42 @@ async def process_message(message):
         ExpiresIn=600,
       )
 
-      async with AsyncSessionLocal() as tag_db:
-        stmt = select(ReportImageTag)
-        result = await tag_db.execute(stmt)
-        tags_list = result.scalars().all()
+      company_id = await get_company_id(
+        image.report.parent_type,
+        image.report.parent_id,
+        db
+      )
 
-      tag_ids = await get_image_tags(image_url, tags_list)
+      stmt = select(Company).where(Company.id == company_id)
+      result = await db.execute(stmt)
+      company = result.scalar_one_or_none()
+
+      if not company:
+        raise ValueError(f"Company not found: {company_id}")
+
+      stmt = select(ReportImageTag).where(ReportImageTag.company_id == company_id)
+      result = await db.execute(stmt)
+      tags_list = result.scalars().all()
+
+      ai_result = None
+
+      for attempt in range(3):
+        try:
+          ai_result = await get_image_tags_and_description(
+            image_url,
+            tags_list,
+            company.image_descriptions_enabled
+          )
+          break
+        except Exception as e:
+          logger.warning(f"OpenAI attempt {attempt+1} failed: {e}")
+          if attempt == 2:
+            raise
+          await asyncio.sleep(1)
+
+      tag_ids = ai_result.get("tags", [])
+      description = ai_result.get("description")
+
       tag_lookup = {str(t.id): t for t in tags_list}
       links = []
       tags_payload = []
@@ -108,6 +138,9 @@ async def process_message(message):
         link_insert = insert(ReportImageTagLink).values(links).on_conflict_do_nothing()
         await db.execute(link_insert)
 
+      if description is not None:
+        image.description = description
+
       image.status = "completed"
       await db.commit()
 
@@ -116,7 +149,8 @@ async def process_message(message):
         {
           "type": "image_tags_ready",
           "image_id": image.id,
-          "tags": tags_payload
+          "tags": tags_payload,
+          "description": image.description
         }
       )
 
