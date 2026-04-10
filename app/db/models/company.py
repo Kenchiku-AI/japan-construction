@@ -13,6 +13,7 @@ class Company(Base):
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
   name = Column(String, nullable=False, index=True)
   corporate_number = Column(String, nullable=True, index=True)
+  image_descriptions_enabled = Column(Boolean, default=True, nullable=False)
 
   users = relationship("User", back_populates="company")
 
