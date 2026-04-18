@@ -275,8 +275,8 @@ async def forgot_password(
 
 @router.post("/reset-password")
 async def reset_password(
-    payload: ResetPasswordRequest,
-    db: AsyncSession = Depends(get_db),
+  payload: ResetPasswordRequest,
+  db: AsyncSession = Depends(get_db),
 ):
   hashed_token = hash_token(payload.token)
 
