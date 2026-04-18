@@ -102,8 +102,22 @@ async def get_image_tags_and_description(
   if include_description:
     description_instruction = """
 Also include a professional, concise description (1-2 sentences)
-suitable for a construction report. Focus only on visible facts.
-Do not speculate. Use precise, formal language suitable for construction documentation.
+suitable for a construction report.
+
+Write the description as a direct statement of what is visible.
+Do NOT start with "The image shows" or similar phrases.
+
+Good examples:
+- "Workers installing steel reinforcement along a concrete wall"
+- "Excavation work in progress using a hydraulic excavator"
+
+Bad example:
+- "The image shows workers installing steel reinforcement."
+
+Focus only on visible facts such as work being performed, equipment, and safety conditions.
+Do not speculate.
+
+Use precise, formal language suitable for construction documentation.
 Avoid vague terms like "some", "various", or "etc."
 """
     json_format = """
