@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta
 from uuid import uuid4
 from typing import Optional
+import secrets
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,14 +15,16 @@ from app.core.security import (
   create_access_token,
   create_refresh_token,
   hash_password,
-  hash_token,
+  hash_token
 )
 from app.db.models.refresh_token import RefreshToken
 from app.db.models.user import User
+from app.db.models.password_reset_token import PasswordResetToken
 from app.db.session import get_db
-from app.schemas.auth import LoginRequest, TokenPayload, TokenSchema
+from app.schemas.auth import LoginRequest, TokenPayload, TokenSchema, ForgotPasswordRequest, ResetPasswordRequest
 from app.schemas.user import UserCreate
 from app.services.users import build_user_with_company_and_projects
+from app.services.email import send_password_reset_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -232,3 +235,69 @@ async def logout(
   response.delete_cookie("refreshToken", path="/")
   
   return response
+
+@router.post("/forgot-password")
+async def forgot_password(
+  background_tasks: BackgroundTasks,
+  payload: ForgotPasswordRequest,
+  db: AsyncSession = Depends(get_db),
+):
+  result = await db.execute(
+    select(User).where(User.email == payload.email)
+  )
+  user = result.scalar_one_or_none()
+
+  if not user:
+    return {"success": True}
+
+  token = secrets.token_urlsafe(32)
+  hashed_token = hash_token(token)
+
+  expires_at = datetime.utcnow() + timedelta(minutes=30)
+
+  reset_entry = PasswordResetToken(
+    id=str(uuid4()),
+    user_id=user.id,
+    token_hash=hashed_token,
+    expires_at=expires_at,
+  )
+
+  db.add(reset_entry)
+  await db.commit()
+
+  background_tasks.add_task(
+    send_password_reset_email,
+    user.email,
+    token,
+  )
+
+  return {"success": True}
+
+@router.post("/reset-password")
+async def reset_password(
+    payload: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+):
+  hashed_token = hash_token(payload.token)
+
+  result = await db.execute(
+    select(PasswordResetToken).where(
+      PasswordResetToken.token_hash == hashed_token
+    )
+  )
+  db_token = result.scalar_one_or_none()
+
+  if not db_token:
+    raise HTTPException(status_code=404, detail="Invalid token")
+
+  if db_token.expires_at < datetime.utcnow():
+    raise HTTPException(status_code=400, detail="Token expired")
+
+  user = await db.get(User, db_token.user_id)
+
+  user.hashed_password = hash_password(payload.new_password)
+
+  await db.delete(db_token)
+  await db.commit()
+
+  return {"success": True}
