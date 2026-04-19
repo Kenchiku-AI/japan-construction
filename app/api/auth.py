@@ -19,6 +19,7 @@ from app.core.security import (
 )
 from app.db.models.refresh_token import RefreshToken
 from app.db.models.user import User
+from app.db.models.invitation import Invitation
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.session import get_db
 from app.schemas.auth import LoginRequest, TokenPayload, TokenSchema, ForgotPasswordRequest, ResetPasswordRequest
@@ -160,12 +161,27 @@ async def signup(
       detail="Email already registered",
     )
 
+  hashed_token = hash_token(payload.invitation_token)
+  result = await db.execute(select(Invitation).filter(Invitation.token_hash == hashed_token))
+  invitation = result.scalars().first()
+
+  if not invitation:
+    raise HTTPException(status_code=404, detail="Invitation not found or invalid")
+
+  if invitation.expires_at < datetime.utcnow():
+    raise HTTPException(status_code=400, detail="Invitation expired")
+
+  company = await db.get(Company, invitation.company_id)
+  if not company:
+    raise HTTPException(status_code=404, detail="Company not found")
+
   user = User(
     email=payload.email,
     first_name=payload.first_name,
     last_name=payload.last_name,
     hashed_password=hash_password(payload.password),
-    role="user"
+    company_id=company.id,
+    role=invitation.role
   )
 
   db.add(user)

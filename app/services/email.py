@@ -7,7 +7,7 @@ def send_invitation_email(email: str, company_name: str, invite_token: str) -> N
   if not settings.SENDGRID_API_KEY:
     raise RuntimeError("SENDGRID_API_KEY environment variable is not set")
 
-  invite_link = f"{settings.WEB_CLIENT_URL}/invitation?token={invite_token}"
+  invite_link = f"{settings.WEB_CLIENT_URL}/signup?token={invite_token}"
 
   subject = f"You're invited to join {company_name}"
   content = f"""
