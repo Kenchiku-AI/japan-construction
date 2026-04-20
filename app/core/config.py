@@ -5,6 +5,7 @@ class Settings(BaseSettings):
   ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
   REFRESH_TOKEN_EXPIRE_DAYS: int = 30
   ALGORITHM: str = "HS256"
+  SUPER_USER_EMAIL: str
   DATABASE_URL: str
   WEB_CLIENT_URL: str = "http://localhost:3000"
   SECURE_COOKIE: bool = False # Set this to True in prod
