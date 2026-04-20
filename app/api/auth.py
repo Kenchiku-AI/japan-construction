@@ -146,7 +146,6 @@ async def refresh_token(
 @router.post("/signup", response_model=TokenSchema)
 async def signup(
   payload: UserCreate,
-  request: Request,
   db: AsyncSession = Depends(get_db),
   x_client_type: str | None = Header(default=None),
 ):

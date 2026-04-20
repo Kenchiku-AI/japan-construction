@@ -19,6 +19,9 @@ class UserCreate(UserBase):
   password: str = Field(..., min_length=8)
   invitation_token: str
 
+class AdminCreate(UserBase):
+  password: str = Field(..., min_length=8)
+
 class UserRead(UserBase):
   id: UUID
   created_at: datetime
