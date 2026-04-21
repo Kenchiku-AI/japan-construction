@@ -15,7 +15,6 @@ pydantic[email]
 python-multipart
 
 openai>=1.0.0
-sendgrid
 redis>=5.0.0
 
 boto3

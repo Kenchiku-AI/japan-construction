@@ -9,8 +9,8 @@ class Settings(BaseSettings):
   DATABASE_URL: str
   WEB_CLIENT_URL: str = "http://localhost:3000"
   SECURE_COOKIE: bool = False # Set this to True in prod
-  SENDGRID_API_KEY: str
-  FROM_EMAIL: str
+  NO_REPLY_EMAIL: str
+  SUPPORT_EMAIL: str
   OPENAI_API_KEY: str
   AWS_ACCESS_KEY_ID: str
   AWS_SECRET_ACCESS_KEY: str
