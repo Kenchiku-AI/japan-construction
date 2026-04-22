@@ -1,16 +1,22 @@
 import redis.asyncio as redis
 import json
+import logging
 
 from app.core.config import settings
 from app.services.ws_manager import manager
 
 r = redis.from_url(settings.REDIS_URL)
 
+logger = logging.getLogger(__name__)
+
 async def start_ws_listener():
 
   pubsub = r.pubsub()
 
-  await pubsub.subscribe("image_events")
+  try:
+    await pubsub.subscribe("image_events")
+  except Exception as e:
+      logger.warning(f"Redis not available: {e}")
 
   async for message in pubsub.listen():
 
