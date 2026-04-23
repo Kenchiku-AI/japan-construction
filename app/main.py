@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import auth, users, companies, invitations, projects, reports
+from app.api import auth, users, companies, invitations, projects, reports, health
 from app.core.config import settings
 
 import asyncio
@@ -26,3 +26,4 @@ app.include_router(companies.router)
 app.include_router(invitations.router)
 app.include_router(projects.router)
 app.include_router(reports.router)
+app.include_router(health.router)
