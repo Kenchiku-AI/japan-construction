@@ -49,11 +49,13 @@ jobs:
       - name: Register new task definition
         run: |
           TASK_DEF=$(aws ecs describe-task-definition \
-            --task-definition ${{ secrets.ECS_TASK_DEFINITION }})
+            --task-definition ${{ secrets.ECS_TASK_DEFINITION }} \
+            --query taskDefinition)
 
-          NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "$IMAGE_URI" '
-            .taskDefinition
-            | .containerDefinitions[0].image = $IMAGE
+          echo "$TASK_DEF" > task-def.json
+
+          NEW_TASK_DEF=$(jq --arg IMAGE "$IMAGE_URI" '
+            .containerDefinitions[0].image = $IMAGE
             | del(
                 .taskDefinitionArn,
                 .revision,
@@ -63,13 +65,14 @@ jobs:
                 .registeredAt,
                 .registeredBy
               )
-          ')
+          ' task-def.json)
 
-          NEW_TASK_DEF_ARN=$(echo "$NEW_TASK_DEF" | \
-            aws ecs register-task-definition \
-              --cli-input-json file:///dev/stdin \
-              --query "taskDefinition.taskDefinitionArn" \
-              --output text)
+          echo "$NEW_TASK_DEF" > new-task-def.json
+
+          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://new-task-def.json \
+            --query "taskDefinition.taskDefinitionArn" \
+            --output text)
 
           echo "NEW_TASK_DEF_ARN=$NEW_TASK_DEF_ARN" >> $GITHUB_ENV
 
