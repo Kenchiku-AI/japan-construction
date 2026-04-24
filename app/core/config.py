@@ -18,6 +18,18 @@ class Settings(BaseSettings):
   SECURE_COOKIE: bool = False # Set this to True in prod
   REDIS_URL: str = "redis://redis:6379"
 
+  @field_validator("*", mode="before")
+  @classmethod
+  def unwrap_json_secrets(cls, v, info):
+    if isinstance(v, str) and v.startswith("{"):
+      try:
+        data = json.loads(v)
+        if isinstance(data, dict):
+          return data.get(info.field_name, v)
+      except json.JSONDecodeError:
+        pass
+    return v
+
   class Config:
     env_file = ".env"
 
