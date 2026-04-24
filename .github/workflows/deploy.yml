@@ -1,4 +1,4 @@
-name: Deploy FastAPI to ECS
+name: Deploy
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
