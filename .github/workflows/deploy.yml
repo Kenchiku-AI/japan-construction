@@ -5,9 +5,7 @@ env:
   ECR_REPO: ${{ secrets.ECR_REPOSITORY }}
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   deploy:
