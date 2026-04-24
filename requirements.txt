@@ -1,5 +1,6 @@
 fastapi
-uvicorn[standard]
+gunicorn
+uvicorn
 
 sqlalchemy>=2.0
 asyncpg
