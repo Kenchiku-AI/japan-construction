@@ -1,6 +1,7 @@
 name: Deploy FastAPI to ECS
 
 env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REPO: ${{ secrets.ECR_REPOSITORY }}
 
 on:
@@ -27,25 +28,86 @@ jobs:
         run: |
           aws ecr get-login-password --region $AWS_REGION \
           | docker login --username AWS --password-stdin \
-          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com
+
+      - name: Set image tag
+        run: echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_ENV
+
+      - name: Set image URI
+        run: echo "IMAGE_URI=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:$IMAGE_TAG" >> $GITHUB_ENV
 
       - name: Build image
         run: |
-          docker build -t $ECR_REPO:latest .
+          docker build -t $ECR_REPO:$IMAGE_TAG .
 
       - name: Tag image
         run: |
-          docker tag $ECR_REPO:latest \
-          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/$ECR_REPO:latest
+          docker tag $ECR_REPO:$IMAGE_TAG $IMAGE_URI
 
       - name: Push image
         run: |
-          docker push \
-          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/$ECR_REPO:latest
+          docker push $IMAGE_URI
 
-      - name: Force ECS deployment
+      - name: Register new task definition
+        run: |
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition ${{ secrets.ECS_TASK_DEFINITION }})
+
+          NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "$IMAGE_URI" '
+            .taskDefinition
+            | .containerDefinitions[0].image = $IMAGE
+            | del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy
+              )
+          ')
+
+          NEW_TASK_DEF_ARN=$(echo "$NEW_TASK_DEF" | \
+            aws ecs register-task-definition \
+              --cli-input-json file:///dev/stdin \
+              --query "taskDefinition.taskDefinitionArn" \
+              --output text)
+
+          echo "NEW_TASK_DEF_ARN=$NEW_TASK_DEF_ARN" >> $GITHUB_ENV
+
+      - name: Run database migrations
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster ${{ secrets.ECS_CLUSTER }} \
+            --task-definition $NEW_TASK_DEF_ARN \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.SUBNET_1 }},${{ secrets.SUBNET_2 }}],securityGroups=[${{ secrets.SECURITY_GROUP }}],assignPublicIp=ENABLED}" \
+            --overrides file://scripts/run-migrations.json \
+            --query "tasks[0].taskArn" \
+            --output text)
+
+          echo "Task ARN: $TASK_ARN"
+
+          aws ecs wait tasks-stopped \
+            --cluster ${{ secrets.ECS_CLUSTER }} \
+            --tasks $TASK_ARN
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster ${{ secrets.ECS_CLUSTER }} \
+            --tasks $TASK_ARN \
+            --query "tasks[0].containers[0].exitCode" \
+            --output text)
+
+          echo "Exit code: $EXIT_CODE"
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Migration failed"
+            exit 1
+          fi
+
+      - name: Update ECS service
         run: |
           aws ecs update-service \
             --cluster ${{ secrets.ECS_CLUSTER }} \
             --service ${{ secrets.ECS_SERVICE }} \
-            --force-new-deployment
+            --task-definition $NEW_TASK_DEF_ARN

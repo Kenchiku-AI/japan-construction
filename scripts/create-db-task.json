@@ -1,0 +1,12 @@
+{
+  "containerOverrides": [
+    {
+      "name": "api",
+      "command": [
+        "python",
+        "-c",
+        "import os, psycopg2; db_url = os.environ['DATABASE_URL']; master_url = db_url.replace('postgresql+asyncpg', 'postgresql').replace('/appdb', '/postgres'); print('Connecting to master database...'); conn = psycopg2.connect(master_url); conn.autocommit = True; cur = conn.cursor(); cur.execute('CREATE DATABASE appdb;'); print('Database appdb created successfully!'); cur.close(); conn.close()"
+      ]
+    }
+  ]
+}
