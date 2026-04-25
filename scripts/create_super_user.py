@@ -55,4 +55,4 @@ async def create_super_user():
     return user
 
 if __name__ == "__main__":
-  asyncio.run(create_super_user())
+    asyncio.run(create_super_user())
