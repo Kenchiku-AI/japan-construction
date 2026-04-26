@@ -46,7 +46,7 @@ async def create_super_user():
     db.add(reset_entry)
     await db.commit()
 
-    await send_password_reset_email(
+    send_password_reset_email(
       user.email,
       token,
     )
