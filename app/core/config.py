@@ -17,7 +17,6 @@ class Settings(BaseSettings):
   SQS_QUEUE_URL: str
   ALGORITHM: str = "HS256"
   WEB_CLIENT_URL: str = "http://localhost:3000"
-  SECURE_COOKIE: bool = False # Set this to True in prod
   REDIS_URL: str = "redis://redis:6379"
 
   @field_validator("*", mode="before")

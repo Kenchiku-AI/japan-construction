@@ -61,6 +61,7 @@ async def login(
   await db.commit()
 
   if x_client_type == "web":
+    is_secure = settings.ENV != "local"
     user_with_projects = await build_user_with_company_and_projects(user, db)
     response = JSONResponse(
       content=user_with_projects.model_dump(mode="json")
@@ -69,7 +70,7 @@ async def login(
       key="accessToken",
       value=access_token,
       httponly=True,
-      secure=settings.SECURE_COOKIE,
+      secure=is_secure,
       samesite="lax",
       path="/",
     )
@@ -77,7 +78,7 @@ async def login(
       key="refreshToken",
       value=refresh_token,
       httponly=True,
-      secure=settings.SECURE_COOKIE,
+      secure=is_secure,
       samesite="lax",
       path="/",
     )
@@ -131,7 +132,7 @@ async def refresh_token(
       key="accessToken",
       value=access_token,
       httponly=True,
-      secure=settings.SECURE_COOKIE,
+      secure=settings.ENV != "local",
       samesite="lax",
       path="/",
     )
@@ -202,6 +203,7 @@ async def signup(
   await db.commit()
 
   if x_client_type == "web":
+    is_secure = settings.ENV != "local"
     user_with_projects = await build_user_with_company_and_projects(user, db)
     response = JSONResponse(
       content=user_with_projects.model_dump(mode="json")
@@ -210,7 +212,7 @@ async def signup(
       key="accessToken",
       value=access_token,
       httponly=True,
-      secure=settings.SECURE_COOKIE,
+      secure=is_secure,
       samesite="lax",
       path="/",
     )
@@ -218,7 +220,7 @@ async def signup(
       key="refreshToken",
       value=refresh_token,
       httponly=True,
-      secure=settings.SECURE_COOKIE,
+      secure=is_secure,
       samesite="lax",
       path="/",
     )
