@@ -48,8 +48,8 @@ class UserProjectRead(BaseModel):
 
 class UserWithCompanyAndProjects(BaseModel):
   id: UUID
-  first_name: str
-  last_name: str
+  first_name: Optional[str]
+  last_name: Optional[str]
   email: str
   created_at: datetime
   updated_at: datetime
