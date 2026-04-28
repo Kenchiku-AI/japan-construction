@@ -1,7 +1,7 @@
 {
   "containerOverrides": [
     {
-      "name": "api",
+      "name": "api-dev",
       "command": ["alembic", "upgrade", "head"]
     }
   ]
