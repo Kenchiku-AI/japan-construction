@@ -50,12 +50,17 @@ jobs:
         run: |
           TASK_DEF=$(aws ecs describe-task-definition \
             --task-definition ${{ secrets.ECS_TASK_DEFINITION_DEV }} \
-            --query taskDefinition)
+            --query taskDefinition \
+            --output json)
 
-          echo "$TASK_DEF" > task-def.json
-
-          NEW_TASK_DEF=$(jq --arg IMAGE "$IMAGE_URI" '
-            .containerDefinitions[0].image = $IMAGE
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq --arg IMAGE "$IMAGE_URI" '
+            .containerDefinitions |= map(
+              if .name == "api-dev" then
+                .image = $IMAGE
+              else
+                .
+              end
+            )
             | del(
                 .taskDefinitionArn,
                 .revision,
@@ -65,7 +70,7 @@ jobs:
                 .registeredAt,
                 .registeredBy
               )
-          ' task-def.json)
+          ')
 
           echo "$NEW_TASK_DEF" > new-task-def.json
 
@@ -96,7 +101,7 @@ jobs:
           EXIT_CODE=$(aws ecs describe-tasks \
             --cluster ${{ secrets.ECS_CLUSTER_DEV }} \
             --tasks $TASK_ARN \
-            --query "tasks[0].containers[0].exitCode" \
+            --query "tasks[0].containers[?name=='api-dev'].exitCode | [0]" \
             --output text)
 
           echo "Exit code: $EXIT_CODE"
