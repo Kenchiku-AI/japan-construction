@@ -83,7 +83,7 @@ jobs:
             --task-definition $NEW_TASK_DEF_ARN \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.SUBNET_1 }},${{ secrets.SUBNET_2 }}],securityGroups=[${{ secrets.SECURITY_GROUP_DEV }}],assignPublicIp=ENABLED}" \
-            --overrides file://scripts/run-migrations.json \
+            --overrides file://scripts/run-migrations-dev.json \
             --query "tasks[0].taskArn" \
             --output text)
 
