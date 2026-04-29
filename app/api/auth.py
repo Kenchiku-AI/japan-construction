@@ -61,26 +61,22 @@ async def login(
   await db.commit()
 
   if x_client_type == "web":
-    is_secure = settings.ENV != "local"
     user_with_projects = await build_user_with_company_and_projects(user, db)
     response = JSONResponse(
       content=user_with_projects.model_dump(mode="json")
     )
+
+    cookie_settings = get_cookie_settings()
+
     response.set_cookie(
       key="accessToken",
       value=access_token,
-      httponly=True,
-      secure=is_secure,
-      samesite="lax",
-      path="/",
+      **cookie_settings,
     )
     response.set_cookie(
       key="refreshToken",
       value=refresh_token,
-      httponly=True,
-      secure=is_secure,
-      samesite="lax",
-      path="/",
+      **cookie_settings,
     )
     return response
 
@@ -127,16 +123,13 @@ async def refresh_token(
   access_token = create_access_token({"sub": str(user.id)})
 
   if "refreshToken" in request.cookies:
+    cookie_settings = get_cookie_settings()
     response = JSONResponse(content={"token_type": "bearer"})
     response.set_cookie(
       key="accessToken",
       value=access_token,
-      httponly=True,
-      secure=settings.ENV != "local",
-      samesite="lax",
-      path="/",
+      **cookie_settings,
     )
-    return response
 
   return TokenSchema(
     access_token=access_token,
@@ -203,26 +196,22 @@ async def signup(
   await db.commit()
 
   if x_client_type == "web":
-    is_secure = settings.ENV != "local"
     user_with_projects = await build_user_with_company_and_projects(user, db)
     response = JSONResponse(
       content=user_with_projects.model_dump(mode="json")
     )
+
+    cookie_settings = get_cookie_settings()
+
     response.set_cookie(
       key="accessToken",
       value=access_token,
-      httponly=True,
-      secure=is_secure,
-      samesite="lax",
-      path="/",
+      **cookie_settings,
     )
     response.set_cookie(
       key="refreshToken",
       value=refresh_token,
-      httponly=True,
-      secure=is_secure,
-      samesite="lax",
-      path="/",
+      **cookie_settings,
     )
     return response
 
@@ -248,8 +237,12 @@ async def logout(
     await db.commit()
 
   response = JSONResponse(content={"success": True})
-  response.delete_cookie("accessToken", path="/")
-  response.delete_cookie("refreshToken", path="/")
+
+  is_local = settings.ENV == "local"
+  domain = None if is_local else ".kenchiku.ai"
+
+  response.delete_cookie("accessToken", path="/", domain=domain)
+  response.delete_cookie("refreshToken", path="/", domain=domain)
   
   return response
 
@@ -318,3 +311,14 @@ async def reset_password(
   await db.commit()
 
   return {"success": True}
+
+def get_cookie_settings():
+  is_local = settings.ENV == "local"
+
+  return {
+    "httponly": True,
+    "secure": not is_local,
+    "samesite": "lax" if is_local else "none",
+    "domain": None if is_local else ".kenchiku.ai",
+    "path": "/",
+  }
