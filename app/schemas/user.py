@@ -19,6 +19,11 @@ class UserCreate(UserBase):
   password: str = Field(..., min_length=8)
   invitation_token: str
 
+class UserUpdate(BaseModel):
+  email: Optional[EmailStr] = None
+  first_name: Optional[str] = None
+  last_name: Optional[str] = None
+
 class UserRead(UserBase):
   id: UUID
   created_at: datetime

@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import HTTPException, status, APIRouter, Depends, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from uuid import uuid4
+from uuid import uuid4, UUID
 import secrets
 
 from app.core.dependencies import get_current_user
@@ -11,7 +11,7 @@ from app.core.security import hash_token
 from app.db.models.user import User
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.session import get_db
-from app.schemas.user import UserWithCompanyAndProjects, UserBase
+from app.schemas.user import UserWithCompanyAndProjects, UserBase, UserUpdate
 from app.services.users import build_user_with_company_and_projects
 from app.services.email import send_password_reset_email
 
@@ -26,6 +26,75 @@ async def read_current_user(
   db: AsyncSession = Depends(get_db),
 ):
   return await build_user_with_company_and_projects(current_user, db)
+
+@router.get("/{user_id}", response_model=UserBase)
+async def get_user(
+  user_id: UUID,
+  current_user: User = Depends(get_current_user),
+  db: AsyncSession = Depends(get_db),
+):
+  if current_user.role != "admin" and current_user.id != user_id:
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Not authorized to access this user",
+    )
+
+  result = await db.execute(
+    select(User).where(User.id == user_id)
+  )
+  user = result.scalar_one_or_none()
+
+  if not user:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="User not found",
+    )
+
+  return user
+
+@router.patch("/{user_id}", response_model=UserBase)
+async def patch_user(
+  user_id: UUID,
+  payload: UserUpdate,
+  current_user: User = Depends(get_current_user),
+  db: AsyncSession = Depends(get_db),
+):
+  if current_user.role != "admin" and current_user.id != user_id:
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Not authorized to update this user",
+    )
+
+  result = await db.execute(
+    select(User).where(User.id == user_id)
+  )
+  user = result.scalar_one_or_none()
+
+  if not user:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="User not found",
+    )
+
+  update_data = payload.model_dump(exclude_unset=True, exclude_none=True)
+
+  if "email" in update_data and update_data["email"] != user.email:
+    existing = await db.execute(
+      select(User).where(User.email == update_data["email"])
+    )
+    if existing.scalar_one_or_none():
+      raise HTTPException(
+        status_code=400,
+        detail="Email already in use",
+      )
+
+  for field, value in update_data.items():
+    setattr(user, field, value)
+
+  await db.commit()
+  await db.refresh(user)
+
+  return user
 
 @router.post("/create-admin")
 async def create_admin(
