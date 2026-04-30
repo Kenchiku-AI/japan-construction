@@ -19,8 +19,9 @@ class UserCreate(UserBase):
   password: str = Field(..., min_length=8)
   invitation_token: str
 
-class UserWithCompanyId(UserBase):
-  company_id: UUID
+class UserWithCompanyIdAndRole(UserBase):
+  company_id: Optional[UUID] = None
+  role: UserRole
 
   model_config = {
     "from_attributes": True
@@ -30,6 +31,7 @@ class UserUpdate(BaseModel):
   email: Optional[EmailStr] = None
   first_name: Optional[str] = None
   last_name: Optional[str] = None
+  role: Optional[UserRole] = None
 
 class UserRead(UserBase):
   id: UUID

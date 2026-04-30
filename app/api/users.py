@@ -11,7 +11,7 @@ from app.core.security import hash_token
 from app.db.models.user import User
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.session import get_db
-from app.schemas.user import UserWithCompanyAndProjects, UserBase, UserUpdate, UserWithCompanyId
+from app.schemas.user import UserWithCompanyAndProjects, UserBase, UserUpdate, UserWithCompanyIdAndRole
 from app.services.users import build_user_with_company_and_projects
 from app.services.email import send_password_reset_email
 
@@ -27,7 +27,7 @@ async def read_current_user(
 ):
   return await build_user_with_company_and_projects(current_user, db)
 
-@router.get("/{user_id}", response_model=UserWithCompanyId)
+@router.get("/{user_id}", response_model=UserWithCompanyIdAndRole)
 async def get_user(
   user_id: UUID,
   current_user: User = Depends(get_current_user),
@@ -52,7 +52,7 @@ async def get_user(
 
   return user
 
-@router.patch("/{user_id}", response_model=UserWithCompanyId)
+@router.patch("/{user_id}", response_model=UserWithCompanyIdAndRole)
 async def patch_user(
   user_id: UUID,
   payload: UserUpdate,
@@ -77,6 +77,40 @@ async def patch_user(
     )
 
   update_data = payload.model_dump(exclude_unset=True, exclude_none=True)
+
+  if "role" in update_data:
+    new_role = update_data["role"]
+
+    if new_role == "admin":
+      raise HTTPException(
+        status_code=403,
+        detail="Cannot assign admin role",
+      )
+
+    if user.role == "admin":
+      raise HTTPException(
+        status_code=403,
+        detail="Cannot change role of an admin",
+      )
+
+    if current_user.role not in ["admin", "manager"]:
+      raise HTTPException(
+        status_code=403,
+        detail="Not authorized to change roles",
+      )
+    
+    if current_user.role == "manager":
+      if current_user.company_id != user.company_id:
+        raise HTTPException(
+          status_code=403,
+          detail="Managers can only manage users in their company",
+        )
+
+      if user.role == "manager" and new_role == "user":
+        raise HTTPException(
+          status_code=403,
+          detail="Managers cannot change another manager's role",
+        )
 
   if "email" in update_data and update_data["email"] != user.email:
     existing = await db.execute(
