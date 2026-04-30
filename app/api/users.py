@@ -81,36 +81,37 @@ async def patch_user(
   if "role" in update_data:
     new_role = update_data["role"]
 
-    if new_role == "admin":
-      raise HTTPException(
-        status_code=403,
-        detail="Cannot assign admin role",
-      )
-
-    if user.role == "admin":
-      raise HTTPException(
-        status_code=403,
-        detail="Cannot change role of an admin",
-      )
-
-    if current_user.role not in ["admin", "manager"]:
-      raise HTTPException(
-        status_code=403,
-        detail="Not authorized to change roles",
-      )
-    
-    if current_user.role == "manager":
-      if current_user.company_id != user.company_id:
+    if new_role != user.role:
+      if new_role == "admin":
         raise HTTPException(
           status_code=403,
-          detail="Managers can only manage users in their company",
+          detail="Cannot assign admin role",
         )
 
-      if user.role == "manager" and new_role == "user":
+      if user.role == "admin":
         raise HTTPException(
           status_code=403,
-          detail="Managers cannot change another manager's role",
+          detail="Cannot change role of an admin",
         )
+
+      if current_user.role not in ["admin", "manager"]:
+        raise HTTPException(
+          status_code=403,
+          detail="Not authorized to change roles",
+        )
+      
+      if current_user.role == "manager":
+        if current_user.company_id != user.company_id:
+          raise HTTPException(
+            status_code=403,
+            detail="Managers can only manage users in their company",
+          )
+
+        if user.role == "manager":
+          raise HTTPException(
+            status_code=403,
+            detail="Managers cannot change another manager's role",
+          )
 
   if "email" in update_data and update_data["email"] != user.email:
     existing = await db.execute(
