@@ -11,7 +11,7 @@ from app.core.security import hash_token
 from app.db.models.user import User
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.session import get_db
-from app.schemas.user import UserWithCompanyAndProjects, UserBase, UserUpdate
+from app.schemas.user import UserWithCompanyAndProjects, UserBase, UserUpdate, UserWithCompanyId
 from app.services.users import build_user_with_company_and_projects
 from app.services.email import send_password_reset_email
 
@@ -27,7 +27,7 @@ async def read_current_user(
 ):
   return await build_user_with_company_and_projects(current_user, db)
 
-@router.get("/{user_id}", response_model=UserBase)
+@router.get("/{user_id}", response_model=UserWithCompanyId)
 async def get_user(
   user_id: UUID,
   current_user: User = Depends(get_current_user),
@@ -52,7 +52,7 @@ async def get_user(
 
   return user
 
-@router.patch("/{user_id}", response_model=UserBase)
+@router.patch("/{user_id}", response_model=UserWithCompanyId)
 async def patch_user(
   user_id: UUID,
   payload: UserUpdate,

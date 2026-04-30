@@ -19,6 +19,13 @@ class UserCreate(UserBase):
   password: str = Field(..., min_length=8)
   invitation_token: str
 
+class UserWithCompanyId(UserBase):
+  company_id: UUID
+
+  model_config = {
+    "from_attributes": True
+  }
+
 class UserUpdate(BaseModel):
   email: Optional[EmailStr] = None
   first_name: Optional[str] = None
