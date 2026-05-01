@@ -55,6 +55,7 @@ class UserProjectRead(BaseModel):
   id: UUID
   name: str
   description: Optional[str] = None
+  status: str
 
   model_config = {
     "from_attributes": True

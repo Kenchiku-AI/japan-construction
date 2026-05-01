@@ -48,7 +48,8 @@ async def build_user_with_company_and_projects(
       UserProjectRead(
         id=project.id,
         name=project.name,
-        description=project.description
+        description=project.description,
+        status=project.status
       )
     )
 
