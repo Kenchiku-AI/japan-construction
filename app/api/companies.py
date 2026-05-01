@@ -2,7 +2,7 @@ from datetime import date
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -21,6 +21,7 @@ from app.schemas.company import (
   ReportImageTagUpdate
 )
 from app.schemas.invitation import InvitationCreate
+from app.services.invitations import create_invitation
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -84,6 +85,7 @@ async def search_companies(
 )
 async def create_company(
   payload: CompanyCreate,
+  background_tasks: BackgroundTasks,
   current_user: User = Depends(get_current_user),
   db: AsyncSession = Depends(get_db),
 ):
@@ -108,11 +110,12 @@ async def create_company(
       company_id=company.id,
       role="manager",
     )
-    
-    await invite_user(
-      payload=invitation_payload,
-      current_user=current_user,
-      db=db,
+
+    await create_invitation(
+      invitation_payload,
+      db,
+      current_user,
+      background_tasks,
     )
 
   return company
