@@ -12,32 +12,24 @@ logger = logging.getLogger(__name__)
 def _build_email_template(title: str, message: str, button_text: str, button_url: str) -> str:
   return f"""
 <html>
-  <body style="margin:0;padding:0;font-family:Arial,sans-serif;background-color:#f4f4f4;">
-    <table width="100%" cellpadding="0" cellspacing="0" style="padding:20px;">
+  <body style="margin:0;padding:0;font-family:Arial,sans-serif;background-color:#FDFDFD;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px;">
       <tr>
         <td align="center">
-          <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;padding:30px;border-radius:8px;">
-            <tr>
-              <td>
-                <h2 style="color:#333;">{title}</h2>
-                <p style="color:#555;line-height:1.6;">
-                  {message}
-                </p>
-
-                <div style="text-align:center;margin:30px 0;">
-                  <a href="{button_url}"
-                     style="background-color:#6FB37A;color:#ffffff;padding:12px 24px;
-                            text-decoration:none;border-radius:5px;display:inline-block;">
-                    {button_text}
-                  </a>
-                </div>
-
-                <p style="color:#999;font-size:12px;">
-                  このメールに心当たりがない場合は、本メールを無視してください。
-                </p>
-              </td>
-            </tr>
-          </table>
+          <h2 style="color:#333;text-align:center;">{title}</h2>
+          <p style="color:#555;line-height:1.6;text-align:center;">
+            {message}
+          </p>
+          <div style="text-align:center;margin:30px 0;">
+            <a href="{button_url}"
+                style="background-color:#6FB37A;color:#ffffff;padding:12px 24px;
+                      text-decoration:none;font-weight:600;border-radius:10px;display:inline-block;">
+              {button_text}
+            </a>
+          </div>
+          <p style="color:#999;font-size:12px;text-align:center;">
+            このメールに心当たりがない場合は、本メールを無視してください。
+          </p>
         </td>
       </tr>
     </table>
