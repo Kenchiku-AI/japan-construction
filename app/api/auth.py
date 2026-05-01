@@ -131,10 +131,11 @@ async def refresh_token(
       value=access_token,
       **cookie_settings,
     )
+    return response
 
   return TokenSchema(
     access_token=access_token,
-    refresh_token=payload.refresh_token,
+    refresh_token=refresh_token,
     token_type="bearer",
   )
 
