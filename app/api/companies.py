@@ -16,6 +16,7 @@ from app.schemas.company import (
   CompanyCreate,
   CompanyProjectRead,
   CompanyRead,
+  CompanyUpdate,
   CompanyWithProjectsAndUsers,
   ReportImageTagCreate,
   ReportImageTagUpdate
@@ -163,6 +164,54 @@ async def get_company(
     created_at=company.created_at,
     updated_at=company.updated_at
   )
+
+@router.patch(
+  "/{company_id}",
+  response_model=CompanyRead,
+)
+async def update_company(
+  company_id: UUID,
+  payload: CompanyUpdate,
+  current_user: User = Depends(get_current_user),
+  db: AsyncSession = Depends(get_db),
+):
+  if current_user.role != "admin":
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Only admins can update companies",
+    )
+
+  result = await db.execute(
+    select(Company).where(Company.id == company_id)
+  )
+  company = result.scalar_one_or_none()
+
+  if not company:
+    raise HTTPException(status_code=404, detail="Company not found")
+
+  if payload.corporate_number is not None:
+    stmt = select(Company).where(
+      Company.corporate_number == payload.corporate_number,
+      Company.id != company_id,
+    )
+    result = await db.execute(stmt)
+    existing = result.scalar_one_or_none()
+
+    if existing:
+      raise HTTPException(
+        status_code=409,
+        detail="Corporate number already in use",
+      )
+
+    company.corporate_number = payload.corporate_number
+
+  if payload.name is not None:
+    company.name = payload.name
+
+  await db.commit()
+  await db.refresh(company)
+
+  return company
 
 @router.get("/{company_id}/tags")
 async def get_tags(

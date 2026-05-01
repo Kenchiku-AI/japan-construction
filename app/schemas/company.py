@@ -13,9 +13,6 @@ class CompanyCreate(BaseModel):
   manager_email: Optional[EmailStr] = None
   pass
 
-class CompanyUpdate(BaseModel):
-  name: str | None = None
-
 class CompanyUserRead(BaseModel):
   user_id: UUID
   first_name: str
@@ -44,6 +41,10 @@ class CompanyProjectRead(BaseModel):
   model_config = {
     "from_attributes": True
   }
+
+class CompanyUpdate(BaseModel):
+  name: str | None = None
+  corporate_number: str | None = None
 
 class CompanyUserRead(BaseModel):
   id: UUID
