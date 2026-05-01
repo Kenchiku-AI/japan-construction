@@ -9,19 +9,63 @@ ses = boto3.client(
 
 logger = logging.getLogger(__name__)
 
+def _build_email_template(title: str, message: str, button_text: str, button_url: str) -> str:
+  return f"""
+<html>
+  <body style="margin:0;padding:0;font-family:Arial,sans-serif;background-color:#f4f4f4;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="padding:20px;">
+      <tr>
+        <td align="center">
+          <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;padding:30px;border-radius:8px;">
+            <tr>
+              <td>
+                <h2 style="color:#333;">{title}</h2>
+                <p style="color:#555;line-height:1.6;">
+                  {message}
+                </p>
+
+                <div style="text-align:center;margin:30px 0;">
+                  <a href="{button_url}"
+                     style="background-color:#6FB37A;color:#ffffff;padding:12px 24px;
+                            text-decoration:none;border-radius:5px;display:inline-block;">
+                    {button_text}
+                  </a>
+                </div>
+
+                <p style="color:#999;font-size:12px;">
+                  このメールに心当たりがない場合は、本メールを無視してください。
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
+
 def send_invitation_email(email: str, company_name: str, invite_token: str) -> None:
   invite_link = f"{settings.WEB_CLIENT_URL}/signup?invitationToken={invite_token}"
 
-  subject = f"You're invited to join {company_name}"
-  body = f"""
-Hi there,
+  subject = f"{company_name} への招待"
 
-You've been invited to join the company "{company_name}".
-Click the link below to accept the invitation:
+  message = f"""
+{company_name} に参加するよう招待されています。<br/>
+以下のボタンをクリックして、招待を承認してください。
+"""
 
+  html_body = _build_email_template(
+    title="招待のお知らせ",
+    message=message,
+    button_text="招待を承認する",
+    button_url=invite_link,
+  )
+
+  text_body = f"""
+{company_name} に参加するよう招待されています。
+以下のリンクから承認してください：
 {invite_link}
-
-If you did not expect this invitation, you can safely ignore this email.
 """
 
   try:
@@ -32,55 +76,79 @@ If you did not expect this invitation, you can safely ignore this email.
       Message={
         "Subject": {"Data": subject},
         "Body": {
-          "Text": {"Data": body}
+          "Text": {"Data": text_body},
+          "Html": {"Data": html_body},
         },
       },
     )
-
     logger.info(f"Sent invitation email to {email}")
-  except Exception as e:
+  except Exception:
     logger.exception("Error sending email to %s", email)
     raise
 
 def send_project_request_email(company_name: str, project_name: str, requested_by: str):
-    subject = f"New Project Request: {company_name}"
+  subject = f"新規プロジェクトリクエスト: {company_name}"
 
-    body = f"""
-Company: {company_name}
-Project: {project_name}
-Requested by: {requested_by}
+  html_body = f"""
+<html>
+  <body style="font-family:Arial,sans-serif;">
+    <h3>新規プロジェクトリクエスト</h3>
+    <p><strong>会社名:</strong> {company_name}</p>
+    <p><strong>プロジェクト名:</strong> {project_name}</p>
+    <p><strong>依頼者:</strong> {requested_by}</p>
+  </body>
+</html>
 """
 
-    try:
-      ses.send_email(
-        Source=settings.NO_REPLY_EMAIL,
-        Destination={"ToAddresses": [settings.SUPPORT_EMAIL]},
-        Message={
-          "Subject": {"Data": subject},
-          "Body": {"Text": {"Data": body}},
+  text_body = f"""
+新規プロジェクトリクエスト
+
+会社名: {company_name}
+プロジェクト名: {project_name}
+依頼者: {requested_by}
+"""
+
+  try:
+    ses.send_email(
+      Source=settings.NO_REPLY_EMAIL,
+      Destination={"ToAddresses": [settings.SUPPORT_EMAIL]},
+      Message={
+        "Subject": {"Data": subject},
+        "Body": {
+          "Text": {"Data": text_body},
+          "Html": {"Data": html_body},
         },
-      )
-    except Exception as e:
-      logger.exception("Error sending email to %s", email)
-      raise
+      },
+    )
+  except Exception:
+    logger.exception("Error sending project request email")
+    raise
+
 
 def send_password_reset_email(email: str, reset_token: str) -> None:
   reset_link = f"{settings.WEB_CLIENT_URL}/reset-password?token={reset_token}"
 
-  subject = "Reset your password"
+  subject = "パスワード再設定のご案内"
 
-  body = f"""
-Hi there,
+  message = """
+パスワード再設定のリクエストを受け付けました。<br/>
+以下のボタンをクリックして、新しいパスワードを設定してください。<br/><br/>
+※ このリンクはセキュリティ上、一定時間後に無効になります。
+"""
 
-We received a request to reset your password.
+  html_body = _build_email_template(
+    title="パスワード再設定",
+    message=message,
+    button_text="パスワードを再設定する",
+    button_url=reset_link,
+  )
 
-Click the link below to set a new password:
-
+  text_body = f"""
+パスワード再設定のリクエストを受け付けました。
+以下のリンクから設定してください：
 {reset_link}
 
-If you did not request this, you can safely ignore this email.
-
-This link will expire shortly for security reasons.
+※ このリンクは一定時間後に無効になります。
 """
 
   try:
@@ -91,12 +159,12 @@ This link will expire shortly for security reasons.
       Message={
         "Subject": {"Data": subject},
         "Body": {
-          "Text": {"Data": body}
+          "Text": {"Data": text_body},
+          "Html": {"Data": html_body},
         },
       },
     )
-
     logger.info(f"Sent password reset email to {email}")
-  except Exception as e:
+  except Exception:
     logger.exception("Error sending email to %s", email)
     raise
