@@ -20,45 +20,54 @@ async def transcribe_and_extract_json(
   field_block = "\n".join(field_lines)
 
   prompt = f"""
-You are a strict JSON extraction engine.
+あなたは厳密なJSON抽出エンジンです。
 
-Return ONLY a JSON object in this exact format:
+必ず以下の形式のJSONオブジェクトのみを返してください。
 
 {{
-  "<field_id>": "<spoken value>"
+  "<field_id>": "<音声内容を整形した値>"
 }}
 
-STRICT RULES:
-- Output ONLY valid JSON
-- All keys MUST be a field id
-- Values must be the spoken value only
-- NEVER return field names or descriptions
-- NEVER return field metadata
-- If a field is not spoken, omit it
-- If none spoken, return {{ "field_values": {{}} }}
+厳守事項:
+- 有効なJSONのみを返すこと
+- キーには必ず field id を使用すること
+- 値には抽出された内容のみを含めること
+- field名や説明文を返さないこと
+- fieldのメタデータを返さないこと
+- 音声内に存在しない項目は含めないこと
+- 該当する項目がない場合は {{ "field_values": {{}} }} を返すこと
 
-STYLE RULES:
-- Rewrite statements as neutral, formal report entries
-- Remove conversational wording
-- Remove pronouns when possible
-- Do NOT use first person or third person
-- Prefer passive or declarative form
-- Keep original meaning exactly
-- Do NOT add new information
+文章整形ルール:
+- 会話的な表現を、工事報告書に適した正式な文章へ変換すること
+- 元の意味は変えないこと
+- 不要な主語や代名詞は省略すること
+- 可能な限り客観的・記録的な表現を使用すること
+- 新しい情報を追加しないこと
+- 推測しないこと
 
-Examples:
-Speech: "we finished the roof"
-Output: "Roof installation completed"
+変換例:
 
-Speech: "it rained today"
-Output: "Rain occurred throughout the day"
+音声:
+「屋根終わりました」
 
-Speech: "we installed the wiring"
-Output: "Electrical wiring installed"
+出力:
+「屋根工事完了」
 
-Output language: {output_language}
+音声:
+「今日は雨でした」
 
-FIELDS:
+出力:
+「終日降雨を確認」
+
+音声:
+「配線やりました」
+
+出力:
+「電気配線施工完了」
+
+出力言語: {output_language}
+
+対象フィールド:
 {field_block}
 """.strip()
 
@@ -101,37 +110,37 @@ async def get_image_tags_and_description(
 
   if include_description:
     description_instruction = """
-Also include a professional, concise description (1-2 sentences)
-suitable for a construction report.
+また、工事報告書に適した簡潔で専門的な説明文を
+1〜2文で含めてください。
 
-Write the description as a direct statement of what is visible.
-Do NOT start with "The image shows" or similar phrases.
+厳守事項:
+- 説明文は必ず日本語で記述すること
+- 画像に実際に写っている内容のみ記述すること
+- 「この画像は〜」「写真には〜」「画像には〜」などの
+  前置き表現は使用しないこと
+- 作業内容、使用機械、資材、安全状況など、
+  視認可能な事実のみ記述すること
+- 推測や補完をしないこと
+- 曖昧な表現（「いくつかの」「様々な」「など」）は使用しないこと
+- 建設・工事記録に適した簡潔で正式な表現を使用すること
 
-Good examples:
-- "Workers installing steel reinforcement along a concrete wall"
-- "Excavation work in progress using a hydraulic excavator"
-
-Bad example:
-- "The image shows workers installing steel reinforcement."
-
-Focus only on visible facts such as work being performed, equipment, and safety conditions.
-Do not speculate.
-
-Use precise, formal language suitable for construction documentation.
-Avoid vague terms like "some", "various", or "etc."
+良い例:
+- 「鉄筋コンクリート壁に沿って鉄筋組立作業を実施」
+- 「油圧ショベルによる掘削作業が進行中」
+- 「足場上で外装パネルの設置作業を実施」
 """
     json_format = """
-Return ONLY valid JSON in this format:
+以下の形式の有効なJSONのみを返してください:
 
 {
   "tags": ["tag_id_1", "tag_id_2"],
-  "description": "Short professional description"
+  "description": "日本語による簡潔な工事説明"
 }
 """
   else:
     description_instruction = ""
     json_format = """
-Return ONLY valid JSON in this format:
+以下の形式の有効なJSONのみを返してください:
 
 {
   "tags": ["tag_id_1", "tag_id_2"]
@@ -152,18 +161,22 @@ Return ONLY valid JSON in this format:
           {
             "type": "input_text",
             "text": f"""
-Below is a list of available tags that may apply to this image.
+以下は、この画像に適用される可能性のあるタグ一覧です。
 
 {tag_list_json}
 
 {json_format}
 
-Select all tags that clearly apply to the image.
-Only select tags that are visually present.
-Do not infer or guess beyond what is visible.
-If no tags apply, return an empty array.
+画像に明確に写っている内容に基づいて、
+該当するタグをすべて選択してください。
 
-Return ONLY JSON. Do not include any extra text.
+厳守事項:
+- 画像で明確に確認できる内容のみ選択すること
+- 推測や補完をしないこと
+- 視認できない内容は選択しないこと
+- 該当するタグがない場合は空配列を返すこと
+- 必ずJSONのみを返すこと
+- JSON以外の説明や補足は一切含めないこと
 
 {description_instruction}
 """
