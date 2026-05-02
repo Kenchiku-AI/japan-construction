@@ -1,7 +1,6 @@
 from datetime import datetime, time
 from uuid import UUID, uuid4
 from typing import List
-import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,8 +46,6 @@ from app.services.reports import get_company_id
 from app.services.openai import transcribe_and_extract_json
 from app.services.s3 import s3_client, BUCKET_NAME
 from app.services.ws_manager import manager
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(
   prefix="/reports",
@@ -1093,16 +1090,9 @@ async def report_image_ws(
   ws: WebSocket,
   access_token: str | None = None
 ):
-  logger.info("WebSocket connection attempt started")
-    
   token = access_token or ws.cookies.get("accessToken")
-  logger.info(f"Token received: {bool(token)}")
-  logger.info(f"Access token param: {bool(access_token)}")
-  logger.info(f"Cookie token: {bool(ws.cookies.get('accessToken'))}")
 
-  logger.info("Getting database connection...")
   if not token:
-    logger.warning("No access token provided - closing connection")
     await ws.close(code=1008)
     return
 
@@ -1115,15 +1105,12 @@ async def report_image_ws(
     break
 
   user_id = str(current_user.id)
-  logger.info(f"Connecting user {user_id} to WebSocket...")
 
   await manager.connect(user_id, ws)
-  logger.info("WebSocket connection established successfully")
+
   try:
     while True:
       await ws.receive_text()
-      logger.info(f"Received message: {message}")
   except WebSocketDisconnect:
-    logger.info(f"WebSocket disconnected for user {user_id}")
     manager.disconnect(user_id, ws)
     await ws.close()
