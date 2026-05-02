@@ -1,16 +1,21 @@
 import redis.asyncio as redis
 import json
 import logging
+import ssl
 
 from app.core.config import settings
 from app.services.ws_manager import manager
 
-r = redis.from_url(settings.REDIS_URL)
+r = redis.from_url(
+  settings.REDIS_URL,
+  ssl_cert_reqs=ssl.CERT_NONE,
+  ssl_check_hostname=False,
+  decode_responses=True
+)
 
 logger = logging.getLogger(__name__)
 
 async def start_ws_listener():
-
   pubsub = r.pubsub()
 
   try:
