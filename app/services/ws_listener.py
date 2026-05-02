@@ -16,15 +16,30 @@ r = redis.from_url(
 logger = logging.getLogger(__name__)
 
 async def start_ws_listener():
+  logger.info("🚀 WebSocket Redis listener starting...")
+  logger.info(f"🔗 Redis URL: {settings.REDIS_URL[:30]}...")
+
+  try:
+    # Test Redis connection first
+    await r.ping()
+    logger.info("✅ Redis connection successful")
+  except Exception as e:
+    logger.error(f"❌ Redis connection failed: {e}")
+    return
+
   pubsub = r.pubsub()
+
+  logger.info("👂 Listening for Redis messages...")
 
   try:
     await pubsub.subscribe("image_events")
+    logger.info("✅ Successfully subscribed to 'image_events' channel")
   except Exception as e:
-      logger.warning(f"Redis not available: {e}")
+    logger.warning(f"Redis not available: {e}")
 
   async for message in pubsub.listen():
-
+    logger.info(f"📥 Raw Redis message received: {message}")
+    
     if message["type"] != "message":
       continue
 
