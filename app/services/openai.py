@@ -190,8 +190,6 @@ async def get_image_tags_and_description(
     ]
   )
 
-  print("OPEN AI RESPONSE...", response)
-
   return safe_json_loads(response.output_text)
 
 def safe_json_loads(text: str):

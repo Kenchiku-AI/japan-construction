@@ -42,6 +42,10 @@ async def process_message(message):
 
   try:
     body = json.loads(message["Body"])
+
+    if "Records" not in body:
+      raise ValueError(f"Unexpected message format: {body}")
+
     record = body["Records"][0]
     bucket = record["s3"]["bucket"]["name"]
     key = record["s3"]["object"]["key"]
