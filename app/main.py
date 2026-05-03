@@ -25,7 +25,7 @@ async def start_ws_background_tasks():
   if not _redis_listener_started:
     logger.info(f"📡 Starting Redis listener in worker {worker_id}")
     _redis_listener_started = True
-    asyncio.create_task(start_ws_listener()
+    asyncio.create_task(start_ws_listener())
   else:
     logger.info(f"⏭️ Redis listener already started, skipping in worker {worker_id}")
 
