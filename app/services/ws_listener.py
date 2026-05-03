@@ -19,7 +19,7 @@ async def start_ws_listener():
       ssl_cert_reqs=ssl.CERT_NONE,
       ssl_check_hostname=False,
       decode_responses=True,
-      socket_connect_timeout=10,  # Add timeout
+      socket_connect_timeout=10,
       socket_keepalive=True,
       socket_keepalive_options={},
       retry_on_timeout=True
