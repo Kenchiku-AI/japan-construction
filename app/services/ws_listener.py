@@ -6,17 +6,6 @@ import ssl
 from app.core.config import settings
 from app.services.ws_manager import manager
 
-r = redis.from_url(
-  settings.REDIS_URL,
-  ssl_cert_reqs=ssl.CERT_NONE,
-  ssl_check_hostname=False,
-  decode_responses=True,
-  socket_connect_timeout=10,  # Add timeout
-  socket_keepalive=True,
-  socket_keepalive_options={},
-  retry_on_timeout=True
-)
-
 logger = logging.getLogger(__name__)
 
 async def start_ws_listener():
@@ -24,6 +13,18 @@ async def start_ws_listener():
   logger.info(f"🔗 Redis URL: {settings.REDIS_URL[:30]}...")
 
   try:
+    logger.info("🔌 Creating Redis connection...")
+    r = redis.from_url(
+      settings.REDIS_URL,
+      ssl_cert_reqs=ssl.CERT_NONE,
+      ssl_check_hostname=False,
+      decode_responses=True,
+      socket_connect_timeout=10,  # Add timeout
+      socket_keepalive=True,
+      socket_keepalive_options={},
+      retry_on_timeout=True
+    )
+
     logger.info("🧪 Testing Redis connection...")
     await r.ping()
     logger.info("✅ Redis connection successful")
