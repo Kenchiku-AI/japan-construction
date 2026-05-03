@@ -1115,6 +1115,7 @@ async def report_image_ws(
     break
 
   user_id = str(current_user.id)
+  logger.info(f"🔗 WebSocket connecting user: '{user_id}' (type: {type(user_id)})")
 
   await manager.connect(user_id, ws)
   logger.info("WebSocket connection established successfully")

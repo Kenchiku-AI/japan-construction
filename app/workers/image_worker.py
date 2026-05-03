@@ -148,6 +148,10 @@ async def process_message(message):
       image.status = "completed"
       await db.commit()
 
+      logger.info(f"🔍 About to publish message:")
+      logger.info(f"   User ID: {str(image.created_by)} (type: {type(str(image.created_by))})")
+      logger.info(f"   Payload: {payload}")
+
       await publish_image_tags_ready(
         str(image.created_by),
         {
@@ -157,6 +161,8 @@ async def process_message(message):
           "description": image.description
         }
       )
+
+      logger.info("✅ Redis message published successfully")
 
     logger.info(f"Image {image_id} processed successfully")
   except Exception as e:
