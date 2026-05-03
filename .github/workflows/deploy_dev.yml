@@ -1,4 +1,4 @@
-name: Deploy Dev
+name: Dev - Deploy API
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}

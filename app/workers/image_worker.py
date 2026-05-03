@@ -150,7 +150,7 @@ async def process_message(message):
 
       logger.info(f"🔍 About to publish message:")
       logger.info(f"   User ID: {str(image.created_by)} (type: {type(str(image.created_by))})")
-      logger.info(f"   Payload: {payload}")
+      logger.info(f"   Payload: {tags_payload}")
 
       await publish_image_tags_ready(
         str(image.created_by),
