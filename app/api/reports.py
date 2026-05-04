@@ -520,6 +520,79 @@ async def create_report_image(
     "tags": []
   }
 
+@router.get("/{report_id}/images/{image_id}/status")
+async def get_report_image_status(
+  report_id: UUID,
+  image_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = select(Report).where(Report.id == report_id)
+  result = await db.execute(stmt)
+  report: Report | None = result.scalar_one_or_none()
+
+  if not report:
+    raise HTTPException(404, "Report not found")
+
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db,
+  )
+
+  if not company_id:
+    raise HTTPException(500, "Report does not have an associated company")
+
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  stmt = (
+    select(ReportImage)
+    .where(
+      ReportImage.id == image_id,
+      ReportImage.report_id == report_id,
+    )
+  )
+
+  result = await db.execute(stmt)
+  image: ReportImage | None = result.scalar_one_or_none()
+
+  if not image:
+    raise HTTPException(404, "Image not found")
+
+  if image.status != "complete":
+    return {
+      "id": image.id,
+      "status": image.status,
+      "description": image.description,
+      "tags": [],
+    }
+
+  stmt_tags = (
+    select(ReportImageTagLink)
+    .where(ReportImageTagLink.report_image_id == image_id)
+    .options(selectinload(ReportImageTagLink.tag))
+  )
+
+  result = await db.execute(stmt_tags)
+  links = result.scalars().all()
+
+  tags = [
+    {
+      "tag_id": link.tag.id,
+      "link_id": link.id,
+      "name": link.tag.name,
+    }
+    for link in links
+  ]
+
+  return {
+    "id": image.id,
+    "status": image.status,
+    "description": image.description,
+    "tags": tags,
+  }
+
 @router.patch(
   "/{report_id}/images/{image_id}",
 )
