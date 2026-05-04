@@ -14,7 +14,6 @@ from app.db.models import ReportImage, ReportImageTag, ReportImageTagLink, Compa
 from app.services.openai import get_image_tags_and_description
 from app.services.s3 import s3_client, BUCKET_NAME
 from app.services.reports import get_company_id
-from app.services.ws_events import publish_image_tags_ready
 from app.core.config import settings
 
 QUEUE_URL = settings.SQS_QUEUE_URL
@@ -147,22 +146,6 @@ async def process_message(message):
 
       image.status = "completed"
       await db.commit()
-
-      logger.info(f"🔍 About to publish message:")
-      logger.info(f"   User ID: {str(image.created_by)} (type: {type(str(image.created_by))})")
-      logger.info(f"   Payload: {tags_payload}")
-
-      await publish_image_tags_ready(
-        str(image.created_by),
-        {
-          "type": "image_tags_ready",
-          "image_id": image.id,
-          "tags": tags_payload,
-          "description": image.description
-        }
-      )
-
-      logger.info("✅ Redis message published successfully")
 
     logger.info(f"Image {image_id} processed successfully")
   except Exception as e:

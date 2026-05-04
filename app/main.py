@@ -6,28 +6,8 @@ from app.middleware.logging import LoggingMiddleware
 
 import asyncio
 import os
-import logging
-from app.services.ws_listener import start_ws_listener
-
-logger = logging.getLogger(__name__)
 
 app = FastAPI()
-
-_redis_listener_started = False
-
-@app.on_event("startup")
-async def start_ws_background_tasks():
-  global _redis_listener_started
-
-  worker_id = os.getpid()
-  logger.info(f"🚀 FastAPI startup in worker {worker_id}")
-
-  if not _redis_listener_started:
-    logger.info(f"📡 Starting Redis listener in worker {worker_id}")
-    _redis_listener_started = True
-    asyncio.create_task(start_ws_listener())
-  else:
-    logger.info(f"⏭️ Redis listener already started, skipping in worker {worker_id}")
 
 app.add_middleware(
   CORSMiddleware,
