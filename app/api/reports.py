@@ -560,7 +560,7 @@ async def get_report_image_status(
   if not image:
     raise HTTPException(404, "Image not found")
 
-  if image.status != "complete":
+  if image.status != "completed":
     return {
       "id": image.id,
       "status": image.status,
