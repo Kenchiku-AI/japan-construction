@@ -80,5 +80,5 @@ jobs:
         run: |
           aws ecs update-service \
             --cluster ${{ secrets.ECS_CLUSTER }} \
-            --service ${{ secrets.ECS_WORKER_SERVICE }} \
+            --service ${{ secrets.ECS_IMAGE_WORKER_SERVICE }} \
             --task-definition $NEW_WORKER_TASK_DEF_ARN
