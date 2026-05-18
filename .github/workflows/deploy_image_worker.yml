@@ -49,7 +49,7 @@ jobs:
       - name: Register new worker task definition
         run: |
           TASK_DEF=$(aws ecs describe-task-definition \
-            --task-definition ${{ secrets.ECS_WORKER_TASK_DEFINITION }} \
+            --task-definition ${{ secrets.ECS_IMAGE_WORKER_TASK_DEFINITION }} \
             --query taskDefinition)
 
           echo "$TASK_DEF" > worker-task-def.json
