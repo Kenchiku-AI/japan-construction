@@ -1,6 +1,6 @@
 from datetime import datetime, time
 from uuid import UUID, uuid4
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -216,6 +216,7 @@ async def create_report_template(
   payload: ReportTemplateCreate,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
+  company_id: Optional[int] = Query(None),
 ):
   if current_user.role not in {"admin", "manager"}:
     raise HTTPException(
@@ -229,10 +230,23 @@ async def create_report_template(
       detail="Manager must belong to a company",
     )
 
+  effective_company_id = (
+    company_id if current_user.role == "admin"
+    else current_user.company_id
+  )
+
+  if current_user.role == "admin" and effective_company_id:
+    company = await db.get(Company, effective_company_id)
+    if not company:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Company {effective_company_id} does not exist",
+      )
+
   template = ReportTemplate(
     name=payload.name,
     description=payload.description,
-    is_global=current_user.role == "admin",
+    is_global=current_user.role == "admin" and not effective_company_id,
     parent_type=payload.parent_type,
     fields=[],
   )
@@ -249,10 +263,10 @@ async def create_report_template(
   db.add(template)
   await db.flush()
 
-  if current_user.role == "manager":
+  if effective_company_id:
     db.add(
       CompanyReportTemplate(
-        company_id=current_user.company_id,
+        company_id=effective_company_id,
         report_template_id=template.id,
       )
     )
