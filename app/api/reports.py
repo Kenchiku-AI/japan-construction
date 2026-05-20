@@ -176,14 +176,31 @@ async def create_report(
 async def list_report_templates(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
+  company_id: Optional[UUID] = Query(None),
 ):
   if current_user.role == "admin":
-    stmt = (
-      select(ReportTemplate)
-      .where(ReportTemplate.is_global.is_(True))
-      .options(selectinload(ReportTemplate.fields))
-      .order_by(ReportTemplate.updated_at.desc())
-    )
+    if company_id:
+      company = await db.get(Company, company_id)
+      if not company:
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail=f"Company {company_id} does not exist",
+        )  
+
+      stmt = (
+        select(ReportTemplate)
+        .join(CompanyReportTemplate)
+        .where(CompanyReportTemplate.company_id == company_id)
+        .options(selectinload(ReportTemplate.fields))
+        .order_by(ReportTemplate.updated_at.desc())
+      )
+    else:
+      stmt = (
+        select(ReportTemplate)
+        .where(ReportTemplate.is_global.is_(True))
+        .options(selectinload(ReportTemplate.fields))
+        .order_by(ReportTemplate.updated_at.desc())
+      )
 
     result = await db.execute(stmt)
     return result.scalars().all()
