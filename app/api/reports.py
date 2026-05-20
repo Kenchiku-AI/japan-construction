@@ -216,7 +216,7 @@ async def create_report_template(
   payload: ReportTemplateCreate,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
-  company_id: Optional[int] = Query(None),
+  company_id: Optional[UUID] = Query(None),
 ):
   if current_user.role not in {"admin", "manager"}:
     raise HTTPException(
