@@ -18,6 +18,7 @@ class ProjectUpdate(ProjectBase):
 
 class ProjectRead(ProjectBase):
   id: UUID
+  company_id: UUID
   status: str
 
   model_config = {
