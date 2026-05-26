@@ -174,6 +174,13 @@ async def update_project(
         status_code=403,
         detail="Only active projects can be updated",
       )
+
+    if payload.status is not None:
+      raise HTTPException(
+        status_code=403,
+        detail="Only admins can update project status",
+      )
+
     require_company_manager(current_user, project.company_id)
 
   for field, value in payload.model_dump(exclude_unset=True).items():

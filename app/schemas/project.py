@@ -13,6 +13,7 @@ class ProjectCreate(ProjectBase):
 class ProjectUpdate(ProjectBase):
   name: str | None = None
   description: str | None = None
+  status: str | None = None
 
 class ProjectRead(ProjectBase):
   id: UUID
