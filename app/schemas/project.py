@@ -36,6 +36,6 @@ class ProjectReportRead(BaseModel):
     "from_attributes": True
   }
 
-class ProjectWithReports(ProjectRead):
+class ProjectWithReports(ProjectWithCompanyName):
   reports: List[ProjectReportRead] = []
   
