@@ -9,13 +9,13 @@ from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
 from app.db.models import Project, Company, User, ProjectStatus
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectWithReports, ProjectWithCompany
+from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectWithReports, ProjectWithCompanyName
 from app.core.dependencies import get_current_user, require_company_member, require_company_manager
 from app.services.email import send_project_request_email
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
-@router.get("", response_model=List[ProjectWithCompany])
+@router.get("", response_model=List[ProjectWithCompanyName])
 async def list_projects(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user)
@@ -25,12 +25,30 @@ async def list_projects(
       case((Project.status == ProjectStatus.requested, 0), else_=1),
       desc(Project.updated_at)
     ]
+
     stmt = (
-      select(Project)
+      select(
+        Project,
+        Company.name.label("company_name"),
+      )
+      .outerjoin(Company, Project.company_id == Company.id)
       .options(selectinload(Project.company))
       .order_by(*order_by_clause)
       .limit(25)
     )
+
+    result = await db.execute(stmt)
+
+    rows = result.all()
+
+    projects = []
+
+    for project, company_name in rows:
+      project.company_name = company_name
+      projects.append(project)
+
+    return projects
+
   else:
     if current_user.company_id is None:
       return []
@@ -43,9 +61,10 @@ async def list_projects(
       .limit(25)
     )
 
-  result = await db.execute(stmt)
-  projects = result.scalars().all()
-  return projects
+    result = await db.execute(stmt)
+    projects = result.scalars().all()
+
+    return projects
 
 @router.get("/{project_id}", response_model=ProjectWithReports)
 async def get_project(
@@ -53,19 +72,41 @@ async def get_project(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  stmt = (
-    select(Project)
-    .where(Project.id == project_id)
-    .options(selectinload(Project.reports))
-  )
+  if current_user.role == "admin":
+    stmt = (
+      select(
+        Project,
+        Company.name.label("company_name"),
+      )
+      .outerjoin(Company, Project.company_id == Company.id)
+      .where(Project.id == project_id)
+      .options(selectinload(Project.reports))
+    )
 
-  result = await db.execute(stmt)
-  project = result.scalars().first()
+    result = await db.execute(stmt)
 
-  if not project:
-    raise HTTPException(status_code=404, detail="Project not found")
+    row = result.first()
 
-  if current_user.role != "admin":
+    if not row:
+      raise HTTPException(status_code=404, detail="Project not found")
+
+    project, company_name = row
+
+    project.company_name = company_name
+
+  else:
+    stmt = (
+      select(Project)
+      .where(Project.id == project_id)
+      .options(selectinload(Project.reports))
+    )
+
+    result = await db.execute(stmt)
+    project = result.scalars().first()
+
+    if not project:
+      raise HTTPException(status_code=404, detail="Project not found")
+
     require_company_member(current_user, project.company_id)
 
   return project
@@ -82,6 +123,7 @@ async def create_project(
   current_user: User = Depends(get_current_user),
 ):
   company = await db.get(Company, payload.company_id)
+
   if not company:
     raise HTTPException(status_code=404, detail="Company not found")
 
