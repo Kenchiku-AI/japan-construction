@@ -44,6 +44,9 @@ class ReportWithCompanyAndProjectName(ReportRead):
   company_name: str | None = None
   project_name: str | None = None
 
+class ReportDetail(ReportWithCompanyAndProjectName):
+  disabled: bool
+
 class ReportTemplateFieldCreate(BaseModel):
   name: str
   description: Optional[str] = None
