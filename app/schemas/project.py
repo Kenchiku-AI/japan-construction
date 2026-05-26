@@ -3,8 +3,6 @@ from pydantic import BaseModel
 from typing import Optional, List
 from uuid import UUID
 
-from app.schemas.company import CompanyRead
-
 class ProjectBase(BaseModel):
   name: str
   description: str | None = None
@@ -25,8 +23,8 @@ class ProjectRead(ProjectBase):
     "from_attributes": True
   }
 
-class ProjectWithCompany(ProjectRead):
-  company: CompanyRead
+class ProjectWithCompanyName(ProjectRead):
+  company_name: str | None = None
 
 class ProjectReportRead(BaseModel):
   id: UUID
