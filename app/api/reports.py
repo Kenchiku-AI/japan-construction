@@ -28,6 +28,7 @@ from app.schemas.report import (
   ReportCreate, 
   ReportRead,
   ReportWithCompanyAndProjectName,
+  ReportDetail,
   ReportTemplateCreate, 
   ReportTemplateRead, 
   ReportUpdate,
@@ -407,7 +408,7 @@ async def create_report_template(
 
 @router.get(
   "/{report_id}",
-  response_model=ReportWithCompanyAndProjectName,
+  response_model=ReportDetail,
 )
 async def get_report(
   report_id: UUID,
@@ -501,6 +502,29 @@ async def get_report(
   report.company_id = company_id
   report.fields.sort(key=lambda f: f.order)
   report.photo_count = len(report.images)
+  report.disabled = False
+
+  if report.parent_type == ReportParentType.project:
+    project = await db.get(Project, report.parent_id)
+
+    if not project or project.status != ProjectStatus.active:
+      report.disabled = True
+
+  elif report.parent_type == ReportParentType.company:
+    active_project_stmt = (
+      select(Project.id)
+      .where(
+        Project.company_id == company_id,
+        Project.status == ProjectStatus.active,
+      )
+      .limit(1)
+    )
+
+    active_project_result = await db.execute(active_project_stmt)
+    active_project = active_project_result.first()
+
+    if not active_project:
+      report.disabled = True
 
   return report
   
