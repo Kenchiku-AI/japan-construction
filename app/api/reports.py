@@ -1,11 +1,12 @@
 from datetime import datetime, time
 from uuid import UUID, uuid4
 from typing import List, Optional
+from app.db.models.company import Company
 
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, or_, func
+from sqlalchemy.orm import selectinload, aliased
 
 from app.db.session import get_db
 from app.db.models import (
@@ -24,7 +25,8 @@ from app.db.models import (
 )
 from app.schemas.report import (
   ReportCreate, 
-  ReportRead, 
+  ReportRead,
+  ReportWithCompanyAndProjectName,
   ReportTemplateCreate, 
   ReportTemplateRead, 
   ReportUpdate,
@@ -53,22 +55,67 @@ router = APIRouter(
 
 @router.get(
   "",
-  response_model=list[ReportRead],
+  response_model=list[ReportWithCompanyAndProjectName],
 )
 async def list_reports(
+  q: str | None = None,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
+  search = f"%{q.lower()}%" if q else None
+  company_alias = aliased(Company)
+
   if current_user.role == "admin":
     stmt = (
-      select(Report)
+      select(
+        Report,
+        company_alias.name.label("company_name"),
+        Project.name.label("project_name"),
+      )
+      .outerjoin(
+        Project,
+        (Report.parent_type == ReportParentType.project)
+        & (Report.parent_id == Project.id),
+      )
+      .outerjoin(
+        company_alias,
+        or_(
+          (
+            (Report.parent_type == ReportParentType.company)
+            & (Report.parent_id == company_alias.id)
+          ),
+          (
+            (Report.parent_type == ReportParentType.project)
+            & (Project.company_id == company_alias.id)
+          ),
+        ),
+      )
+    )
+
+    if search:
+      stmt = stmt.where(
+        func.lower(Report.name).like(search)
+      )
+
+    stmt = (
+      stmt
       .order_by(Report.updated_at.desc())
       .limit(25)
       .options(selectinload(Report.fields))
     )
 
     result = await db.execute(stmt)
-    return result.scalars().all()
+
+    rows = result.all()
+
+    reports = []
+
+    for report, company_name, project_name in rows:
+      report.company_name = company_name
+      report.project_name = project_name
+      reports.append(report)
+
+    return reports
 
   if not current_user.company_id:
     raise HTTPException(
@@ -79,7 +126,10 @@ async def list_reports(
   require_company_manager(current_user, current_user.company_id)
 
   stmt = (
-    select(Report)
+    select(
+      Report,
+      Project.name.label("project_name"),
+    )
     .outerjoin(
       Project,
       (Report.parent_type == ReportParentType.project)
@@ -97,13 +147,29 @@ async def list_reports(
         ),
       )
     )
+  )
+
+  if search:
+    stmt = stmt.where(
+      func.lower(Report.name).like(search)
+    )
+
+  stmt = (
+    stmt
     .order_by(Report.updated_at.desc())
     .limit(25)
     .options(selectinload(Report.fields))
   )
 
   result = await db.execute(stmt)
-  return result.scalars().all()
+  rows = result.all()
+  reports = []
+
+  for report, project_name in rows:
+    report.project_name = project_name
+    reports.append(report)
+  
+  return reports
 
 @router.post("", response_model=ReportRead, status_code=status.HTTP_201_CREATED)
 async def create_report(
@@ -305,27 +371,87 @@ async def create_report_template(
 
 @router.get(
   "/{report_id}",
-  response_model=ReportRead,
+  response_model=ReportWithCompanyAndProjectName,
 )
 async def get_report(
   report_id: UUID,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  stmt = (
-    select(Report)
-    .where(Report.id == report_id)
-    .options(
-      selectinload(Report.fields),
-      selectinload(Report.images),
+  company_alias = aliased(Company)
+
+  if current_user.role == "admin":
+    stmt = (
+      select(
+        Report,
+        company_alias.name.label("company_name"),
+        Project.name.label("project_name"),
+      )
+      .outerjoin(
+        Project,
+        (Report.parent_type == ReportParentType.project)
+        & (Report.parent_id == Project.id),
+      )
+      .outerjoin(
+        company_alias,
+        or_(
+          (
+            (Report.parent_type == ReportParentType.company)
+            & (Report.parent_id == company_alias.id)
+          ),
+          (
+            (Report.parent_type == ReportParentType.project)
+            & (Project.company_id == company_alias.id)
+          ),
+        ),
+      )
+      .where(Report.id == report_id)
+      .options(
+        selectinload(Report.fields),
+        selectinload(Report.images),
+      )
     )
-  )
 
-  result = await db.execute(stmt)
-  report: Report | None = result.scalar_one_or_none()
+    result = await db.execute(stmt)
 
-  if report is None:
-    raise HTTPException(404, "Report not found")
+    row = result.one_or_none()
+
+    if row is None:
+      raise HTTPException(404, "Report not found")
+
+    report, company_name, project_name = row
+
+    report.company_name = company_name
+    report.project_name = project_name
+
+  else:
+    stmt = (
+      select(
+        Report,
+        Project.name.label("project_name"),
+      )
+      .outerjoin(
+        Project,
+        (Report.parent_type == ReportParentType.project)
+        & (Report.parent_id == Project.id),
+      )
+      .where(Report.id == report_id)
+      .options(
+        selectinload(Report.fields),
+        selectinload(Report.images),
+      )
+    )
+
+    result = await db.execute(stmt)
+
+    row = result.one_or_none()
+
+    if row is None:
+      raise HTTPException(404, "Report not found")
+
+    report, project_name = row
+
+    report.project_name = project_name
 
   company_id = await get_company_id(
     parent_type=report.parent_type,
