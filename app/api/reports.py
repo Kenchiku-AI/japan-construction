@@ -12,6 +12,7 @@ from app.db.session import get_db
 from app.db.models import (
   Company,
   Project,
+  ProjectStatus,
   User,
   Report,
   ReportField,
@@ -27,6 +28,7 @@ from app.schemas.report import (
   ReportCreate, 
   ReportRead,
   ReportWithCompanyAndProjectName,
+  ReportDetail,
   ReportTemplateCreate, 
   ReportTemplateRead, 
   ReportUpdate,
@@ -196,6 +198,41 @@ async def create_report(
     db=db
   )
   require_company_manager(current_user, company_id)
+
+  if current_user.role != "admin":
+    if parent_type == ReportParentType.project:
+      project = await db.get(Project, payload.parent_id)
+
+      if not project:
+        raise HTTPException(
+          status_code=404,
+          detail="Project not found",
+        )
+
+      if project.status != ProjectStatus.active:
+        raise HTTPException(
+          status_code=403,
+          detail="Reports can only be created for active projects",
+        )
+
+    elif parent_type == ReportParentType.company:
+      active_project_stmt = (
+        select(Project.id)
+        .where(
+          Project.company_id == company_id,
+          Project.status == ProjectStatus.active,
+        )
+        .limit(1)
+      )
+
+      active_project_result = await db.execute(active_project_stmt)
+      active_project = active_project_result.first()
+
+      if not active_project:
+        raise HTTPException(
+          status_code=403,
+          detail="Company must have at least one active project before creating reports",
+        )
 
   report = Report(
     name=payload.name,
@@ -371,7 +408,7 @@ async def create_report_template(
 
 @router.get(
   "/{report_id}",
-  response_model=ReportWithCompanyAndProjectName,
+  response_model=ReportDetail,
 )
 async def get_report(
   report_id: UUID,
@@ -465,6 +502,29 @@ async def get_report(
   report.company_id = company_id
   report.fields.sort(key=lambda f: f.order)
   report.photo_count = len(report.images)
+  report.disabled = False
+
+  if report.parent_type == ReportParentType.project:
+    project = await db.get(Project, report.parent_id)
+
+    if not project or project.status != ProjectStatus.active:
+      report.disabled = True
+
+  elif report.parent_type == ReportParentType.company:
+    active_project_stmt = (
+      select(Project.id)
+      .where(
+        Project.company_id == company_id,
+        Project.status == ProjectStatus.active,
+      )
+      .limit(1)
+    )
+
+    active_project_result = await db.execute(active_project_stmt)
+    active_project = active_project_result.first()
+
+    if not active_project:
+      report.disabled = True
 
   return report
   
@@ -500,6 +560,40 @@ async def update_report(
 
   if current_user.role != "admin":
     require_company_manager(current_user, company_id)
+
+    if report.parent_type == ReportParentType.project:
+      project = await db.get(Project, report.parent_id)
+
+      if not project:
+        raise HTTPException(
+          status_code=404,
+          detail="Project not found",
+        )
+
+      if project.status != ProjectStatus.active:
+        raise HTTPException(
+          status_code=403,
+          detail="Reports for inactive projects cannot be updated",
+        )
+
+    elif report.parent_type == ReportParentType.company:
+      active_project_stmt = (
+        select(Project.id)
+        .where(
+          Project.company_id == company_id,
+          Project.status == ProjectStatus.active,
+        )
+        .limit(1)
+      )
+
+      active_project_result = await db.execute(active_project_stmt)
+      active_project = active_project_result.first()
+
+      if not active_project:
+        raise HTTPException(
+          status_code=403,
+          detail="Company must have at least one active project to update reports",
+        )
 
   if payload.name is not None:
     report.name = payload.name
