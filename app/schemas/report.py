@@ -40,6 +40,10 @@ class ReportRead(BaseModel):
     "from_attributes": True
   }
 
+class ReportWithCompanyAndProjectName(ReportRead):
+  company_name: str | None = None
+  project_name: str | None = None
+
 class ReportTemplateFieldCreate(BaseModel):
   name: str
   description: Optional[str] = None
