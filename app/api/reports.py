@@ -417,7 +417,15 @@ async def export_reports_by_template(
   current_user: User = Depends(get_current_user),
 ):
   stmt = (
-    select(Report)
+    select(
+      Report,
+      Project.name.label("project_name"),
+    )
+    .outerjoin(
+      Project,
+      (Report.parent_type == ReportParentType.project)
+      & (Report.parent_id == Project.id),
+    )
     .where(Report.template_id == template_id)
     .options(
       selectinload(Report.fields),
@@ -436,11 +444,13 @@ async def export_reports_by_template(
 
   result = await db.execute(stmt)
 
-  reports: list[Report] = result.scalars().all()
+  rows = result.all()
 
-  filtered_reports: list[Report] = []
+  filtered_reports: list[
+    tuple[Report, str | None]
+  ] = []
 
-  for report in reports:
+  for report, project_name in rows:
     company_id = await get_company_id(
       parent_type=report.parent_type,
       parent_id=report.parent_id,
@@ -453,33 +463,50 @@ async def export_reports_by_template(
         company_id,
       )
 
-    filtered_reports.append(report)
+    filtered_reports.append(
+      (report, project_name)
+    )
 
   field_names: set[str] = set()
 
-  for report in filtered_reports:
+  for report, _project_name in filtered_reports:
     for field in report.fields:
       field_names.add(field.name)
 
   sorted_field_names = sorted(field_names)
 
-  rows: list[dict] = []
+  export_rows: list[dict] = []
 
-  for report in filtered_reports:
+  for report, project_name in filtered_reports:
     row = {
-      "name": report.name,
-      "created_at": report.created_at.isoformat(),
-      "created_by": " ".join(
+      "報告書名": report.name,
+      "作成日時": report.created_at.strftime(
+        "%Y-%m-%d %H:%M"
+      ),
+      "作成者": " ".join(
         filter(
           None,
           [
-            report.creator.first_name if report.creator else None,
-            report.creator.last_name if report.creator else None,
+            (
+              report.creator.first_name
+              if report.creator
+              else None
+            ),
+            (
+              report.creator.last_name
+              if report.creator
+              else None
+            ),
           ],
         )
       ),
-      "image_count": len(report.images),
+      "画像数": len(report.images),
     }
+
+    if not project_id:
+      row["プロジェクト"] = (
+        project_name or ""
+      )
 
     for field_name in sorted_field_names:
       row[field_name] = ""
@@ -487,9 +514,9 @@ async def export_reports_by_template(
     for field in report.fields:
       row[field.name] = field.value or ""
 
-    rows.append(row)
+    export_rows.append(row)
 
-  return rows
+  return export_rows
 
 @router.get(
   "/{report_id}",
