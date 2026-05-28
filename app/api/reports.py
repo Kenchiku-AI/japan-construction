@@ -408,6 +408,86 @@ async def create_report_template(
   return template
 
 @router.get(
+  "/exports/template/{template_id}",
+)
+async def export_reports_by_template(
+  template_id: UUID,
+  project_id: UUID | None = Query(None),
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = (
+    select(Report)
+    .where(Report.template_id == template_id)
+    .options(
+      selectinload(Report.fields),
+      selectinload(Report.images),
+      joinedload(Report.creator),
+    )
+  )
+
+  if project_id:
+    stmt = stmt.where(
+      Report.parent_id == project_id,
+      Report.parent_type == ReportParentType.project,
+    )
+
+  stmt = stmt.order_by(Report.created_at.desc())
+
+  result = await db.execute(stmt)
+
+  reports: list[Report] = result.scalars().all()
+
+  filtered_reports: list[Report] = []
+
+  for report in reports:
+    company_id = await get_company_id(
+      parent_type=report.parent_type,
+      parent_id=report.parent_id,
+      db=db,
+    )
+
+    if current_user.role != "admin":
+      require_company_manager(
+        current_user,
+        company_id,
+      )
+
+    filtered_reports.append(report)
+
+  field_names: set[str] = set()
+
+  for report in filtered_reports:
+    for field in report.fields:
+      field_names.add(field.name)
+
+  sorted_field_names = sorted(field_names)
+
+  rows: list[dict] = []
+
+  for report in filtered_reports:
+    row = {
+      "Report Name": report.name,
+      "Report Created At": report.created_at.isoformat(),
+      "Report Created By": (
+        report.creator.name
+        if report.creator
+        else ""
+      ),
+      "Image Count": len(report.images),
+    }
+
+    for field_name in sorted_field_names:
+      row[field_name] = ""
+
+    for field in report.fields:
+      row[field.name] = field.value or ""
+
+    rows.append(row)
+
+  return rows
+
+@router.get(
   "/{report_id}",
   response_model=ReportDetail,
 )
