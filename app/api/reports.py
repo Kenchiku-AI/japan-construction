@@ -6,7 +6,7 @@ from app.db.models.company import Company
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
-from sqlalchemy.orm import selectinload, aliased
+from sqlalchemy.orm import selectinload, aliased, joinedload
 
 from app.db.session import get_db
 from app.db.models import (
@@ -467,14 +467,18 @@ async def export_reports_by_template(
 
   for report in filtered_reports:
     row = {
-      "Report Name": report.name,
-      "Report Created At": report.created_at.isoformat(),
-      "Report Created By": (
-        report.creator.name
-        if report.creator
-        else ""
+      "name": report.name,
+      "created_at": report.created_at.isoformat(),
+      "created_by": " ".join(
+        filter(
+          None,
+          [
+            report.creator.first_name if report.creator else None,
+            report.creator.last_name if report.creator else None,
+          ],
+        )
       ),
-      "Image Count": len(report.images),
+      "image_count": len(report.images),
     }
 
     for field_name in sorted_field_names:
