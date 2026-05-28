@@ -241,6 +241,7 @@ async def create_report(
     parent_type=parent_type,
     created_at=datetime.utcnow(),
     updated_at=datetime.utcnow(),
+    created_by=current_user.id,
   )
 
   db.add(report)
