@@ -98,6 +98,7 @@ class Report(Base):
 
   created_at = Column(DateTime, default=datetime.utcnow)
   updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+  created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
   __table_args__ = (
     Index("ix_reports_parent", "parent_type", "parent_id"),
