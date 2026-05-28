@@ -479,37 +479,49 @@ async def export_reports_by_template(
 
   for report, project_name in filtered_reports:
     row = {
+<<<<<<< HEAD
       "報告書名": report.name,
+      "作成日時": report.created_at.strftime(
+        "%Y-%m-%d %H:%M"
+      ),
+      "作成者": " ".join(
+        filter(
+          None,
+          [
+            (
+              report.creator.first_name
+              if report.creator
+              else None
+            ),
+            (
+              report.creator.last_name
+              if report.creator
+              else None
+            ),
+          ],
+        )
+      ),
+      "画像数": len(report.images),
+=======
+      "name": report.name,
+      "created_at": report.created_at.isoformat(),
+      "created_by": " ".join(
+        filter(
+          None,
+          [
+            report.creator.first_name if report.creator else None,
+            report.creator.last_name if report.creator else None,
+          ],
+        )
+      ),
+      "image_count": len(report.images),
+>>>>>>> main
     }
 
     if not project_id:
       row["プロジェクト"] = (
         project_name or ""
       )
-    
-    row["作成日時"] = report.created_at.strftime(
-      "%Y-%m-%d %H:%M"
-    )
-
-    row["作成者"] = " ".join(
-      filter(
-        None,
-        [
-          (
-            report.creator.first_name
-            if report.creator
-            else None
-          ),
-          (
-            report.creator.last_name
-            if report.creator
-            else None
-          ),
-        ],
-      )
-    )
-
-    row["画像数"] = len(report.images)
 
     for field_name in sorted_field_names:
       row[field_name] = ""
