@@ -245,3 +245,44 @@ def send_guest_invitation_email(email: str, project_name: str, set_password_toke
   except Exception:
     logger.exception("Error sending guest invitation email to %s", email)
     raise
+
+def send_existing_user_invitation_email(email: str, company_name: str, invite_token: str) -> None:
+  invite_link = f"{settings.WEB_CLIENT_URL}/accept-invitation?invitationToken={invite_token}"
+
+  subject = f"{company_name} への招待"
+
+  message = f"""
+{company_name} に参加するよう招待されています。<br/>
+以下のボタンをクリックして、招待を承認してください。
+"""
+
+  html_body = _build_email_template(
+    title="招待のお知らせ",
+    message=message,
+    button_text="招待を承認する",
+    button_url=invite_link,
+  )
+
+  text_body = f"""
+{company_name} に参加するよう招待されています。
+以下のリンクから承認してください：
+{invite_link}
+"""
+
+  try:
+    ses.send_email(
+      Source=settings.NO_REPLY_EMAIL,
+      Destination={"ToAddresses": [email]},
+      ReplyToAddresses=[settings.SUPPORT_EMAIL],
+      Message={
+        "Subject": {"Data": subject},
+        "Body": {
+          "Text": {"Data": text_body},
+          "Html": {"Data": html_body},
+        },
+      },
+    )
+    logger.info(f"Sent existing user invitation email to {email}")
+  except Exception:
+    logger.exception("Error sending existing user invitation email to %s", email)
+    raise

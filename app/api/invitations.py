@@ -142,3 +142,64 @@ async def create_invitation(
   )
 
   return invitation
+
+@router.post("/accept-invitation")
+async def accept_invitation(
+  payload: InvitationAccept,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+  x_client_type: str | None = Header(default=None),
+):
+  hashed_token = hash_token(payload.token)
+  result = await db.execute(
+    select(Invitation).where(Invitation.token_hash == hashed_token)
+  )
+  invitation = result.scalars().first()
+
+  if not invitation:
+    raise HTTPException(status_code=404, detail="Invitation not found or invalid")
+
+  if invitation.expires_at < datetime.utcnow():
+    raise HTTPException(status_code=400, detail="Invitation expired")
+
+  if invitation.email != current_user.email:
+    raise HTTPException(
+      status_code=403,
+      detail="This invitation was not issued to your account",
+    )
+
+  if current_user.company_id is not None:
+    raise HTTPException(
+      status_code=400,
+      detail="You already belong to a company",
+    )
+
+  company = await db.get(Company, invitation.company_id)
+  if not company:
+    raise HTTPException(status_code=404, detail="Company not found")
+
+  current_user.company_id = company.id
+  current_user.role = invitation.role
+
+  await db.execute(
+    delete(ProjectGuestLink)
+    .where(
+      ProjectGuestLink.user_id == current_user.id,
+      ProjectGuestLink.project_id.in_(
+        select(Project.id).where(Project.company_id == company.id)
+      ),
+    )
+  )
+
+  await db.delete(invitation)
+  await db.commit()
+  await db.refresh(current_user)
+
+  if x_client_type == "web":
+    user_with_projects = await build_user_with_company_and_projects(current_user, db)
+    response = JSONResponse(content=user_with_projects.model_dump(mode="json"))
+    cookie_settings = get_cookie_settings()
+    response.set_cookie(key="accessToken", value=create_access_token({"sub": str(current_user.id)}), **cookie_settings)
+    return response
+
+  return {"success": True}
