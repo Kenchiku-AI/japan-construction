@@ -40,5 +40,11 @@ class Project(Base):
     viewonly=True
   )
 
+  guest_links = relationship(
+    "ProjectGuestLink",
+    back_populates="project",
+    cascade="all, delete-orphan",
+  )
+
   created_at = Column(DateTime, default=datetime.utcnow)
   updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

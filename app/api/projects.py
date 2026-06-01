@@ -8,9 +8,9 @@ from sqlalchemy import select, desc, case
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
-from app.db.models import Project, Company, User, ProjectStatus
+from app.db.models import Project, Company, User, ProjectStatus, ProjectGuestLink
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectWithReports, ProjectWithCompanyName
-from app.core.dependencies import get_current_user, require_company_member, require_company_manager
+from app.core.dependencies import get_current_user, require_company_member, require_company_manager, require_project_access
 from app.services.email import send_project_request_email
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
@@ -107,7 +107,7 @@ async def get_project(
     if not project:
       raise HTTPException(status_code=404, detail="Project not found")
 
-    require_company_member(current_user, project.company_id)
+    await require_project_access(current_user, project_id, project.company_id, db)
 
   return project
 
@@ -198,3 +198,46 @@ async def update_project(
   project = result.scalars().first()
 
   return project
+
+@router.delete(
+  "/{project_id}/guests/{guest_link_id}",
+  status_code=status.HTTP_204_NO_CONTENT,
+)
+async def remove_project_guest(
+  project_id: UUID,
+  guest_link_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  project = await db.get(Project, project_id)
+  if not project:
+    raise HTTPException(status_code=404, detail="Project not found")
+
+  result = await db.execute(
+    select(ProjectGuestLink).where(
+      ProjectGuestLink.id == guest_link_id,
+      ProjectGuestLink.project_id == project_id,
+    )
+  )
+  guest_link = result.scalar_one_or_none()
+
+  if not guest_link:
+    raise HTTPException(status_code=404, detail="Guest link not found")
+
+  # Allow: the guest themselves, admins, or managers of the project's company
+  if current_user.role == "admin":
+    pass
+  elif current_user.role == "manager" and current_user.company_id == project.company_id:
+    pass
+  elif guest_link.user_id == current_user.id:
+    pass
+  else:
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Not authorized to remove this guest",
+    )
+
+  await db.delete(guest_link)
+  await db.commit()
+
+  return None

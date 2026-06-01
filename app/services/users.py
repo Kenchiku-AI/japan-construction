@@ -1,4 +1,3 @@
-from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,23 +5,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas.user import UserCompanyRead, UserProjectRead, UserWithCompanyAndProjects
 from app.db.models.user import User
 from app.db.models.project import Project
+from app.db.models.project_guest_link import ProjectGuestLink
 
 async def build_user_with_company_and_projects(
   user: User,
   db: AsyncSession,
 ) -> UserWithCompanyAndProjects:
-  today = date.today()
   projects_data: list[UserProjectRead] = []
-
   company = None
+  guest_projects = []
 
   if user.role == "admin":
     projects_result = await db.execute(
-      select(Project)
-      .order_by(Project.updated_at.desc())
-      .limit(25)
+      select(Project).order_by(Project.updated_at.desc()).limit(25)
     )
     projects = projects_result.scalars().all()
+
   elif user.company_id:
     user_result = await db.execute(
       select(User)
@@ -30,7 +28,6 @@ async def build_user_with_company_and_projects(
       .where(User.id == user.id)
     )
     user = user_result.scalar_one()
-
     company = user.company
 
     projects_result = await db.execute(
@@ -40,18 +37,37 @@ async def build_user_with_company_and_projects(
       .limit(25)
     )
     projects = projects_result.scalars().all()
+
+    guest_result = await db.execute(
+      select(Project)
+      .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
+      .where(ProjectGuestLink.user_id == user.id)
+      .order_by(Project.updated_at.desc())
+    )
+    guest_projects = guest_result.scalars().all()
+
   else:
     projects = []
 
-  for project in projects:
-    projects_data.append(
-      UserProjectRead(
+    guest_result = await db.execute(
+      select(Project)
+      .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
+      .where(ProjectGuestLink.user_id == user.id)
+      .order_by(Project.updated_at.desc())
+    )
+    guest_projects = guest_result.scalars().all()
+
+  seen: set = set()
+  
+  for project in list(projects) + list(guest_projects):
+    if project.id not in seen:
+      seen.add(project.id)
+      projects_data.append(UserProjectRead(
         id=project.id,
         name=project.name,
         description=project.description,
-        status=project.status
-      )
-    )
+        status=project.status,
+      ))
 
   return UserWithCompanyAndProjects(
     id=user.id,

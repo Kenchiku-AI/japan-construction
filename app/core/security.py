@@ -38,3 +38,14 @@ def generate_invite_token() -> str:
 
 def hash_token(token: str) -> str:
   return hashlib.sha256(token.encode()).hexdigest()
+
+def get_cookie_settings():
+  is_local = settings.ENV == "local"
+
+  return {
+    "httponly": True,
+    "secure": not is_local,
+    "samesite": "lax" if is_local else "none",
+    "domain": None if is_local else ".kenchiku.ai",
+    "path": "/",
+  }
