@@ -9,7 +9,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import get_current_user, require_company_manager
-from app.db.models import Company, Project, User, ReportImageTag
+from app.db.models import Company, Project, User, ReportImageTag, ProjectGuestLink
 from app.db.session import get_db
 from app.schemas.company import (
   CompanyCreate,
@@ -327,3 +327,55 @@ async def delete_tag(
   await db.commit()
 
   return None
+
+@router.get("/{company_id}/guests")
+async def list_company_guests(
+  company_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  result = await db.execute(
+    select(
+      User.id,
+      User.email,
+      User.first_name,
+      User.last_name,
+      Project.id.label("project_id"),
+      Project.name.label("project_name"),
+      ProjectGuestLink.id.label("guest_link_id"),
+    )
+    .join(ProjectGuestLink, ProjectGuestLink.user_id == User.id)
+    .join(Project, Project.id == ProjectGuestLink.project_id)
+    .where(
+      Project.company_id == company_id,
+      User.company_id != company_id,
+    )
+    .order_by(User.email.asc(), Project.name.asc())
+  )
+
+  rows = result.all()
+
+  guests: dict = {}
+
+  for row in rows:
+    user_id = str(row.id)
+
+    if user_id not in guests:
+      guests[user_id] = {
+        "id": row.id,
+        "email": row.email,
+        "first_name": row.first_name,
+        "last_name": row.last_name,
+        "projects": [],
+      }
+
+    guests[user_id]["projects"].append({
+      "project_id": row.project_id,
+      "project_name": row.project_name,
+      "guest_link_id": row.guest_link_id,
+    })
+
+  return list(guests.values())
