@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
-from app.api.invitations import invite_user
 from app.core.dependencies import get_current_user, require_company_manager
 from app.db.models import Company, Project, User, ReportImageTag
 from app.db.session import get_db
@@ -21,8 +20,8 @@ from app.schemas.company import (
   ReportImageTagCreate,
   ReportImageTagUpdate
 )
-from app.schemas.invitation import InvitationCreate
-from app.services.invitations import create_invitation
+from app.schemas.invitation import CompanyInvitationCreate
+from app.services.invitations import create_company_invitation
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -106,13 +105,13 @@ async def create_company(
   await db.refresh(company)
 
   if payload.manager_email:
-    invitation_payload = InvitationCreate(
+    invitation_payload = CompanyInvitationCreate(
       email=payload.manager_email,
       company_id=company.id,
       role="manager",
     )
 
-    await create_invitation(
+    await create_company_invitation(
       invitation_payload,
       db,
       current_user,
