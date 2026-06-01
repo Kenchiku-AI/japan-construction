@@ -8,7 +8,7 @@ from uuid import UUID
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.db.models import User
+from app.db.models import User, ProjectGuestLink
 
 oauth2_scheme = OAuth2PasswordBearer(
   tokenUrl="/auth/login",
@@ -82,3 +82,27 @@ def require_company_manager(user: User, company_id: UUID):
       detail="Manager privileges required",
     )
 
+# Add this function at the bottom
+async def require_project_access(
+  user: User,
+  project_id: UUID,
+  company_id: UUID,
+  db: AsyncSession,
+):
+  if user.role == "admin":
+    return
+
+  if user.company_id == company_id:
+    return
+
+  result = await db.execute(
+    select(ProjectGuestLink).where(
+      ProjectGuestLink.user_id == user.id,
+      ProjectGuestLink.project_id == project_id,
+    )
+  )
+  if not result.scalar_one_or_none():
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Not authorized to access this project",
+    )

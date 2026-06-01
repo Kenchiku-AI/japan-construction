@@ -34,6 +34,12 @@ class User(Base):
     back_populates="users",
   )
 
+  guest_project_links = relationship(
+    "ProjectGuestLink",
+    back_populates="user",
+    cascade="all, delete-orphan",
+  )
+
   created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
   updated_at = Column(
     DateTime,

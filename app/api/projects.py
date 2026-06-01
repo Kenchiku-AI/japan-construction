@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.db.session import get_db
 from app.db.models import Project, Company, User, ProjectStatus
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectWithReports, ProjectWithCompanyName
-from app.core.dependencies import get_current_user, require_company_member, require_company_manager
+from app.core.dependencies import get_current_user, require_company_member, require_company_manager, require_project_access
 from app.services.email import send_project_request_email
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
@@ -107,7 +107,7 @@ async def get_project(
     if not project:
       raise HTTPException(status_code=404, detail="Project not found")
 
-    require_company_member(current_user, project.company_id)
+    await require_project_access(current_user, project_id, project.company_id, db)
 
   return project
 
