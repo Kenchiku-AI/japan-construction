@@ -23,6 +23,7 @@ from app.db.models import (
   ReportImageTag,
   ReportImageTagLink,
   CompanyReportTemplate,
+  ProjectGuestLink,
 )
 from app.schemas.report import (
   ReportCreate, 
@@ -45,6 +46,7 @@ from app.core.dependencies import (
   get_current_user_ws,
   require_company_manager,
   require_company_member,
+  require_project_access,
 )
 from app.services.reports import get_company_id
 from app.services.openai import transcribe_and_extract_json
@@ -119,58 +121,62 @@ async def list_reports(
 
     return reports
 
-  if not current_user.company_id:
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail="User is not associated with a company",
-    )
-
-  require_company_manager(current_user, current_user.company_id)
-
-  stmt = (
-    select(
-      Report,
-      Project.name.label("project_name"),
-    )
-    .outerjoin(
-      Project,
-      (Report.parent_type == ReportParentType.project)
-      & (Report.parent_id == Project.id),
-    )
-    .where(
-      or_(
-        (
-          (Report.parent_type == ReportParentType.company)
-          & (Report.parent_id == current_user.company_id)
-        ),
-        (
-          (Report.parent_type == ReportParentType.project)
-          & (Project.company_id == current_user.company_id)
-        ),
+  if current_user.company_id:
+    company_result = await db.execute(
+      select(Report, Project.name.label("project_name"))
+      .outerjoin(Project, (Report.parent_type == ReportParentType.project) & (Report.parent_id == Project.id))
+      .where(
+        or_(
+          (Report.parent_type == ReportParentType.company) & (Report.parent_id == current_user.company_id),
+          (Report.parent_type == ReportParentType.project) & (Project.company_id == current_user.company_id),
+        )
       )
-    )
-  )
-
-  if search:
-    stmt = stmt.where(
-      func.lower(Report.name).like(search)
+      .options(selectinload(Report.fields))
     )
 
-  stmt = (
-    stmt
-    .order_by(Report.updated_at.desc())
-    .limit(25)
-    .options(selectinload(Report.fields))
-  )
+    guest_result = await db.execute(
+      select(Report, Project.name.label("project_name"))
+      .join(Project, (Report.parent_type == ReportParentType.project) & (Report.parent_id == Project.id))
+      .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
+      .where(
+        ProjectGuestLink.user_id == current_user.id,
+        Project.company_id != current_user.company_id,
+      )
+      .options(selectinload(Report.fields))
+    )
 
-  result = await db.execute(stmt)
-  rows = result.all()
+    seen = set()
+    all_rows = []
+    for row in list(company_result.all()) + list(guest_result.all()):
+      if row[0].id not in seen:
+        seen.add(row[0].id)
+        all_rows.append(row)
+
+    if search:
+      all_rows = [row for row in all_rows if search.strip("%").lower() in row[0].name.lower()]
+
+    all_rows = sorted(all_rows, key=lambda row: row[0].updated_at, reverse=True)[:25]
+
+  else:
+    result = await db.execute(
+      select(Report, Project.name.label("project_name"))
+      .join(Project, (Report.parent_type == ReportParentType.project) & (Report.parent_id == Project.id))
+      .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
+      .where(ProjectGuestLink.user_id == current_user.id)
+      .options(selectinload(Report.fields))
+    )
+    all_rows = result.all()
+
+    if search:
+      all_rows = [row for row in all_rows if search.strip("%").lower() in row[0].name.lower()]
+
+    all_rows = sorted(all_rows, key=lambda row: row[0].updated_at, reverse=True)[:25]
+
   reports = []
+  for report, project_name in all_rows:
+      report.project_name = project_name
+      reports.append(report)
 
-  for report, project_name in rows:
-    report.project_name = project_name
-    reports.append(report)
-  
   return reports
 
 @router.post("", response_model=ReportRead, status_code=status.HTTP_201_CREATED)
@@ -197,7 +203,26 @@ async def create_report(
     parent_id=payload.parent_id,
     db=db
   )
-  require_company_manager(current_user, company_id)
+
+  template_company_link = (
+    await db.execute(
+      select(CompanyReportTemplate).where(
+        CompanyReportTemplate.report_template_id == template.id,
+        CompanyReportTemplate.company_id == company_id,
+      )
+    )
+  ).scalar_one_or_none()
+
+  if not template_company_link and not template.is_global:
+    raise HTTPException(
+      status_code=403,
+      detail="Template does not belong to this company",
+    )
+
+  if parent_type == ReportParentType.project:
+    await require_project_access(current_user, payload.parent_id, company_id, db)
+  else:
+    require_company_manager(current_user, company_id)
 
   if current_user.role != "admin":
     if parent_type == ReportParentType.project:
@@ -309,24 +334,61 @@ async def list_report_templates(
     result = await db.execute(stmt)
     return result.scalars().all()
 
-  if not current_user.company_id:
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail="User is not associated with a company",
+  if current_user.company_id:
+    own_company_result = await db.execute(
+      select(ReportTemplate)
+      .join(CompanyReportTemplate)
+      .where(CompanyReportTemplate.company_id == current_user.company_id)
+      .options(selectinload(ReportTemplate.fields))
     )
 
-  require_company_manager(current_user, current_user.company_id)
+    guest_result = await db.execute(
+      select(ReportTemplate)
+      .join(CompanyReportTemplate, CompanyReportTemplate.report_template_id == ReportTemplate.id)
+      .join(Company, Company.id == CompanyReportTemplate.company_id)
+      .join(Project, Project.company_id == Company.id)
+      .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
+      .where(
+        ProjectGuestLink.user_id == current_user.id,
+        ReportTemplate.parent_type == ReportParentType.project,
+        Company.id != current_user.company_id,  # exclude own company, already covered above
+      )
+      .options(selectinload(ReportTemplate.fields))
+    )
 
-  stmt = (
-    select(ReportTemplate)
-    .join(CompanyReportTemplate)
-    .where(CompanyReportTemplate.company_id == current_user.company_id)
-    .options(selectinload(ReportTemplate.fields))
-    .order_by(ReportTemplate.updated_at.desc())
-  )
+    seen = set()
+    all_templates = []
+    for template in list(own_company_result.scalars().all()) + list(guest_result.scalars().all()):
+      if template.id not in seen:
+        seen.add(template.id)
+        all_templates.append(template)
 
-  result = await db.execute(stmt)
-  return result.scalars().all()
+    all_templates = sorted(all_templates, key=lambda t: t.updated_at, reverse=True)
+
+  else:
+    guest_result = await db.execute(
+      select(ReportTemplate)
+      .join(CompanyReportTemplate, CompanyReportTemplate.report_template_id == ReportTemplate.id)
+      .join(Company, Company.id == CompanyReportTemplate.company_id)
+      .join(Project, Project.company_id == Company.id)
+      .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
+      .where(
+        ProjectGuestLink.user_id == current_user.id,
+        ReportTemplate.parent_type == ReportParentType.project,
+      )
+      .options(selectinload(ReportTemplate.fields))
+    )
+
+    seen = set()
+    all_templates = []
+    for template in guest_result.scalars().all():
+      if template.id not in seen:
+        seen.add(template.id)
+        all_templates.append(template)
+
+    all_templates = sorted(all_templates, key=lambda t: t.updated_at, reverse=True)
+
+  return all_templates
 
 @router.post(
   "/templates",
@@ -612,7 +674,10 @@ async def get_report(
   )
 
   if current_user.role != "admin":
-    require_company_manager(current_user, company_id)
+    if report.parent_type == ReportParentType.project:
+      await require_project_access(current_user, report.parent_id, company_id, db)
+    else:
+      require_company_manager(current_user, company_id)
 
   report.company_id = company_id
   report.fields.sort(key=lambda f: f.order)
@@ -674,9 +739,9 @@ async def update_report(
   )
 
   if current_user.role != "admin":
-    require_company_manager(current_user, company_id)
-
     if report.parent_type == ReportParentType.project:
+      await require_project_access(current_user, report.parent_id, company_id, db)
+
       project = await db.get(Project, report.parent_id)
 
       if not project:
@@ -692,6 +757,8 @@ async def update_report(
         )
 
     elif report.parent_type == ReportParentType.company:
+      require_company_manager(current_user, company_id)
+
       active_project_stmt = (
         select(Project.id)
         .where(
@@ -767,7 +834,10 @@ async def list_report_images(
   if not company_id:
     raise HTTPException(500, "Report does not have an associated company")
   if current_user.role != "admin":
-    require_company_manager(current_user, company_id)
+    if report.parent_type == ReportParentType.project:
+      await require_project_access(current_user, report.parent_id, company_id, db)
+    else:
+      require_company_manager(current_user, company_id)
 
   stmt_images = (
     select(ReportImage)
@@ -834,7 +904,10 @@ async def create_report_image(
   )
 
   if current_user.role != "admin":
-    require_company_manager(current_user, company_id)
+    if report.parent_type == ReportParentType.project:
+      await require_project_access(current_user, report.parent_id, company_id, db)
+    else:
+      require_company_manager(current_user, company_id)
 
   image_id = uuid4()
   key = f"reports/{report_id}/{image_id}.jpg"
@@ -906,7 +979,10 @@ async def get_report_image_status(
     raise HTTPException(500, "Report does not have an associated company")
 
   if current_user.role != "admin":
-    require_company_manager(current_user, company_id)
+    if report.parent_type == ReportParentType.project:
+      await require_project_access(current_user, report.parent_id, company_id, db)
+    else:
+      require_company_manager(current_user, company_id)
 
   stmt = (
     select(ReportImage)
@@ -979,7 +1055,10 @@ async def update_report_image(
   )
 
   if current_user.role != "admin":
-    require_company_manager(current_user, company_id)
+    if report.parent_type == ReportParentType.project:
+      await require_project_access(current_user, report.parent_id, company_id, db)
+    else:
+      require_company_manager(current_user, company_id)
 
   stmt = (
     select(ReportImage)
@@ -1047,7 +1126,10 @@ async def create_report_image_tag(
   )
 
   if current_user.role != "admin":
-    require_company_manager(current_user, company_id)
+    if report.parent_type == ReportParentType.project:
+      await require_project_access(current_user, report.parent_id, company_id, db)
+    else:
+      require_company_manager(current_user, company_id)
 
   stmt = select(ReportImage).where(
     ReportImage.id == image_id,
@@ -1122,7 +1204,10 @@ async def delete_report_image_tag(
   )
 
   if current_user.role != "admin":
-    require_company_manager(current_user, company_id)
+    if report.parent_type == ReportParentType.project:
+      await require_project_access(current_user, report.parent_id, company_id, db)
+    else:
+      require_company_manager(current_user, company_id)
 
   stmt = select(ReportImage).where(
     ReportImage.id == image_id,
@@ -1178,7 +1263,10 @@ async def report_speech(
   )
 
   if current_user.role != "admin":
-    require_company_manager(current_user, company_id)
+    if report.parent_type == ReportParentType.project:
+      await require_project_access(current_user, report.parent_id, company_id, db)
+    else:
+      require_company_manager(current_user, company_id)
 
   try:
     changed_fields = await transcribe_and_extract_json(
@@ -1256,7 +1344,10 @@ async def delete_report_image(
   )
 
   if current_user.role != "admin":
-    require_company_manager(current_user, company_id)
+    if report.parent_type == ReportParentType.project:
+      await require_project_access(current_user, report.parent_id, company_id, db)
+    else:
+      require_company_manager(current_user, company_id)
 
   stmt = select(ReportImage).where(
     ReportImage.id == image_id,
@@ -1267,6 +1358,13 @@ async def delete_report_image(
 
   if not image:
     raise HTTPException(404, "Image not found")
+
+  if current_user.role != "admin" and current_user.role != "manager":
+    if image.created_by != current_user.id:
+      raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You can only delete images you uploaded",
+      )
 
   stmt_links = select(ReportImageTagLink).where(
     ReportImageTagLink.report_image_id == image_id
@@ -1303,29 +1401,68 @@ async def get_report_template(
   current_user: User = Depends(get_current_user),
 ):
   if current_user.role == "admin":
-    stmt = (
+    result = await db.execute(
       select(ReportTemplate)
       .where(ReportTemplate.id == report_template_id)
       .options(selectinload(ReportTemplate.fields))
     )
+    template = result.scalar_one_or_none()
+
   elif current_user.role == "manager":
-    stmt = (
+    result = await db.execute(
       select(ReportTemplate)
       .join(CompanyReportTemplate, CompanyReportTemplate.report_template_id == ReportTemplate.id)
       .where(
         ReportTemplate.id == report_template_id,
-        CompanyReportTemplate.company_id == current_user.company_id
+        CompanyReportTemplate.company_id == current_user.company_id,
       )
       .options(selectinload(ReportTemplate.fields))
     )
-  else:
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail="Not authorized to view this report template",
-    )
+    template = result.scalar_one_or_none()
 
-  result = await db.execute(stmt)
-  template: ReportTemplate = result.scalar_one_or_none()
+  elif current_user.company_id:
+    result = await db.execute(
+      select(ReportTemplate)
+      .join(CompanyReportTemplate, CompanyReportTemplate.report_template_id == ReportTemplate.id)
+      .where(
+        ReportTemplate.id == report_template_id,
+        CompanyReportTemplate.company_id == current_user.company_id,
+      )
+      .options(selectinload(ReportTemplate.fields))
+    )
+    template = result.scalar_one_or_none()
+
+    if not template:
+      result = await db.execute(
+        select(ReportTemplate)
+        .join(CompanyReportTemplate, CompanyReportTemplate.report_template_id == ReportTemplate.id)
+        .join(Company, Company.id == CompanyReportTemplate.company_id)
+        .join(Project, Project.company_id == Company.id)
+        .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
+        .where(
+          ReportTemplate.id == report_template_id,
+          ProjectGuestLink.user_id == current_user.id,
+          ReportTemplate.parent_type == ReportParentType.project,
+        )
+        .options(selectinload(ReportTemplate.fields))
+      )
+      template = result.scalar_one_or_none()
+
+  else:
+    result = await db.execute(
+      select(ReportTemplate)
+      .join(CompanyReportTemplate, CompanyReportTemplate.report_template_id == ReportTemplate.id)
+      .join(Company, Company.id == CompanyReportTemplate.company_id)
+      .join(Project, Project.company_id == Company.id)
+      .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
+      .where(
+        ReportTemplate.id == report_template_id,
+        ProjectGuestLink.user_id == current_user.id,
+        ReportTemplate.parent_type == ReportParentType.project,
+      )
+      .options(selectinload(ReportTemplate.fields))
+    )
+    template = result.scalar_one_or_none()
 
   if not template:
     raise HTTPException(status_code=404, detail="Report template not found")
