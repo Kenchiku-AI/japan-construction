@@ -3,7 +3,7 @@ from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -334,9 +334,6 @@ async def list_company_guests(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  if current_user.role != "admin":
-    require_company_manager(current_user, company_id)
-
   result = await db.execute(
     select(
       User.id,
@@ -351,7 +348,10 @@ async def list_company_guests(
     .join(Project, Project.id == ProjectGuestLink.project_id)
     .where(
       Project.company_id == company_id,
-      User.company_id != company_id,
+      or_(
+        User.company_id.is_(None),
+        User.company_id != company_id,
+      ),
     )
     .order_by(User.email.asc(), Project.name.asc())
   )
