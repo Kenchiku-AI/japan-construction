@@ -1,9 +1,9 @@
-from datetime import datetime, time
+from datetime import datetime
 from uuid import UUID, uuid4
-from typing import List, Optional
+from typing import Optional
 from app.db.models.company import Company
 
-from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 from sqlalchemy.orm import selectinload, aliased, joinedload
@@ -43,9 +43,7 @@ from app.schemas.report import (
 )
 from app.core.dependencies import (
   get_current_user,
-  get_current_user_ws,
   require_company_manager,
-  require_company_member,
   require_project_access,
 )
 from app.services.reports import get_company_id
