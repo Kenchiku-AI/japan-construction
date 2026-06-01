@@ -15,7 +15,8 @@ from app.core.security import (
   create_access_token,
   create_refresh_token,
   hash_password,
-  hash_token
+  hash_token,
+  get_cookie_settings,
 )
 from app.db.models.refresh_token import RefreshToken
 from app.db.models.user import User
@@ -313,14 +314,3 @@ async def reset_password(
   await db.commit()
 
   return {"success": True}
-
-def get_cookie_settings():
-  is_local = settings.ENV == "local"
-
-  return {
-    "httponly": True,
-    "secure": not is_local,
-    "samesite": "lax" if is_local else "none",
-    "domain": None if is_local else ".kenchiku.ai",
-    "path": "/",
-  }

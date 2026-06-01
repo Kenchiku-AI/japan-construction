@@ -160,3 +160,129 @@ def send_password_reset_email(email: str, reset_token: str) -> None:
   except Exception:
     logger.exception("Error sending email to %s", email)
     raise
+
+def send_project_guest_access_email(email: str, project_name: str) -> None:
+  subject = f"プロジェクト「{project_name}」へのアクセス権が付与されました"
+
+  message = f"""
+プロジェクト「{project_name}」へのゲストアクセス権が付与されました。<br/>
+以下のボタンからログインして、プロジェクトをご確認ください。
+"""
+
+  login_url = f"{settings.WEB_CLIENT_URL}/login"
+
+  html_body = _build_email_template(
+    title="プロジェクトへのアクセス権付与",
+    message=message,
+    button_text="ログインする",
+    button_url=login_url,
+  )
+
+  text_body = f"""
+プロジェクト「{project_name}」へのゲストアクセス権が付与されました。
+以下のリンクからログインしてご確認ください：
+{login_url}
+"""
+
+  try:
+    ses.send_email(
+      Source=settings.NO_REPLY_EMAIL,
+      Destination={"ToAddresses": [email]},
+      ReplyToAddresses=[settings.SUPPORT_EMAIL],
+      Message={
+        "Subject": {"Data": subject},
+        "Body": {
+          "Text": {"Data": text_body},
+          "Html": {"Data": html_body},
+        },
+      },
+    )
+    logger.info(f"Sent guest access email to {email}")
+  except Exception:
+    logger.exception("Error sending guest access email to %s", email)
+    raise
+
+def send_guest_invitation_email(email: str, project_name: str, set_password_token: str) -> None:
+  set_password_link = f"{settings.WEB_CLIENT_URL}/reset-password?token={set_password_token}"
+
+  subject = f"プロジェクト「{project_name}」への招待"
+
+  message = f"""
+プロジェクト「{project_name}」にゲストとして招待されました。<br/>
+以下のボタンをクリックしてパスワードを設定し、アカウントを有効化してください。<br/><br/>
+※ このリンクはセキュリティ上、24時間後に無効になります。
+"""
+
+  html_body = _build_email_template(
+    title="プロジェクトへのご招待",
+    message=message,
+    button_text="パスワードを設定してはじめる",
+    button_url=set_password_link,
+  )
+
+  text_body = f"""
+プロジェクト「{project_name}」にゲストとして招待されました。
+以下のリンクからパスワードを設定してアカウントを有効化してください：
+{set_password_link}
+
+※ このリンクは24時間後に無効になります。
+"""
+
+  try:
+    ses.send_email(
+      Source=settings.NO_REPLY_EMAIL,
+      Destination={"ToAddresses": [email]},
+      ReplyToAddresses=[settings.SUPPORT_EMAIL],
+      Message={
+        "Subject": {"Data": subject},
+        "Body": {
+          "Text": {"Data": text_body},
+          "Html": {"Data": html_body},
+        },
+      },
+    )
+    logger.info(f"Sent guest invitation email to {email}")
+  except Exception:
+    logger.exception("Error sending guest invitation email to %s", email)
+    raise
+
+def send_existing_user_invitation_email(email: str, company_name: str, invite_token: str) -> None:
+  invite_link = f"{settings.WEB_CLIENT_URL}/accept-invitation?invitationToken={invite_token}"
+
+  subject = f"{company_name} への招待"
+
+  message = f"""
+{company_name} に参加するよう招待されています。<br/>
+以下のボタンをクリックして、招待を承認してください。
+"""
+
+  html_body = _build_email_template(
+    title="招待のお知らせ",
+    message=message,
+    button_text="招待を承認する",
+    button_url=invite_link,
+  )
+
+  text_body = f"""
+{company_name} に参加するよう招待されています。
+以下のリンクから承認してください：
+{invite_link}
+"""
+
+  try:
+    ses.send_email(
+      Source=settings.NO_REPLY_EMAIL,
+      Destination={"ToAddresses": [email]},
+      ReplyToAddresses=[settings.SUPPORT_EMAIL],
+      Message={
+        "Subject": {"Data": subject},
+        "Body": {
+          "Text": {"Data": text_body},
+          "Html": {"Data": html_body},
+        },
+      },
+    )
+    logger.info(f"Sent existing user invitation email to {email}")
+  except Exception:
+    logger.exception("Error sending existing user invitation email to %s", email)
+    raise
