@@ -61,6 +61,7 @@ router = APIRouter(
 )
 async def list_reports(
   q: str | None = None,
+  project_id: UUID | None = None,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
@@ -99,6 +100,12 @@ async def list_reports(
         func.lower(Report.name).like(search)
       )
 
+    if project_id:
+      stmt = stmt.where(
+        Report.parent_type == ReportParentType.project,
+        Report.parent_id == project_id,
+      )
+
     stmt = (
       stmt
       .order_by(Report.updated_at.desc())
@@ -120,27 +127,54 @@ async def list_reports(
     return reports
 
   if current_user.company_id:
-    company_result = await db.execute(
+    company_stmt = (
       select(Report, Project.name.label("project_name"))
-      .outerjoin(Project, (Report.parent_type == ReportParentType.project) & (Report.parent_id == Project.id))
+      .outerjoin(
+        Project,
+        (Report.parent_type == ReportParentType.project)
+        & (Report.parent_id == Project.id)
+      )
       .where(
         or_(
-          (Report.parent_type == ReportParentType.company) & (Report.parent_id == current_user.company_id),
-          (Report.parent_type == ReportParentType.project) & (Project.company_id == current_user.company_id),
+          (Report.parent_type == ReportParentType.company)
+          & (Report.parent_id == current_user.company_id),
+          (Report.parent_type == ReportParentType.project)
+          & (Project.company_id == current_user.company_id),
         )
       )
-      .options(selectinload(Report.fields))
     )
 
-    guest_result = await db.execute(
+    if project_id:
+      company_stmt = company_stmt.where(
+        Report.parent_type == ReportParentType.project,
+        Report.parent_id == project_id,
+      )
+
+    company_result = await db.execute(
+      company_stmt.options(selectinload(Report.fields))
+    )
+
+    guest_stmt = (
       select(Report, Project.name.label("project_name"))
-      .join(Project, (Report.parent_type == ReportParentType.project) & (Report.parent_id == Project.id))
+      .join(
+        Project,
+        (Report.parent_type == ReportParentType.project)
+        & (Report.parent_id == Project.id)
+      )
       .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
       .where(
         ProjectGuestLink.user_id == current_user.id,
         Project.company_id != current_user.company_id,
       )
-      .options(selectinload(Report.fields))
+    )
+
+    if project_id:
+      guest_stmt = guest_stmt.where(
+        Report.parent_id == project_id
+      )
+
+    guest_result = await db.execute(
+      guest_stmt.options(selectinload(Report.fields))
     )
 
     seen = set()
@@ -156,13 +190,26 @@ async def list_reports(
     all_rows = sorted(all_rows, key=lambda row: row[0].updated_at, reverse=True)[:25]
 
   else:
-    result = await db.execute(
+    stmt = (
       select(Report, Project.name.label("project_name"))
-      .join(Project, (Report.parent_type == ReportParentType.project) & (Report.parent_id == Project.id))
+      .join(
+        Project,
+        (Report.parent_type == ReportParentType.project)
+        & (Report.parent_id == Project.id)
+      )
       .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
       .where(ProjectGuestLink.user_id == current_user.id)
-      .options(selectinload(Report.fields))
     )
+
+    if project_id:
+      stmt = stmt.where(
+        Report.parent_id == project_id
+      )
+
+    result = await db.execute(
+      stmt.options(selectinload(Report.fields))
+    )
+
     all_rows = result.all()
 
     if search:
