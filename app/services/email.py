@@ -209,7 +209,7 @@ def send_guest_invitation_email(email: str, project_name: str, set_password_toke
 
   message = f"""
 プロジェクト「{project_name}」にゲストとして招待されました。<br/>
-以下のボタンをクリックしてパスワードを設定し、アカウントを有効化してください。<br/><br/>
+以下のボタンをクリックしてパスワードを設定し、メールアドレス（{email}）でご利用いただくアカウントを有効化してください。<br/><br/>
 ※ このリンクはセキュリティ上、24時間後に無効になります。
 """
 
@@ -222,7 +222,8 @@ def send_guest_invitation_email(email: str, project_name: str, set_password_toke
 
   text_body = f"""
 プロジェクト「{project_name}」にゲストとして招待されました。
-以下のリンクからパスワードを設定してアカウントを有効化してください：
+以下のリンクからパスワードを設定し、メールアドレス（{email}）でご利用いただくアカウントを有効化してください：
+
 {set_password_link}
 
 ※ このリンクは24時間後に無効になります。
