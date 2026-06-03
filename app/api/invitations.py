@@ -74,7 +74,7 @@ async def accept_invitation(
     raise HTTPException(status_code=404, detail="Invitation not found or invalid")
 
   if invitation.expires_at < datetime.utcnow():
-    raise HTTPException(status_code=400, detail="Invitation expired")
+    raise HTTPException(status_code=410, detail="Invitation expired")
 
   if invitation.email != current_user.email:
     raise HTTPException(
@@ -84,7 +84,7 @@ async def accept_invitation(
 
   if current_user.company_id is not None:
     raise HTTPException(
-      status_code=400,
+      status_code=409,
       detail="You already belong to a company",
     )
 
