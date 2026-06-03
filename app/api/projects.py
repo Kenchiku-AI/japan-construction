@@ -154,6 +154,7 @@ async def create_project(
     name=project.name,
     description=project.description,
     status=project.status,
+    company_id=project.company_id,
     reports=[]
   )
 
