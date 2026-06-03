@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, case
+from sqlalchemy import select, desc, case, or_
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
@@ -50,21 +50,44 @@ async def list_projects(
     return projects
 
   else:
-    if current_user.company_id is None:
-      return []
+    company_projects = []
+    guest_projects = []
 
-    stmt = (
+    if current_user.company_id:
+      company_result = await db.execute(
+        select(Project)
+        .options(selectinload(Project.company))
+        .where(Project.company_id == current_user.company_id)
+        .order_by(desc(Project.updated_at))
+        .limit(25)
+      )
+      company_projects = company_result.scalars().all()
+
+    guest_result = await db.execute(
       select(Project)
       .options(selectinload(Project.company))
-      .where(Project.company_id == current_user.company_id)
+      .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
+      .where(
+        ProjectGuestLink.user_id == current_user.id,
+        or_(
+          Project.company_id != current_user.company_id,
+          current_user.company_id == None,
+        ),
+      )
       .order_by(desc(Project.updated_at))
-      .limit(25)
     )
+    guest_projects = guest_result.scalars().all()
 
-    result = await db.execute(stmt)
-    projects = result.scalars().all()
+    seen = set()
+    all_projects = []
+    for project in list(company_projects) + list(guest_projects):
+      if project.id not in seen:
+        seen.add(project.id)
+        all_projects.append(project)
 
-    return projects
+    all_projects = sorted(all_projects, key=lambda p: p.updated_at, reverse=True)[:25]
+
+    return all_projects
 
 @router.get("/{project_id}", response_model=ProjectWithReports)
 async def get_project(
