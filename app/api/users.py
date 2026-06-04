@@ -187,3 +187,50 @@ async def create_admin(
   )
 
   return {"success": True}
+
+@router.delete("/{user_id}/company", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_user_from_company(
+  user_id: UUID,
+  current_user: User = Depends(get_current_user),
+  db: AsyncSession = Depends(get_db),
+):
+  if current_user.role == "user":
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Not authorized to remove users from a company",
+    )
+
+  result = await db.execute(
+    select(User).where(User.id == user_id)
+  )
+  target = result.scalar_one_or_none()
+
+  if not target:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="User not found",
+    )
+
+  if target.company_id is None:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="User is not a member of any company",
+    )
+
+  if target.role == "admin":
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Cannot remove an admin from a company",
+    )
+
+  if current_user.role == "manager":
+    if current_user.company_id != target.company_id:
+      raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Managers can only remove users from their own company",
+      )
+
+  target.company_id = None
+  target.role = "user"
+
+  await db.commit()
