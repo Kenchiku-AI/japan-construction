@@ -203,7 +203,7 @@ def send_project_guest_access_email(email: str, project_name: str) -> None:
     raise
 
 def send_guest_invitation_email(email: str, project_name: str, set_password_token: str) -> None:
-  set_password_link = f"{settings.WEB_CLIENT_URL}/reset-password?token={set_password_token}"
+  set_password_link = f"{settings.WEB_CLIENT_URL}/reset-password?token={set_password_token}&newUser=true"
 
   subject = f"プロジェクト「{project_name}」への招待"
 
