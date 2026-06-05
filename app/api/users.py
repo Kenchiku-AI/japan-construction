@@ -34,14 +34,50 @@ async def get_user(
   db: AsyncSession = Depends(get_db),
 ):
   if current_user.role != "admin" and current_user.id != user_id:
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail="Not authorized to access this user",
+    target_company_id = (
+      await db.execute(select(User.company_id).where(User.id == user_id))
+    ).scalar_one_or_none()
+
+    is_same_company = (
+      current_user.company_id is not None
+      and current_user.company_id == target_company_id
     )
 
-  result = await db.execute(
-    select(User).where(User.id == user_id)
-  )
+    if not is_same_company:
+      shared_project = (
+        await db.execute(
+          select(Project.id)
+          .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
+          .where(
+            or_(
+              and_(
+                Project.company_id == current_user.company_id,
+                ProjectGuestLink.user_id == user_id,
+              ),
+              and_(
+                ProjectGuestLink.user_id == user_id,
+                Project.id.in_(
+                  select(ProjectGuestLink.project_id)
+                  .where(ProjectGuestLink.user_id == current_user.id)
+                ),
+              ),
+              and_(
+                ProjectGuestLink.user_id == current_user.id,
+                Project.company_id == target_company_id,
+              ),
+            )
+          )
+          .limit(1)
+        )
+      ).first()
+
+      if not shared_project:
+        raise HTTPException(
+          status_code=status.HTTP_403_FORBIDDEN,
+          detail="Not authorized to access this user",
+        )
+
+  result = await db.execute(select(User).where(User.id == user_id))
   user = result.scalar_one_or_none()
 
   if not user:
@@ -59,15 +95,7 @@ async def patch_user(
   current_user: User = Depends(get_current_user),
   db: AsyncSession = Depends(get_db),
 ):
-  if current_user.role != "admin" and current_user.id != user_id:
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail="Not authorized to update this user",
-    )
-
-  result = await db.execute(
-    select(User).where(User.id == user_id)
-  )
+  result = await db.execute(select(User).where(User.id == user_id))
   user = result.scalar_one_or_none()
 
   if not user:
@@ -77,41 +105,55 @@ async def patch_user(
     )
 
   update_data = payload.model_dump(exclude_unset=True, exclude_none=True)
+  is_own_account = current_user.id == user_id
 
-  if "role" in update_data:
-    new_role = update_data["role"]
+  if user.role == "admin" and current_user.role != "admin":
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Only admins can update an admin's account",
+    )
 
-    if new_role != user.role:
-      if new_role == "admin":
+  if current_user.role == "manager":
+    if update_data["role"] == "admin":
+      raise HTTPException(
+        status_code=403,
+        detail="Cannot assign admin role",
+      )
+
+    if is_own_account:
+      pass
+    else:
+      if current_user.company_id != user.company_id:
         raise HTTPException(
-          status_code=403,
-          detail="Cannot assign admin role",
+          status_code=status.HTTP_403_FORBIDDEN,
+          detail="Managers can only manage users in their company",
         )
 
-      if user.role == "admin":
+      non_role_fields = {k: v for k, v in update_data.items() if k != "role"}
+      if non_role_fields:
         raise HTTPException(
-          status_code=403,
-          detail="Cannot change role of an admin",
+          status_code=status.HTTP_403_FORBIDDEN,
+          detail="Managers can only update the role of other users",
         )
 
-      if current_user.role not in ["admin", "manager"]:
-        raise HTTPException(
-          status_code=403,
-          detail="Not authorized to change roles",
-        )
-      
-      if current_user.role == "manager":
-        if current_user.company_id != user.company_id:
-          raise HTTPException(
-            status_code=403,
-            detail="Managers can only manage users in their company",
-          )
-
+      if "role" in update_data:
         if user.role == "manager":
           raise HTTPException(
             status_code=403,
             detail="Managers cannot change another manager's role",
           )
+
+  elif current_user.role == "user":
+    if not is_own_account:
+      raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Not authorized to update this user",
+      )
+    if "role" in update_data:
+      raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Users cannot change their own role",
+      )
 
   if "email" in update_data and update_data["email"] != user.email:
     existing = await db.execute(
