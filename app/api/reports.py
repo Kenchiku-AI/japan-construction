@@ -1354,7 +1354,16 @@ async def delete_report(
   )
 
   if current_user.role != "admin":
-    require_company_manager(current_user, company_id)
+    if report.parent_type == ReportParentType.project:
+      await require_project_access(current_user, report.parent_id, company_id, db)
+
+      if current_user.role != "manager" and report.created_by != current_user.id:
+        raise HTTPException(
+          status_code=status.HTTP_403_FORBIDDEN,
+          detail="You can only delete reports you created",
+        )
+    else:
+      require_company_manager(current_user, company_id)
 
   for field in report.fields:
     await db.delete(field)
