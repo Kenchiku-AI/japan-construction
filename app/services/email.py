@@ -9,30 +9,7 @@ ses = boto3.client(
 
 logger = logging.getLogger(__name__)
 
-EMAIL_LOGO = """
-<svg
-  xmlns="http://www.w3.org/2000/svg"
-  width="50"
-  height="50"
-  viewBox="0 0 113.05766 144.49409"
->
-  <g transform="translate(-48.980034,-46.83656)">
-    <path
-      fill="#000000"
-      d="m 48.980034,151.83958 16.326678,11.51536 v -42.4839 l 22.767014,16.0755 0.03649,42.6884 16.701334,11.69572 0.0644,-65.54326 -39.318059,-27.632463 39.184029,-27.5 40.43992,28.2 0.0982,64.400003 16.47967,-11.61293 0.27799,-64.814271 -57.29578,-39.991179 -39.435208,27.880942 -0.25118,-27.766731 -16.075498,11.33 z"
-    />
-    <path
-      fill="#000000"
-      d="m 119.33715,115.65494 11.34288,-7.9 -0.0934,65.8 -11.27628,7.88711 z"
-    />
-    <path
-      fill="#000000"
-      transform="matrix(0.81784145,-0.57544362,0.81784145,0.57544362,0,0)"
-      d="m -28.253254,142.33411 h 14.117453 v 14.11745 h -14.117453 z"
-    />
-  </g>
-</svg>
-"""
+EMAIL_LOGO_URL = "https://www.kenchiku.ai/logo.png"
 
 def _build_email_template(title: str, message: str, button_text: str, button_url: str) -> str:
   return f"""
@@ -43,7 +20,13 @@ def _build_email_template(title: str, message: str, button_text: str, button_url
         <td align="center">
 
           <div style="margin-bottom:24px;">
-            {EMAIL_LOGO}
+            <img
+              src="{EMAIL_LOGO_URL}"
+              alt="Kenchiku"
+              width="50"
+              height="50"
+              style="display:block;margin:0 auto;"
+            />
           </div>
 
           <h2 style="color:#333;text-align:center;margin-top:0;">
