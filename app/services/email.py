@@ -9,6 +9,31 @@ ses = boto3.client(
 
 logger = logging.getLogger(__name__)
 
+EMAIL_LOGO = """
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="50"
+  height="50"
+  viewBox="0 0 113.05766 144.49409"
+>
+  <g transform="translate(-48.980034,-46.83656)">
+    <path
+      fill="#000000"
+      d="m 48.980034,151.83958 16.326678,11.51536 v -42.4839 l 22.767014,16.0755 0.03649,42.6884 16.701334,11.69572 0.0644,-65.54326 -39.318059,-27.632463 39.184029,-27.5 40.43992,28.2 0.0982,64.400003 16.47967,-11.61293 0.27799,-64.814271 -57.29578,-39.991179 -39.435208,27.880942 -0.25118,-27.766731 -16.075498,11.33 z"
+    />
+    <path
+      fill="#000000"
+      d="m 119.33715,115.65494 11.34288,-7.9 -0.0934,65.8 -11.27628,7.88711 z"
+    />
+    <path
+      fill="#000000"
+      transform="matrix(0.81784145,-0.57544362,0.81784145,0.57544362,0,0)"
+      d="m -28.253254,142.33411 h 14.117453 v 14.11745 h -14.117453 z"
+    />
+  </g>
+</svg>
+"""
+
 def _build_email_template(title: str, message: str, button_text: str, button_url: str) -> str:
   return f"""
 <html>
@@ -16,10 +41,19 @@ def _build_email_template(title: str, message: str, button_text: str, button_url
     <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px;">
       <tr>
         <td align="center">
-          <h2 style="color:#333;text-align:center;">{title}</h2>
+
+          <div style="margin-bottom:24px;">
+            {EMAIL_LOGO}
+          </div>
+
+          <h2 style="color:#333;text-align:center;margin-top:0;">
+            {title}
+          </h2>
+
           <p style="color:#555;line-height:1.6;text-align:center;">
             {message}
           </p>
+
           <div style="text-align:center;margin:30px 0;">
             <a href="{button_url}"
                 style="background-color:#6FB37A;color:#ffffff;padding:12px 24px;
@@ -27,9 +61,11 @@ def _build_email_template(title: str, message: str, button_text: str, button_url
               {button_text}
             </a>
           </div>
+
           <p style="color:#999;font-size:12px;text-align:center;">
             このメールに心当たりがない場合は、本メールを無視してください。
           </p>
+
         </td>
       </tr>
     </table>
