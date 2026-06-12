@@ -23,6 +23,8 @@ from app.schemas.company import (
 from app.schemas.invitation import CompanyInvitationCreate
 from app.services.invitations import create_company_invitation
 
+import stripe
+
 router = APIRouter(prefix="/companies", tags=["companies"])
 
 @router.get("", response_model=List[CompanyRead])
@@ -103,6 +105,17 @@ async def create_company(
 
   await db.commit()
   await db.refresh(company)
+
+  try:
+    stripe_customer = stripe.Customer.create(
+      name=company.name,
+      metadata={"company_id": str(company.id)},
+    )
+    company.stripe_customer_id = stripe_customer.id
+    await db.commit()
+    await db.refresh(company)
+  except stripe.error.StripeError:
+    pass
 
   if payload.manager_email:
     invitation_payload = CompanyInvitationCreate(
@@ -379,3 +392,28 @@ async def list_company_guests(
     })
 
   return list(guests.values())
+
+@router.post("/{company_id}/billing/setup-intent")
+async def create_setup_intent(
+  company_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  company = await db.get(Company, company_id)
+  if not company:
+    raise HTTPException(status_code=404, detail="Company not found")
+
+  if not company.stripe_customer_id:
+    stripe_customer = stripe.Customer.create(
+      name=company.name,
+      metadata={"company_id": str(company.id)},
+    )
+    company.stripe_customer_id = stripe_customer.id
+    await db.commit()
+    await db.refresh(company)
+
+  intent = stripe.SetupIntent.create(
+    customer=company.stripe_customer_id,
+  )
+
+  return {"client_secret": intent.client_secret}
