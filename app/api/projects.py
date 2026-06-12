@@ -2,9 +2,9 @@ from datetime import datetime
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, case, or_
+from sqlalchemy import select, desc, case, or_, func
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
@@ -13,7 +13,12 @@ from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, Proje
 from app.core.dependencies import get_current_user, require_company_member, require_company_manager, require_project_access
 from app.services.email import send_project_request_email
 
+import logging
+import stripe
+
 router = APIRouter(prefix="/projects", tags=["Projects"])
+
+logger = logging.getLogger(__name__)
 
 @router.get("", response_model=List[ProjectWithCompanyName])
 async def list_projects(
@@ -141,7 +146,6 @@ async def get_project(
 )
 async def create_project(
   payload: ProjectCreate,
-  background_tasks: BackgroundTasks,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
@@ -150,27 +154,23 @@ async def create_project(
   if not company:
     raise HTTPException(status_code=404, detail="Company not found")
 
-  if current_user.role == "admin":
-    status_value = ProjectStatus.active
-  else:
-    require_company_manager(current_user, payload.company_id)
-    status_value = ProjectStatus.requested
-
-    background_tasks.add_task(
-      send_project_request_email,
-      company_name=company.name,
-      project_name=payload.name,
-      requested_by=current_user.email,
+  if not await has_payment_method(company):
+    raise HTTPException(
+      status_code=402,
+      detail="A payment method is required before creating a project",
     )
 
   project = Project(
     **payload.model_dump(),
-    status=status_value
+    status=ProjectStatus.active
   )
 
   db.add(project)
   await db.commit()
   await db.refresh(project)
+
+  await ensure_subscription(company, db)
+  await sync_subscription_quantity(company, db)
 
   return ProjectWithReports(
     id=project.id,
@@ -193,24 +193,22 @@ async def update_project(
     raise HTTPException(status_code=404, detail="Project not found")
 
   if current_user.role != "admin":
-    if project.status != ProjectStatus.active:
-      raise HTTPException(
-        status_code=403,
-        detail="Only active projects can be updated",
-      )
-
-    if payload.status is not None:
-      raise HTTPException(
-        status_code=403,
-        detail="Only admins can update project status",
-      )
-
     require_company_manager(current_user, project.company_id)
+
+  previous_status = project.status
 
   for field, value in payload.model_dump(exclude_unset=True).items():
     setattr(project, field, value)
 
   await db.commit()
+
+  status_changed = (
+    payload.status is not None and payload.status != previous_status
+  )
+
+  if status_changed:
+    company = await db.get(Company, project.company_id)
+    await sync_subscription_quantity(company, db)
 
   stmt = (
     select(Project)
@@ -222,6 +220,66 @@ async def update_project(
   project = result.scalars().first()
 
   return project
+
+async def has_payment_method(company: Company) -> bool:
+  if not company.stripe_customer_id:
+    return False
+
+  payment_methods = stripe.PaymentMethod.list(
+    customer=company.stripe_customer_id,
+    type="card",
+  )
+  return len(payment_methods.data) > 0
+
+async def ensure_subscription(company: Company, db: AsyncSession):
+  if company.stripe_subscription_id:
+    return
+
+  try:
+    subscription = stripe.Subscription.create(
+      customer=company.stripe_customer_id,
+      items=[{"price": settings.STRIPE_PROJECT_PRICE_ID, "quantity": 0}],
+      trial_period_days=14,
+      trial_settings={"end_behavior": {"missing_payment_method": "cancel"}},
+      payment_behavior="default_incomplete",
+    )
+    company.stripe_subscription_id = subscription.id
+    company.stripe_subscription_status = subscription.status
+    await db.commit()
+  except stripe.error.StripeError:
+    logger.exception(
+      "Failed to create Stripe subscription for company %s",
+      company.id,
+    )
+
+async def sync_subscription_quantity(company: Company, db: AsyncSession):
+  if not company.stripe_subscription_id:
+    return
+
+  result = await db.execute(
+    select(func.count())
+    .select_from(Project)
+    .where(
+      Project.company_id == company.id,
+      Project.status == ProjectStatus.active,
+    )
+  )
+  active_count = result.scalar_one()
+
+  try:
+    subscription = stripe.Subscription.retrieve(company.stripe_subscription_id)
+    item_id = subscription["items"]["data"][0]["id"]
+
+    stripe.SubscriptionItem.modify(
+      item_id,
+      quantity=active_count,
+      proration_behavior="create_prorations",
+    )
+  except stripe.error.StripeError:
+    logger.exception(
+      "Failed to sync Stripe subscription quantity for company %s",
+      company.id,
+    )
 
 @router.delete(
   "/{project_id}/guests/{guest_link_id}",
@@ -248,7 +306,6 @@ async def remove_project_guest(
   if not guest_link:
     raise HTTPException(status_code=404, detail="Guest link not found")
 
-  # Allow: the guest themselves, admins, or managers of the project's company
   if current_user.role == "admin":
     pass
   elif current_user.role == "manager" and current_user.company_id == project.company_id:

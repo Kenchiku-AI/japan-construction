@@ -6,6 +6,9 @@ from app.middleware.logging import LoggingMiddleware
 
 import asyncio
 import os
+import stripe
+
+stripe.api_key = settings.STRIPE_SECRET_KEY
 
 app = FastAPI()
 
