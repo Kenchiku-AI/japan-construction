@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import auth, users, companies, invitations, projects, reports, health
+from app.api import auth, users, companies, invitations, projects, reports, health, webhooks
 from app.core.config import settings
 from app.middleware.logging import LoggingMiddleware
 
@@ -9,6 +9,7 @@ import os
 import stripe
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
+stripe.api_version = "2026-05-27.dahlia"
 
 app = FastAPI()
 
@@ -29,3 +30,4 @@ app.include_router(invitations.router)
 app.include_router(projects.router)
 app.include_router(reports.router)
 app.include_router(health.router)
+app.include_router(webhooks.router)

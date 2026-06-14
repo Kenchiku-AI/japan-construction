@@ -14,6 +14,7 @@ class Settings(BaseSettings):
   OPENAI_API_KEY: str
   STRIPE_SECRET_KEY: str
   STRIPE_PROJECT_PRICE_ID: str
+  STRIPE_WEBHOOK_SECRET: str
   AWS_REGION: str
   S3_BUCKET: str
   SQS_QUEUE_URL: str

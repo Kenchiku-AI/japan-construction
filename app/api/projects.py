@@ -11,7 +11,6 @@ from app.db.session import get_db
 from app.db.models import Project, Company, User, ProjectStatus, ProjectGuestLink
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectWithReports, ProjectWithCompanyName
 from app.core.dependencies import get_current_user, require_company_member, require_company_manager, require_project_access
-from app.services.email import send_project_request_email
 
 import logging
 import stripe
@@ -222,6 +221,9 @@ async def update_project(
   return project
 
 async def has_payment_method(company: Company) -> bool:
+  if company.billing_exempt:
+    return True
+
   if not company.stripe_customer_id:
     return False
 
@@ -232,6 +234,9 @@ async def has_payment_method(company: Company) -> bool:
   return len(payment_methods.data) > 0
 
 async def ensure_subscription(company: Company, db: AsyncSession):
+  if company.billing_exempt:
+    return
+    
   if company.stripe_subscription_id:
     return
 
@@ -253,6 +258,9 @@ async def ensure_subscription(company: Company, db: AsyncSession):
     )
 
 async def sync_subscription_quantity(company: Company, db: AsyncSession):
+  if company.billing_exempt:
+    return
+
   if not company.stripe_subscription_id:
     return
 
