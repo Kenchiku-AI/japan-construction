@@ -26,6 +26,7 @@ class CompanyRead(BaseModel):
   id: UUID
   name: str
   corporate_number: Optional[str]
+  has_payment_method: bool
   created_at: datetime
   updated_at: datetime
 
@@ -45,6 +46,7 @@ class CompanyProjectRead(BaseModel):
 class CompanyUpdate(BaseModel):
   name: str | None = None
   corporate_number: str | None = None
+  billing_exempt: bool | None = None
 
 class CompanyUserRead(BaseModel):
   id: UUID
@@ -58,6 +60,8 @@ class CompanyUserRead(BaseModel):
   }
 
 class CompanyWithProjectsAndUsers(CompanyRead):
+  payment_method_name: Optional[str]
+  billing_exempt: bool
   projects: List[CompanyProjectRead]
   users: List[CompanyUserRead]
 

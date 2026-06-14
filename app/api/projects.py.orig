@@ -224,9 +224,12 @@ async def update_project(
   return project
 
 async def has_payment_method(company: Company) -> bool:
+<<<<<<< HEAD
   if company.billing_exempt:
     return True
 
+=======
+>>>>>>> main
   if not company.stripe_customer_id:
     return False
 
@@ -237,9 +240,12 @@ async def has_payment_method(company: Company) -> bool:
   return len(payment_methods.data) > 0
 
 async def ensure_subscription(company: Company, db: AsyncSession):
+<<<<<<< HEAD
   if company.billing_exempt:
     return
     
+=======
+>>>>>>> main
   if company.stripe_subscription_id:
     return
 
@@ -261,9 +267,12 @@ async def ensure_subscription(company: Company, db: AsyncSession):
     )
 
 async def sync_subscription_quantity(company: Company, db: AsyncSession):
+<<<<<<< HEAD
   if company.billing_exempt:
     return
 
+=======
+>>>>>>> main
   if not company.stripe_subscription_id:
     return
 
