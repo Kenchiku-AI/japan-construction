@@ -1,5 +1,5 @@
 from datetime import date
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
@@ -167,15 +167,51 @@ async def get_company(
     reverse=True,
   )[:25]
 
+  payment_method_name = await get_payment_method_display(company)
+
   return CompanyWithProjectsAndUsers(
     id=company.id,
     name=company.name,
     corporate_number=company.corporate_number,
-    users=company.users,
-    projects=projects,
+    has_payment_method=company.has_payment_method,
+    payment_method_name=payment_method_name,
+    billing_exempt=company.billing_exempt,
     created_at=company.created_at,
-    updated_at=company.updated_at
+    updated_at=company.updated_at,
+    users=company.users,
+    projects=projects
   )
+
+async def get_payment_method_display(company: Company) -> Optional[str]:
+  if not company.has_payment_method or not company.stripe_customer_id:
+    return None
+
+  try:
+    payment_methods = stripe.PaymentMethod.list(
+      customer=company.stripe_customer_id,
+      type="card",
+    )
+  except stripe.error.StripeError:
+    logger.exception(
+      "Failed to fetch payment method for company %s", company.id
+    )
+    return None
+
+  if not payment_methods.data:
+    return None
+
+  pm = payment_methods.data[0]
+
+  brand_names = {
+    "visa": "Visa",
+    "mastercard": "Mastercard",
+    "jcb": "JCB",
+    "amex": "American Express",
+  }
+
+  brand = brand_names.get(pm.card.brand, pm.card.brand.capitalize())
+
+  return f"{brand} ••••{pm.card.last4}"
 
 @router.patch(
   "/{company_id}",
@@ -219,6 +255,19 @@ async def update_company(
 
   if payload.name is not None:
     company.name = payload.name
+
+  if payload.billing_exempt is not None:
+    company.billing_exempt = payload.billing_exempt
+
+    if payload.billing_exempt and company.stripe_subscription_id:
+      try:
+        stripe.Subscription.cancel(company.stripe_subscription_id)
+      except stripe.error.StripeError:
+        logger.exception(
+          "Failed to cancel subscription for exempt company %s", company.id
+        )
+      company.stripe_subscription_id = None
+      company.stripe_subscription_status = None
 
   await db.commit()
   await db.refresh(company)
