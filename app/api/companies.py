@@ -448,11 +448,11 @@ async def create_setup_intent(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  company = await db.get(Company, company_id)
-  if not company:
-    raise HTTPException(status_code=404, detail="Company not found")
-
   try:
+    company = await db.get(Company, company_id)
+    if not company:
+      raise HTTPException(status_code=404, detail="Company not found")
+
     if not company.stripe_customer_id:
       stripe_customer = stripe.Customer.create(
         name=company.name,
@@ -464,11 +464,14 @@ async def create_setup_intent(
 
     intent = stripe.SetupIntent.create(
       customer=company.stripe_customer_id,
-      automatic_payment_methods={"enabled": True},
+      automatic_payment_methods={"enabled": True}
     )
 
     return {"client_secret": intent.client_secret}
 
-  except stripe.error.StripeError as e:
-    logger.exception("Stripe error in create_setup_intent")
-    raise HTTPException(status_code=502, detail=str(e))
+  except HTTPException:
+    raise
+  except Exception as e:
+    import traceback
+    traceback.print_exc()
+    raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
