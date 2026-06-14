@@ -15,6 +15,9 @@ from app.core.dependencies import get_current_user, require_company_member, requ
 import logging
 import stripe
 
+import logging
+import stripe
+
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 logger = logging.getLogger(__name__)
