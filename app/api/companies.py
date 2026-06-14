@@ -211,8 +211,7 @@ async def get_payment_method_display(company: Company) -> Optional[str]:
 
   brand = brand_names.get(pm.card.brand, pm.card.brand.capitalize())
 
-  return f"{brand} •••• {pm.card.last4}"
-
+  return f"{brand} ••••{pm.card.last4}"
 
 @router.patch(
   "/{company_id}",
