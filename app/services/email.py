@@ -97,45 +97,6 @@ def send_invitation_email(email: str, company_name: str, invite_token: str) -> N
     logger.exception("Error sending email to %s", email)
     raise
 
-def send_project_request_email(company_name: str, project_name: str, requested_by: str):
-  subject = f"新規プロジェクトリクエスト: {company_name}"
-
-  html_body = f"""
-<html>
-  <body style="font-family:Arial,sans-serif;">
-    <h3>新規プロジェクトリクエスト</h3>
-    <p><strong>会社名:</strong> {company_name}</p>
-    <p><strong>プロジェクト名:</strong> {project_name}</p>
-    <p><strong>依頼者:</strong> {requested_by}</p>
-  </body>
-</html>
-"""
-
-  text_body = f"""
-新規プロジェクトリクエスト
-
-会社名: {company_name}
-プロジェクト名: {project_name}
-依頼者: {requested_by}
-"""
-
-  try:
-    ses.send_email(
-      Source=settings.NO_REPLY_EMAIL,
-      Destination={"ToAddresses": [settings.SUPPORT_EMAIL]},
-      Message={
-        "Subject": {"Data": subject},
-        "Body": {
-          "Text": {"Data": text_body},
-          "Html": {"Data": html_body},
-        },
-      },
-    )
-  except Exception:
-    logger.exception("Error sending project request email")
-    raise
-
-
 def send_password_reset_email(email: str, reset_token: str) -> None:
   reset_link = f"{settings.WEB_CLIENT_URL}/reset-password?token={reset_token}"
 

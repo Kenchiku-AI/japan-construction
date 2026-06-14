@@ -12,6 +12,8 @@ class Settings(BaseSettings):
   NO_REPLY_EMAIL: str
   SUPPORT_EMAIL: str
   OPENAI_API_KEY: str
+  STRIPE_SECRET_KEY: str
+  STRIPE_PROJECT_PRICE_ID: str
   AWS_REGION: str
   S3_BUCKET: str
   SQS_QUEUE_URL: str

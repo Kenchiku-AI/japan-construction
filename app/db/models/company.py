@@ -35,5 +35,9 @@ class Company(Base):
     cascade="all, delete-orphan",
   )
 
+  stripe_customer_id = Column(String, nullable=True, index=True)
+  stripe_subscription_id = Column(String, nullable=True, index=True)
+  stripe_subscription_status = Column(String, nullable=True)
+
   created_at = Column(DateTime, default=datetime.utcnow)
   updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
