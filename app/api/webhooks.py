@@ -42,30 +42,7 @@ async def stripe_webhook(
   event_type = event["type"]
   data = event["data"]["object"]
 
-  if event_type == "setup_intent.succeeded":
-    customer_id = data.get("customer")
-
-    if customer_id:
-      company = await get_company_by_stripe_customer_id(db, customer_id)
-
-      if company:
-        company.has_payment_method = True
-        await db.commit()
-
-  elif event_type == "payment_method.detached":
-    customer_id = data.get("customer")
-
-    if customer_id:
-      company = await get_company_by_stripe_customer_id(db, customer_id)
-
-      if company:
-        payment_methods = stripe.PaymentMethod.list(
-          customer=company.stripe_customer_id, type="card"
-        )
-        company.has_payment_method = len(payment_methods.data) > 0
-        await db.commit()
-
-  elif event_type in (
+  if event_type in (
     "customer.subscription.updated",
     "customer.subscription.deleted",
   ):

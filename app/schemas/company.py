@@ -26,7 +26,6 @@ class CompanyRead(BaseModel):
   id: UUID
   name: str
   corporate_number: Optional[str]
-  has_payment_method: bool
   created_at: datetime
   updated_at: datetime
 

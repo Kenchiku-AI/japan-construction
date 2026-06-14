@@ -173,7 +173,6 @@ async def get_company(
     id=company.id,
     name=company.name,
     corporate_number=company.corporate_number,
-    has_payment_method=company.has_payment_method,
     payment_method_name=payment_method_name,
     billing_exempt=company.billing_exempt,
     created_at=company.created_at,
@@ -183,7 +182,7 @@ async def get_company(
   )
 
 async def get_payment_method_display(company: Company) -> Optional[str]:
-  if not company.has_payment_method or not company.stripe_customer_id:
+  if not company.stripe_customer_id:
     return None
 
   try:
