@@ -38,7 +38,6 @@ class Company(Base):
   stripe_customer_id = Column(String, nullable=True, index=True)
   stripe_subscription_id = Column(String, nullable=True, index=True)
   stripe_subscription_status = Column(String, nullable=True)
-  has_payment_method = Column(Boolean, default=False, nullable=False)
   billing_exempt = Column(Boolean, default=False, nullable=False)
 
   created_at = Column(DateTime, default=datetime.utcnow)

@@ -230,10 +230,17 @@ async def has_payment_method(company: Company) -> bool:
   if not company.stripe_customer_id:
     return False
 
-  payment_methods = stripe.PaymentMethod.list(
-    customer=company.stripe_customer_id,
-    type="card",
-  )
+  try:
+    payment_methods = stripe.PaymentMethod.list(
+      customer=company.stripe_customer_id,
+      type="card",
+    )
+  except stripe.error.StripeError:
+    logger.exception(
+      "Failed to check payment methods for company %s", company.id
+    )
+    return False
+
   return len(payment_methods.data) > 0
 
 async def ensure_subscription(company: Company, db: AsyncSession):
