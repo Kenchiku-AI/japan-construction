@@ -230,6 +230,10 @@ async def create_report(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
+  allowed, reason = await can_use_billed_features(company)
+  if not allowed:
+    raise HTTPException(status_code=402, detail=reason)
+
   stmt = (
     select(ReportTemplate)
     .where(ReportTemplate.id == payload.template_id)
@@ -763,6 +767,10 @@ async def update_report(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
+  allowed, reason = await can_use_billed_features(company)
+  if not allowed:
+    raise HTTPException(status_code=402, detail=reason)
+
   stmt = (
     select(Report)
     .where(Report.id == report_id)
@@ -935,6 +943,10 @@ async def create_report_image(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
+  allowed, reason = await can_use_billed_features(company)
+  if not allowed:
+    raise HTTPException(status_code=402, detail=reason)
+
   stmt = select(Report).where(Report.id == report_id)
   result = await db.execute(stmt)
   report = result.scalar_one_or_none()
@@ -1086,6 +1098,10 @@ async def update_report_image(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
+  allowed, reason = await can_use_billed_features(company)
+  if not allowed:
+    raise HTTPException(status_code=402, detail=reason)
+
   stmt = select(Report).where(Report.id == report_id)
   result = await db.execute(stmt)
   report: Report | None = result.scalar_one_or_none()
@@ -1157,6 +1173,10 @@ async def create_report_image_tag(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
+  allowed, reason = await can_use_billed_features(company)
+  if not allowed:
+    raise HTTPException(status_code=402, detail=reason)
+
   stmt = select(Report).where(Report.id == report_id)
   result = await db.execute(stmt)
   report: Report | None = result.scalar_one_or_none()
@@ -1289,6 +1309,10 @@ async def report_speech(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
+  allowed, reason = await can_use_billed_features(company)
+  if not allowed:
+    raise HTTPException(status_code=402, detail=reason)
+    
   stmt = (
     select(Report)
     .where(Report.id == report_id)

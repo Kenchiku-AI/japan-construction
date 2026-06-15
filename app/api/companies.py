@@ -1,11 +1,9 @@
-from datetime import date
-from typing import List, Optional
+from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy import desc, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import get_current_user, require_company_manager
@@ -13,7 +11,6 @@ from app.db.models import Company, Project, User, ReportImageTag, ProjectGuestLi
 from app.db.session import get_db
 from app.schemas.company import (
   CompanyCreate,
-  CompanyProjectRead,
   CompanyRead,
   CompanyUpdate,
   CompanyWithProjectsAndUsers,
@@ -21,9 +18,13 @@ from app.schemas.company import (
   ReportImageTagUpdate
 )
 from app.schemas.invitation import CompanyInvitationCreate
+from app.services.billing import sync_subscription_quantity, get_payment_method_display, billing_in_good_standing
 from app.services.invitations import create_company_invitation
 
 import stripe
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
@@ -168,49 +169,20 @@ async def get_company(
   )[:25]
 
   payment_method_name = await get_payment_method_display(company)
+  is_payment_method_valid = await billing_in_good_standing(company)
 
   return CompanyWithProjectsAndUsers(
     id=company.id,
     name=company.name,
     corporate_number=company.corporate_number,
     payment_method_name=payment_method_name,
+    is_payment_method_valid=is_payment_method_valid,
     billing_exempt=company.billing_exempt,
     created_at=company.created_at,
     updated_at=company.updated_at,
     users=company.users,
     projects=projects
   )
-
-async def get_payment_method_display(company: Company) -> Optional[str]:
-  if not company.stripe_customer_id:
-    return None
-
-  try:
-    payment_methods = stripe.PaymentMethod.list(
-      customer=company.stripe_customer_id,
-      type="card",
-    )
-  except stripe.error.StripeError:
-    logger.exception(
-      "Failed to fetch payment method for company %s", company.id
-    )
-    return None
-
-  if not payment_methods.data:
-    return None
-
-  pm = payment_methods.data[0]
-
-  brand_names = {
-    "visa": "Visa",
-    "mastercard": "Mastercard",
-    "jcb": "JCB",
-    "amex": "American Express",
-  }
-
-  brand = brand_names.get(pm.card.brand, pm.card.brand.capitalize())
-
-  return f"{brand} ••••{pm.card.last4}"
 
 @router.patch(
   "/{company_id}",
@@ -270,6 +242,9 @@ async def update_company(
 
   await db.commit()
   await db.refresh(company)
+
+  if payload.billing_exempt is False and company.stripe_subscription_id:
+    await sync_subscription_quantity(company, db)
 
   return company
 
@@ -462,7 +437,7 @@ async def create_setup_intent(
 
   intent = stripe.SetupIntent.create(
     customer=company.stripe_customer_id,
-    automatic_payment_methods={"enabled": True}
+    payment_method_types=["card"],
   )
 
   return {"client_secret": intent.client_secret}
