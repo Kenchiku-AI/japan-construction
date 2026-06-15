@@ -441,3 +441,17 @@ async def create_setup_intent(
   )
 
   return {"client_secret": intent.client_secret}
+
+@router.get("/{company_id}/billing/check")
+async def check_billing_status(
+  company_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  company = await db.get(Company, company_id)
+  if not company:
+    raise HTTPException(status_code=404, detail="Company not found")
+
+  allowed, reason = await can_use_billed_features(company)
+
+  return {"success": allowed, "reason": reason}
