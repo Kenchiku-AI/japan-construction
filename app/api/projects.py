@@ -1,26 +1,18 @@
-from datetime import datetime
 from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, case, or_, func
+from sqlalchemy import select, desc, case, or_
 from sqlalchemy.orm import selectinload
 
+from app.core.dependencies import get_current_user, require_company_manager, require_project_access
 from app.db.session import get_db
 from app.db.models import Project, Company, User, ProjectStatus, ProjectGuestLink
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead, ProjectWithReports, ProjectWithCompanyName
-from app.core.dependencies import get_current_user, require_company_member, require_company_manager, require_project_access
-
-import logging
-import stripe
-
-import logging
-import stripe
+from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectWithReports, ProjectWithCompanyName
+from app.services.billing import ensure_subscription, sync_subscription_quantity, can_use_billed_features
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
-
-logger = logging.getLogger(__name__)
 
 @router.get("", response_model=List[ProjectWithCompanyName])
 async def list_projects(
@@ -156,11 +148,9 @@ async def create_project(
   if not company:
     raise HTTPException(status_code=404, detail="Company not found")
 
-  if not await has_payment_method(company):
-    raise HTTPException(
-      status_code=402,
-      detail="A payment method is required before creating a project",
-    )
+  allowed, reason = await can_use_billed_features(company)
+  if not allowed:
+    raise HTTPException(status_code=402, detail=reason)
 
   project = Project(
     **payload.model_dump(),
@@ -222,82 +212,6 @@ async def update_project(
   project = result.scalars().first()
 
   return project
-
-async def has_payment_method(company: Company) -> bool:
-  if company.billing_exempt:
-    return True
-
-  if not company.stripe_customer_id:
-    return False
-
-  try:
-    payment_methods = stripe.PaymentMethod.list(
-      customer=company.stripe_customer_id,
-      type="card",
-    )
-  except stripe.error.StripeError:
-    logger.exception(
-      "Failed to check payment methods for company %s", company.id
-    )
-    return False
-
-  return len(payment_methods.data) > 0
-
-async def ensure_subscription(company: Company, db: AsyncSession):
-  if company.billing_exempt:
-    return
-    
-  if company.stripe_subscription_id:
-    return
-
-  try:
-    subscription = stripe.Subscription.create(
-      customer=company.stripe_customer_id,
-      items=[{"price": settings.STRIPE_PROJECT_PRICE_ID, "quantity": 0}],
-      trial_period_days=14,
-      trial_settings={"end_behavior": {"missing_payment_method": "cancel"}},
-      payment_behavior="default_incomplete",
-    )
-    company.stripe_subscription_id = subscription.id
-    company.stripe_subscription_status = subscription.status
-    await db.commit()
-  except stripe.error.StripeError:
-    logger.exception(
-      "Failed to create Stripe subscription for company %s",
-      company.id,
-    )
-
-async def sync_subscription_quantity(company: Company, db: AsyncSession):
-  if company.billing_exempt:
-    return
-
-  if not company.stripe_subscription_id:
-    return
-
-  result = await db.execute(
-    select(func.count())
-    .select_from(Project)
-    .where(
-      Project.company_id == company.id,
-      Project.status == ProjectStatus.active,
-    )
-  )
-  active_count = result.scalar_one()
-
-  try:
-    subscription = stripe.Subscription.retrieve(company.stripe_subscription_id)
-    item_id = subscription["items"]["data"][0]["id"]
-
-    stripe.SubscriptionItem.modify(
-      item_id,
-      quantity=active_count,
-      proration_behavior="create_prorations",
-    )
-  except stripe.error.StripeError:
-    logger.exception(
-      "Failed to sync Stripe subscription quantity for company %s",
-      company.id,
-    )
 
 @router.delete(
   "/{project_id}/guests/{guest_link_id}",
