@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.session import get_db
 from app.db.models.company import Company
+from app.services.billing import get_company_by_stripe_customer_id
 
 logger = logging.getLogger(__name__)
 
@@ -16,15 +17,7 @@ router = APIRouter(
   tags=["webhooks"]
 )
 
-async def get_company_by_stripe_customer_id(
-  db: AsyncSession, customer_id: str
-) -> Company | None:
-  result = await db.execute(
-    select(Company).where(Company.stripe_customer_id == customer_id)
-  )
-  return result.scalars().first()
-
-@router.post("/webhooks/stripe")
+@router.post("/stripe")
 async def stripe_webhook(
   request: Request,
   stripe_signature: str = Header(None),
