@@ -88,7 +88,6 @@ async def get_payment_method_display(company: Company) -> str | None:
 
   return f"{brand} •••• {pm.card.last4}"
 
-
 async def ensure_subscription(company: Company, db: AsyncSession):
   if company.billing_exempt:
     return
@@ -111,7 +110,6 @@ async def ensure_subscription(company: Company, db: AsyncSession):
     logger.exception(
       "Failed to create Stripe subscription for company %s", company.id
     )
-
 
 async def sync_subscription_quantity(company: Company, db: AsyncSession):
   if company.billing_exempt:
@@ -143,3 +141,11 @@ async def sync_subscription_quantity(company: Company, db: AsyncSession):
     logger.exception(
       "Failed to sync Stripe subscription quantity for company %s", company.id
     )
+
+async def get_company_by_stripe_customer_id(
+  db: AsyncSession, customer_id: str
+) -> Company | None:
+  result = await db.execute(
+    select(Company).where(Company.stripe_customer_id == customer_id)
+  )
+  return result.scalars().first()

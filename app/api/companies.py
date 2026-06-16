@@ -169,7 +169,7 @@ async def get_company(
   )[:25]
 
   payment_method_name = await get_payment_method_display(company)
-  is_payment_method_valid = await billing_in_good_standing(company)
+  is_payment_method_valid = billing_in_good_standing(company)
 
   return CompanyWithProjectsAndUsers(
     id=company.id,
