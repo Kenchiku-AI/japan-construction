@@ -4,7 +4,7 @@ import logging
 
 ses = boto3.client(
   "ses",
-  region_name=settings.AWS_REGION,
+  region_name=settings.AWS_REGION
 )
 
 logger = logging.getLogger(__name__)
