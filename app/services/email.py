@@ -23,8 +23,8 @@ def _build_email_template(title: str, message: str, button_text: str, button_url
             <img
               src="{EMAIL_LOGO_URL}"
               alt="Kenchiku"
-              width="42.6"
-              height="58.3"
+              width="50"
+              height="50"
               style="display:block;margin:0 auto;"
             />
           </div>

@@ -5,8 +5,11 @@ from typing import Optional
 from jose import jwt
 from passlib.context import CryptContext
 from app.core.config import settings
+from cryptography.fernet import Fernet, InvalidToken
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+fernet = Fernet(settings.LINE_ENCRYPTION_KEY)
 
 def hash_password(password: str) -> str:
   return pwd_context.hash(password)
@@ -49,3 +52,12 @@ def get_cookie_settings():
     "domain": None if is_local else ".kenchiku.ai",
     "path": "/",
   }
+
+def encrypt_secret(plaintext: str) -> str:
+  return fernet.encrypt(plaintext.encode()).decode()
+
+def decrypt_secret(ciphertext: str) -> str:
+  try:
+    return fernet.decrypt(ciphertext.encode()).decode()
+  except InvalidToken:
+    raise ValueError("Could not decrypt secret — invalid key or corrupted data")

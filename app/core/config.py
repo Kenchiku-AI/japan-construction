@@ -20,6 +20,7 @@ class Settings(BaseSettings):
   SQS_QUEUE_URL: str
   ALGORITHM: str = "HS256"
   WEB_CLIENT_URL: str = "http://localhost:3000"
+  LINE_ENCRYPTION_KEY: str
 
   @field_validator("*", mode="before")
   @classmethod
