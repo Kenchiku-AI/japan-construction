@@ -86,7 +86,7 @@ async def get_payment_method_display(company: Company) -> str | None:
 
   brand = brand_names.get(pm.card.brand, pm.card.brand.capitalize())
 
-  return f"{brand} •••• {pm.card.last4}"
+  return f"{brand} ••••{pm.card.last4}"
 
 async def ensure_subscription(company: Company, db: AsyncSession):
   if company.billing_exempt:

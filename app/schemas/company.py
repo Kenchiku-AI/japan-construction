@@ -27,6 +27,7 @@ class CompanyRead(BaseModel):
   name: str
   corporate_number: Optional[str]
   billing_exempt: bool
+  line_channel_secret_last4: Optional[str]
   created_at: datetime
   updated_at: datetime
 
@@ -47,6 +48,7 @@ class CompanyUpdate(BaseModel):
   name: str | None = None
   corporate_number: str | None = None
   billing_exempt: bool | None = None
+  line_channel_secret: str | None = None
 
 class CompanyUserRead(BaseModel):
   id: UUID
