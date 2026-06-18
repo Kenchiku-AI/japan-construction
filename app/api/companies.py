@@ -178,6 +178,7 @@ async def get_company(
     payment_method_name=payment_method_name,
     is_payment_method_valid=is_payment_method_valid,
     billing_exempt=company.billing_exempt,
+    line_channel_secret=company.line_channel_secret,
     created_at=company.created_at,
     updated_at=company.updated_at,
     users=company.users,

@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import hmac
 import logging
 
 import stripe
@@ -71,3 +74,51 @@ async def stripe_webhook(
     logger.debug("Unhandled Stripe event type: %s", event_type)
 
   return {"status": "ok"}
+
+@router.post("/webhooks/line/{company_id}")
+async def line_webhook(
+  company_id: str,
+  request: Request,
+  x_line_signature: str = Header(..., alias="X-Line-Signature"),
+  db: AsyncSession = Depends(get_db),
+):
+  result = await db.execute(select(Company).where(Company.id == company_id))
+  company = result.scalar_one_or_none()
+
+  if not company or not company.line_channel_secret:
+    raise HTTPException(status_code=404)
+
+  body = await request.body()
+
+  if not verify_line_signature(body, x_line_signature, company.line_channel_secret):
+    raise HTTPException(status_code=403, detail="Invalid signature")
+
+  payload = await request.json()
+
+  for event in payload.get("events", []):
+    if event.get("type") != "message":
+      continue
+
+    message = event.get("message", {})
+    if message.get("type") != "text":
+      continue
+
+    sender_id = event.get("source", {}).get("userId")
+    source_type = event.get("source", {}).get("type")
+    text = message.get("text")
+
+    logger.info(
+      "LINE message received",
+      extra={"company_id": str(company.id), "source_type": source_type, "sender_id": sender_id},
+    )
+
+    # TODO: persist/process the message
+
+  return {"status": "ok"}
+
+def verify_line_signature(body: bytes, signature: str, channel_secret: str) -> bool:
+  expected = base64.b64encode(
+    hmac.new(channel_secret.encode(), body, hashlib.sha256).digest()
+  ).decode()
+
+  return hmac.compare_digest(expected, signature)

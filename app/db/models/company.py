@@ -41,9 +41,7 @@ class Company(Base):
   stripe_subscription_status = Column(String, nullable=True)
   billing_exempt = Column(Boolean, default=False, nullable=False)
 
-  line_channel_id = Column(String, nullable=True)
   _line_channel_secret = Column("line_channel_secret", String, nullable=True)
-  _line_channel_access_token = Column("line_channel_access_token", String, nullable=True)
 
   created_at = Column(DateTime, default=datetime.utcnow)
   updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -55,11 +53,3 @@ class Company(Base):
   @line_channel_secret.setter
   def line_channel_secret(self, value: str | None) -> None:
     self._line_channel_secret = encrypt_secret(value) if value else None
-
-  @property
-  def line_channel_access_token(self) -> str | None:
-    return decrypt_secret(self._line_channel_access_token) if self._line_channel_access_token else None
-
-  @line_channel_access_token.setter
-  def line_channel_access_token(self, value: str | None) -> None:
-    self._line_channel_access_token = encrypt_secret(value) if value else None
