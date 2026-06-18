@@ -75,7 +75,7 @@ async def stripe_webhook(
 
   return {"status": "ok"}
 
-@router.post("/webhooks/line/{company_id}")
+@router.post("/line/{company_id}")
 async def line_webhook(
   company_id: str,
   request: Request,

@@ -53,3 +53,8 @@ class Company(Base):
   @line_channel_secret.setter
   def line_channel_secret(self, value: str | None) -> None:
     self._line_channel_secret = encrypt_secret(value) if value else None
+
+  @property
+  def line_channel_secret_last4(self) -> str | None:
+      secret = self.line_channel_secret  # decrypts via the existing property
+      return secret[-4:] if secret else None

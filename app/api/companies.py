@@ -178,7 +178,7 @@ async def get_company(
     payment_method_name=payment_method_name,
     is_payment_method_valid=is_payment_method_valid,
     billing_exempt=company.billing_exempt,
-    line_channel_secret=company.line_channel_secret,
+    line_channel_secret_last4=company.line_channel_secret_last4,
     created_at=company.created_at,
     updated_at=company.updated_at,
     users=company.users,
@@ -196,10 +196,7 @@ async def update_company(
   db: AsyncSession = Depends(get_db),
 ):
   if current_user.role != "admin":
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail="Only admins can update companies",
-    )
+    require_company_manager(current_user, company_id)
 
   result = await db.execute(
     select(Company).where(Company.id == company_id)
@@ -240,6 +237,9 @@ async def update_company(
         )
       company.stripe_subscription_id = None
       company.stripe_subscription_status = None
+
+  if payload.line_channel_secret is not None:
+    company.line_channel_secret = payload.line_channel_secret
 
   await db.commit()
   await db.refresh(company)
