@@ -5,8 +5,6 @@ from typing import Optional
 from jose import jwt
 from passlib.context import CryptContext
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 
 from app.core.config import settings
 
