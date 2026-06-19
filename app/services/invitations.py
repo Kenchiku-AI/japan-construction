@@ -128,10 +128,11 @@ async def create_project_guest_invitation(
       company_id=None,
       first_name=payload.first_name,
       last_name=payload.last_name,
-      line_link_code=generate_unique_line_link_code(db)
     )
     db.add(new_user)
     await db.flush()
+
+    new_user.line_link_code = line_link_code_for_user(new_user.id)
 
     link = ProjectGuestLink(
       user_id=new_user.id,

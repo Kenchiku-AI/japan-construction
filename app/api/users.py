@@ -203,8 +203,11 @@ async def create_admin(
     last_name=payload.last_name,
     role="admin"
   )
-
   db.add(user)
+  await db.flush()
+
+  user.line_link_code = line_link_code_for_user(user.id)
+
   await db.commit()
   await db.refresh(user)
 
