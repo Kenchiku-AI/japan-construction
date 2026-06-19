@@ -6,7 +6,7 @@ from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.core.security import generate_invite_token, hash_token
+from app.core.security import generate_invite_token, hash_token, generate_unique_line_link_code
 from app.core.dependencies import require_company_manager
 from app.db.models import User, Company, Invitation, Project
 from app.db.models.project_guest_link import ProjectGuestLink
@@ -128,6 +128,7 @@ async def create_project_guest_invitation(
       company_id=None,
       first_name=payload.first_name,
       last_name=payload.last_name,
+      line_link_code=generate_unique_line_link_code(db)
     )
     db.add(new_user)
     await db.flush()

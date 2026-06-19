@@ -4,8 +4,11 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import jwt
 from passlib.context import CryptContext
-from app.core.config import settings
 from cryptography.fernet import Fernet, InvalidToken
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+
+from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -38,6 +41,18 @@ def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) 
 
 def generate_invite_token() -> str:
   return secrets.token_urlsafe(32)
+
+def generate_line_link_code() -> str:
+  alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # omit 0/O and 1/I (look-alike)
+  code = "".join(secrets.choice(alphabet) for _ in range(6))
+  return f"K-{code}"
+
+async def generate_unique_line_link_code(db: AsyncSession) -> str:
+  while True:
+    code = generate_line_link_code()
+    existing = await db.execute(select(User).where(User.line_link_code == code))
+    if not existing.scalar_one_or_none():
+      return code
 
 def hash_token(token: str) -> str:
   return hashlib.sha256(token.encode()).hexdigest()

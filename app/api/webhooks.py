@@ -107,12 +107,47 @@ async def line_webhook(
     source_type = event.get("source", {}).get("type")
     text = message.get("text")
 
-    logger.info(
-      "LINE message received | company_id=%s source_type=%s sender_id=%s text=%s",
-      company.id, source_type, sender_id, text,
+    known_user_result = await db.execute(
+      select(User).where(
+        User.company_id == company.id,
+        User.line_user_id == sender_id,
+      )
     )
+    known_user = known_user_result.scalar_one_or_none()
 
-    # TODO: persist/process the message
+    if known_user:
+      logger.info(
+        "LINE message received | company_id=%s user_id=%s sender_id=%s source_type=%s text=%s",
+        company.id, known_user.id, sender_id, source_type, text,
+      )
+      
+      # TODO: persist/handle message for known_user
+
+    else:
+      candidate_code = text.strip().upper() if text else None
+
+      code_result = await db.execute(
+        select(User).where(
+          User.company_id == company.id,
+          User.line_link_code == candidate_code,
+          User.line_user_id == None,
+        )
+      )
+      user_to_link = code_result.scalar_one_or_none()
+
+      if user_to_link:
+        user_to_link.line_user_id = sender_id
+        user_to_link.line_link_code = None
+        await db.commit()
+        logger.info(
+          "LINE account linked | company_id=%s user_id=%s sender_id=%s",
+          company.id, user_to_link.id, sender_id,
+        )
+      else:
+        logger.warning(
+          "LINE message from unrecognized sender | company_id=%s sender_id=%s text=%s",
+          company.id, sender_id, text,
+        )
 
   return {"status": "ok"}
 

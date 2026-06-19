@@ -40,6 +40,9 @@ class User(Base):
     cascade="all, delete-orphan",
   )
 
+  line_user_id = Column(String, nullable=True, unique=True, index=True)
+  line_link_code = Column(String, nullable=True, unique=True, index=True)
+
   created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
   updated_at = Column(
     DateTime,

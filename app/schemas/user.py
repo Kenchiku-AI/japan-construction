@@ -70,6 +70,8 @@ class UserWithCompanyAndProjects(BaseModel):
   created_at: datetime
   updated_at: datetime
   role: UserRole
+  line_user_id: str | None = None
+  line_link_code: str | None = None
   company: Optional[UserCompanyRead] = None
   projects: List[UserProjectRead]
 
