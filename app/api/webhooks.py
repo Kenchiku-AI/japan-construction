@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.db.models.company import Company
 from app.services.billing import get_company_by_stripe_customer_id
+from app.services.email import send_line_link_confirmation_email
 
 logger = logging.getLogger(__name__)
 
@@ -137,10 +138,16 @@ async def line_webhook(
           line_user_id=sender_id,
         ))
         await db.commit()
-        
+
         logger.info(
           "LINE account linked | company_id=%s user_id=%s sender_id=%s",
           company.id, user_by_code.id, sender_id,
+        )
+
+        background_tasks.add_task(
+          send_line_link_confirmation_email,
+          email=user_by_code.email,
+          company_name=company.name,
         )
       else:
         logger.warning(

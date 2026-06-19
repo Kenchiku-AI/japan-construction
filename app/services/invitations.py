@@ -117,6 +117,8 @@ async def create_project_guest_invitation(
       send_project_guest_access_email,
       email=existing_user.email,
       project_name=project.name,
+      company_name=project.company.name,
+      line_link_code=existing_user.line_link_code,
     )
 
     return link

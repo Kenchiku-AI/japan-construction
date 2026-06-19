@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 EMAIL_LOGO_URL = "https://www.kenchiku.ai/logo.png"
 
-def _build_email_template(title: str, message: str, button_text: str, button_url: str) -> str:
+def _build_email_template(title: str, message: str, button_text: str, button_url: str, line_section: str = "") -> str:
   return f"""
 <html>
   <body style="margin:0;padding:0;font-family:Arial,sans-serif;background-color:#FDFDFD;">
@@ -45,6 +45,8 @@ def _build_email_template(title: str, message: str, button_text: str, button_url
             </a>
           </div>
 
+          {line_section}
+
           <p style="color:#999;font-size:12px;text-align:center;">
             このメールに心当たりがない場合は、本メールを無視してください。
           </p>
@@ -54,6 +56,18 @@ def _build_email_template(title: str, message: str, button_text: str, button_url
     </table>
   </body>
 </html>
+"""
+
+def _build_line_section(company_name: str, line_link_code: str) -> str:
+  return f"""
+<div style="margin:30px 0;padding:24px;background-color:#F0F7F1;border-radius:12px;text-align:center;">
+  <p style="color:#555;line-height:1.8;margin:0 0 16px 0;">
+    LINEで{company_name}とやり取りされる場合は、以下のコードをLINEで送信することで、Kenchiku AIアカウントと連携できます。
+  </p>
+  <p style="font-size:28px;font-weight:700;letter-spacing:4px;color:#333;margin:0;">
+    {line_link_code}
+  </p>
+</div>
 """
 
 def send_invitation_email(email: str, company_name: str, invite_token: str) -> None:
@@ -141,7 +155,7 @@ def send_password_reset_email(email: str, reset_token: str) -> None:
     logger.exception("Error sending email to %s", email)
     raise
 
-def send_project_guest_access_email(email: str, project_name: str) -> None:
+def send_project_guest_access_email(email: str, project_name: str, company_name: str, line_link_code: str) -> None:
   subject = f"プロジェクト「{project_name}」へのアクセス権が付与されました"
 
   message = f"""
@@ -156,6 +170,7 @@ def send_project_guest_access_email(email: str, project_name: str) -> None:
     message=message,
     button_text="ログインする",
     button_url=login_url,
+    line_section=_build_line_section(company_name, line_link_code),
   )
 
   text_body = f"""
@@ -182,7 +197,7 @@ def send_project_guest_access_email(email: str, project_name: str) -> None:
     logger.exception("Error sending guest access email to %s", email)
     raise
 
-def send_guest_invitation_email(email: str, project_name: str, set_password_token: str) -> None:
+def send_guest_invitation_email(email: str, project_name: str, set_password_token: str, company_name: str, line_link_code: str) -> None:
   set_password_link = f"{settings.WEB_CLIENT_URL}/reset-password?token={set_password_token}&newUser=true"
 
   subject = f"プロジェクト「{project_name}」への招待"
@@ -198,6 +213,7 @@ def send_guest_invitation_email(email: str, project_name: str, set_password_toke
     message=message,
     button_text="パスワードを設定してはじめる",
     button_url=set_password_link,
+    line_section=_build_line_section(company_name, line_link_code),
   )
 
   text_body = f"""
@@ -266,4 +282,44 @@ def send_existing_user_invitation_email(email: str, company_name: str, invite_to
     logger.info(f"Sent existing user invitation email to {email}")
   except Exception:
     logger.exception("Error sending existing user invitation email to %s", email)
+    raise
+
+def send_line_link_confirmation_email(email: str, company_name: str) -> None:
+  subject = f"LINEアカウントの連携が完了しました — {company_name}"
+
+  message = f"""
+{company_name} のLINEアカウントと Kenchiku AI アカウントの連携が完了しました。<br/>
+今後、LINEから送信されたメッセージは自動的にアカウントに紐付けられます。
+"""
+
+  html_body = _build_email_template(
+    title="LINE連携完了",
+    message=message,
+    button_text="建築AIを開く",
+    button_url=settings.WEB_CLIENT_URL,
+  )
+
+  text_body = f"""
+{company_name} のLINEアカウントと Kenchiku AI アカウントの連携が完了しました。
+今後、LINEから送信されたメッセージは自動的にアカウントに紐付けられます。
+
+{settings.WEB_CLIENT_URL}
+"""
+
+  try:
+    ses.send_email(
+      Source=settings.NO_REPLY_EMAIL,
+      Destination={"ToAddresses": [email]},
+      ReplyToAddresses=[settings.SUPPORT_EMAIL],
+      Message={
+        "Subject": {"Data": subject},
+        "Body": {
+          "Text": {"Data": text_body},
+          "Html": {"Data": html_body},
+        },
+      },
+    )
+    logger.info(f"Sent LINE link confirmation email to {email}")
+  except Exception:
+    logger.exception("Error sending LINE link confirmation email to %s", email)
     raise
