@@ -108,8 +108,8 @@ async def line_webhook(
     text = message.get("text")
 
     logger.info(
-      "LINE message received",
-      extra={"company_id": str(company.id), "source_type": source_type, "sender_id": sender_id},
+      "LINE message received | company_id=%s source_type=%s sender_id=%s text=%s",
+      company.id, source_type, sender_id, text,
     )
 
     # TODO: persist/process the message
