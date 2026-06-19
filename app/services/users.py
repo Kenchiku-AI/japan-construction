@@ -81,6 +81,7 @@ async def build_user_with_company_and_projects(
     last_name=user.last_name,
     email=user.email,
     role=user.role,
+    line_link_code=user.line_link_code,
     created_at=user.created_at,
     updated_at=user.updated_at,
     company=(

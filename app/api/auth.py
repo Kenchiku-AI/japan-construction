@@ -17,6 +17,7 @@ from app.core.security import (
   hash_password,
   hash_token,
   get_cookie_settings,
+  line_link_code_for_user,
 )
 from app.db.models.refresh_token import RefreshToken
 from app.db.models.user import User
@@ -177,12 +178,11 @@ async def signup(
     last_name=payload.last_name,
     hashed_password=hash_password(payload.password),
     company_id=company.id,
-    role=invitation.role
+    role=invitation.role,
   )
-
+  user.line_link_code = line_link_code_for_user(user.id)
   db.add(user)
-  await db.commit()
-  await db.refresh(user)
+  await db.flush()
 
   access_token = create_access_token({"sub": str(user.id)})
   refresh_token = create_refresh_token({"sub": str(user.id)})

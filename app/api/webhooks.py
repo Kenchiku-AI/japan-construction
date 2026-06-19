@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.db.models.company import Company
 from app.services.billing import get_company_by_stripe_customer_id
+from app.services.email import send_line_link_confirmation_email
 
 logger = logging.getLogger(__name__)
 
@@ -107,12 +108,52 @@ async def line_webhook(
     source_type = event.get("source", {}).get("type")
     text = message.get("text")
 
-    logger.info(
-      "LINE message received | company_id=%s source_type=%s sender_id=%s text=%s",
-      company.id, source_type, sender_id, text,
+    link_result = await db.execute(
+      select(UserLineLink).where(
+        UserLineLink.company_id == company.id,
+        UserLineLink.line_user_id == sender_id,
+      )
     )
+    link = link_result.scalar_one_or_none()
 
-    # TODO: persist/process the message
+    if link:
+      logger.info(
+        "LINE message received | company_id=%s user_id=%s sender_id=%s source_type=%s text=%s",
+        company.id, link.user_id, sender_id, source_type, text,
+      )
+      # TODO: persist/handle message for link.user_id
+
+    else:
+      candidate_code = text.strip().upper() if text else None
+
+      user_result = await db.execute(
+        select(User).where(User.line_link_code == candidate_code)
+      )
+      user_by_code = user_result.scalar_one_or_none()
+
+      if user_by_code:
+        db.add(UserLineLink(
+          user_id=user_by_code.id,
+          company_id=company.id,
+          line_user_id=sender_id,
+        ))
+        await db.commit()
+
+        logger.info(
+          "LINE account linked | company_id=%s user_id=%s sender_id=%s",
+          company.id, user_by_code.id, sender_id,
+        )
+
+        background_tasks.add_task(
+          send_line_link_confirmation_email,
+          email=user_by_code.email,
+          company_name=company.name,
+        )
+      else:
+        logger.warning(
+          "LINE message from unrecognized sender | company_id=%s sender_id=%s text=%s",
+          company.id, sender_id, text,
+        )
 
   return {"status": "ok"}
 

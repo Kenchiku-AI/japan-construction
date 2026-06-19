@@ -203,10 +203,9 @@ async def create_admin(
     last_name=payload.last_name,
     role="admin"
   )
-
+  user.line_link_code = line_link_code_for_user(user.id)
   db.add(user)
-  await db.commit()
-  await db.refresh(user)
+  await db.flush()
 
   token = secrets.token_urlsafe(32)
   hashed_token = hash_token(token)

@@ -4,8 +4,9 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import jwt
 from passlib.context import CryptContext
-from app.core.config import settings
 from cryptography.fernet import Fernet, InvalidToken
+
+from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -61,3 +62,9 @@ def decrypt_secret(ciphertext: str) -> str:
     return fernet.decrypt(ciphertext.encode()).decode()
   except InvalidToken:
     raise ValueError("Could not decrypt secret — invalid key or corrupted data")
+
+def line_link_code_for_user(user_id) -> str:
+  alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+  digest = hashlib.sha256(str(user_id).encode()).digest()
+  code = "".join(alphabet[b % len(alphabet)] for b in digest[:6])
+  return f"K-{code}"
