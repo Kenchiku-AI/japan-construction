@@ -40,7 +40,8 @@ def _build_email_template(title: str, message: str, button_text: str, button_url
           <div style="text-align:center;margin:30px 0;">
             <a href="{button_url}"
                 style="background-color:#6FB37A;color:#ffffff;padding:12px 24px;
-                      text-decoration:none;font-weight:600;border-radius:10px;display:inline-block;">
+                      text-decoration:none;font-weight:600;border-radius:10px;display:inline-block;
+                      width:360px;box-sizing:border-box;text-align:center;">
               {button_text}
             </a>
           </div>
@@ -60,13 +61,16 @@ def _build_email_template(title: str, message: str, button_text: str, button_url
 
 def _build_line_section(company_name: str, line_link_code: str) -> str:
   return f"""
-<div style="margin:30px 0;padding:24px;background-color:#F0F7F1;border-radius:12px;text-align:center;">
+<div style="margin:30px">
   <p style="color:#555;line-height:1.8;margin:0 0 16px 0;">
-    LINEで{company_name}とやり取りされる場合は、以下のコードをLINEで送信することで、Kenchiku AIアカウントと連携できます。
+    LINEで{company_name}とやり取りされる場合は、<br/>
+    以下のコードをLINEで送信することで、Kenchiku AIアカウントと連携できます。
   </p>
-  <p style="font-size:28px;font-weight:700;letter-spacing:4px;color:#333;margin:0;">
-    {line_link_code}
-  </p>
+  <div style="padding:24px;background-color:#F0F7F1;border-radius:12px;text-align:center;width:360px;box-sizing:border-box;">
+    <p style="font-size:28px;font-weight:700;letter-spacing:4px;color:#333;margin:0;">
+      {line_link_code}
+    </p>
+  </div>
 </div>
 """
 
@@ -197,7 +201,7 @@ def send_project_guest_access_email(email: str, project_name: str, company_name:
     logger.exception("Error sending guest access email to %s", email)
     raise
 
-def send_guest_invitation_email(email: str, project_name: str, set_password_token: str, company_name: str, line_link_code: str) -> None:
+def send_guest_invitation_email(email: str, project_name: str, company_name: str, line_link_code: str, set_password_token: str) -> None:
   set_password_link = f"{settings.WEB_CLIENT_URL}/reset-password?token={set_password_token}&newUser=true"
 
   subject = f"プロジェクト「{project_name}」への招待"

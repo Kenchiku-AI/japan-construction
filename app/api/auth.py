@@ -180,14 +180,9 @@ async def signup(
     company_id=company.id,
     role=invitation.role,
   )
-
+  user.line_link_code = line_link_code_for_user(user.id)
   db.add(user)
   await db.flush()
-
-  user.line_link_code = line_link_code_for_user(user.id)
-
-  await db.commit()
-  await db.refresh(user)
 
   access_token = create_access_token({"sub": str(user.id)})
   refresh_token = create_refresh_token({"sub": str(user.id)})

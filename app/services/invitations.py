@@ -6,7 +6,7 @@ from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.core.security import generate_invite_token, hash_token, generate_unique_line_link_code
+from app.core.security import generate_invite_token, hash_token, line_link_code_for_user
 from app.core.dependencies import require_company_manager
 from app.db.models import User, Company, Invitation, Project
 from app.db.models.project_guest_link import ProjectGuestLink
@@ -86,6 +86,10 @@ async def create_project_guest_invitation(
 
   require_company_manager(current_user, project.company_id)
 
+  company = await db.get(Company, project.company_id)
+  if not company:
+    raise HTTPException(status_code=404, detail="Company not found")
+
   existing_user = (
     await db.execute(select(User).where(User.email == payload.email))
   ).scalar_one_or_none()
@@ -117,7 +121,7 @@ async def create_project_guest_invitation(
       send_project_guest_access_email,
       email=existing_user.email,
       project_name=project.name,
-      company_name=project.company.name,
+      company_name=company.name,
       line_link_code=existing_user.line_link_code,
     )
 
@@ -131,10 +135,9 @@ async def create_project_guest_invitation(
       first_name=payload.first_name,
       last_name=payload.last_name,
     )
+    new_user.line_link_code = line_link_code_for_user(new_user.id)
     db.add(new_user)
     await db.flush()
-
-    new_user.line_link_code = line_link_code_for_user(new_user.id)
 
     link = ProjectGuestLink(
       user_id=new_user.id,
@@ -157,6 +160,8 @@ async def create_project_guest_invitation(
       send_guest_invitation_email,
       email=payload.email,
       project_name=project.name,
+      company_name=company.name,
+      line_link_code=new_user.line_link_code,
       set_password_token=token,
     )
 
