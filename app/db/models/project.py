@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, and_
 from sqlalchemy.orm import relationship, foreign
@@ -46,5 +46,5 @@ class Project(Base):
     cascade="all, delete-orphan",
   )
 
-  created_at = Column(DateTime, default=datetime.utcnow)
-  updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+  updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

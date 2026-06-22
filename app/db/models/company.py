@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import Column, String, DateTime, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.db.base import Base
 from app.core.security import encrypt_secret, decrypt_secret
@@ -43,8 +43,8 @@ class Company(Base):
 
   _line_channel_secret = Column("line_channel_secret", String, nullable=True)
 
-  created_at = Column(DateTime, default=datetime.utcnow)
-  updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+  updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
   @property
   def line_channel_secret(self) -> str | None:

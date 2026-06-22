@@ -2,7 +2,7 @@ import uuid
 
 from sqlalchemy import Column, String, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.db.base import Base
 
@@ -15,4 +15,4 @@ class Invitation(Base):
   company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
   role = Column(String, default="user", nullable=False)
   expires_at = Column(DateTime, nullable=False)
-  created_at = Column(DateTime, default=datetime.utcnow)
+  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
