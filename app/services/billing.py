@@ -4,6 +4,7 @@ import stripe
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models.company import Company
 from app.db.models.project import Project, ProjectStatus
 
 logger = logging.getLogger(__name__)
