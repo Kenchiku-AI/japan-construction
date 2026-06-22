@@ -18,6 +18,7 @@ from app.db.models import (
   ReportTemplate,
   ReportTemplateField,
   ReportParentType,
+  ReportStatus,
   ReportImage,
   ReportImageTag,
   ReportImageTagLink,
