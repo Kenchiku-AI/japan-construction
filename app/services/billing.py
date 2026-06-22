@@ -4,6 +4,7 @@ import stripe
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models.company import Company
 from app.db.models.project import Project, ProjectStatus
 
 logger = logging.getLogger(__name__)
@@ -47,11 +48,7 @@ def billing_in_good_standing(company: Company) -> bool:
 
   return subscription.status in HEALTHY_SUBSCRIPTION_STATUSES
 
-async def can_use_billed_features(company_id: str, db: AsyncSession) -> tuple[bool, str | None]:
-  company = await db.get(Company, company_id)
-  if not company:
-    raise HTTPException(status_code=404, detail="Company not found")
-
+async def can_use_billed_features(company: Company) -> tuple[bool, str | None]:
   if not await has_payment_method(company):
     return False, "payment_method_required"
 
