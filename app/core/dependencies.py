@@ -82,7 +82,6 @@ def require_company_manager(user: User, company_id: UUID):
       detail="Manager privileges required",
     )
 
-# Add this function at the bottom
 async def require_project_access(
   user: User,
   project_id: UUID,

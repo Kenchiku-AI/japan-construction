@@ -11,8 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.session import get_db
 from app.db.models.company import Company
+from app.db.models.user import User, UserLineLink
 from app.services.billing import get_company_by_stripe_customer_id
 from app.services.email import send_line_link_confirmation_email
+from app.services.reports import handle_line_message
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +123,19 @@ async def line_webhook(
         "LINE message received | company_id=%s user_id=%s sender_id=%s source_type=%s text=%s",
         company.id, link.user_id, sender_id, source_type, text,
       )
-      # TODO: persist/handle message for link.user_id
+
+      user_result = await db.execute(
+        select(User).where(User.id == link.user_id)
+      )
+      user = user_result.scalar_one_or_none()
+
+      background_tasks.add_task(
+        handle_line_message,
+        text=text,
+        user=user,
+        company_id=company.id,
+        db=db,
+      )
 
     else:
       candidate_code = text.strip().upper() if text else None
