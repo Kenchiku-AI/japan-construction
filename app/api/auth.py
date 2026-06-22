@@ -49,6 +49,11 @@ async def login(
       detail="Invalid email or password",
     )
 
+  await db.execute(
+    delete(RefreshToken).where(RefreshToken.user_id == user.id)
+  )
+  await db.flush()
+
   access_token = create_access_token({"sub": str(user.id)})
   refresh_token = create_refresh_token({"sub": str(user.id)})
   hashed_refresh_token = hash_token(refresh_token)
@@ -111,9 +116,9 @@ async def refresh_token(
   result = await db.execute(
     select(RefreshToken).where(
       RefreshToken.token_hash == hash_token(refresh_token)
-    )
+    ).with_for_update()
   )
-  db_token = result.scalar_one_or_none()
+  db_token = result.scalars().first()
 
   if not db_token:
     raise HTTPException(

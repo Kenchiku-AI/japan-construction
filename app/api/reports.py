@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 from typing import Optional
-from app.db.models.company import Company
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -231,10 +230,6 @@ async def create_report(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  allowed, reason = await can_use_billed_features(company)
-  if not allowed:
-    raise HTTPException(status_code=402, detail=reason)
-
   stmt = (
     select(ReportTemplate)
     .where(ReportTemplate.id == payload.template_id)
@@ -253,6 +248,10 @@ async def create_report(
     parent_id=payload.parent_id,
     db=db
   )
+
+  allowed, reason = await can_use_billed_features(company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(status_code=402, detail=reason)
 
   template_company_link = (
     await db.execute(
@@ -768,10 +767,6 @@ async def update_report(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  allowed, reason = await can_use_billed_features(company)
-  if not allowed:
-    raise HTTPException(status_code=402, detail=reason)
-
   stmt = (
     select(Report)
     .where(Report.id == report_id)
@@ -791,6 +786,10 @@ async def update_report(
     parent_id=report.parent_id,
     db=db,
   )
+
+  allowed, reason = await can_use_billed_features(company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(status_code=402, detail=reason)
 
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
@@ -944,10 +943,6 @@ async def create_report_image(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  allowed, reason = await can_use_billed_features(company)
-  if not allowed:
-    raise HTTPException(status_code=402, detail=reason)
-
   stmt = select(Report).where(Report.id == report_id)
   result = await db.execute(stmt)
   report = result.scalar_one_or_none()
@@ -960,6 +955,10 @@ async def create_report_image(
     parent_id=report.parent_id,
     db=db,
   )
+
+  allowed, reason = await can_use_billed_features(company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(status_code=402, detail=reason)
 
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
@@ -1099,10 +1098,6 @@ async def update_report_image(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  allowed, reason = await can_use_billed_features(company)
-  if not allowed:
-    raise HTTPException(status_code=402, detail=reason)
-
   stmt = select(Report).where(Report.id == report_id)
   result = await db.execute(stmt)
   report: Report | None = result.scalar_one_or_none()
@@ -1115,6 +1110,10 @@ async def update_report_image(
     parent_id=report.parent_id,
     db=db,
   )
+
+  allowed, reason = await can_use_billed_features(company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(status_code=402, detail=reason)
 
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
@@ -1174,10 +1173,6 @@ async def create_report_image_tag(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  allowed, reason = await can_use_billed_features(company)
-  if not allowed:
-    raise HTTPException(status_code=402, detail=reason)
-
   stmt = select(Report).where(Report.id == report_id)
   result = await db.execute(stmt)
   report: Report | None = result.scalar_one_or_none()
@@ -1190,6 +1185,10 @@ async def create_report_image_tag(
     parent_id=report.parent_id,
     db=db,
   )
+
+  allowed, reason = await can_use_billed_features(company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(status_code=402, detail=reason)
 
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
@@ -1256,10 +1255,6 @@ async def delete_report_image_tag(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  allowed, reason = await can_use_billed_features(company)
-  if not allowed:
-    raise HTTPException(status_code=402, detail=reason)
-
   stmt = select(Report).where(Report.id == report_id)
   result = await db.execute(stmt)
   report: Report | None = result.scalar_one_or_none()
@@ -1272,6 +1267,10 @@ async def delete_report_image_tag(
     parent_id=report.parent_id,
     db=db,
   )
+
+  allowed, reason = await can_use_billed_features(company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(status_code=402, detail=reason)
 
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
@@ -1313,11 +1312,7 @@ async def report_speech(
   payload: ReportSpeechRequest,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
-):
-  allowed, reason = await can_use_billed_features(company)
-  if not allowed:
-    raise HTTPException(status_code=402, detail=reason)
-    
+):    
   stmt = (
     select(Report)
     .where(Report.id == report_id)
@@ -1335,6 +1330,10 @@ async def report_speech(
     parent_id=report.parent_id,
     db=db,
   )
+
+  allowed, reason = await can_use_billed_features(company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(status_code=402, detail=reason)
 
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
@@ -1364,10 +1363,6 @@ async def delete_report(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  allowed, reason = await can_use_billed_features(company)
-  if not allowed:
-    raise HTTPException(status_code=402, detail=reason)
-
   stmt = (
     select(Report)
     .where(Report.id == report_id)
@@ -1385,6 +1380,10 @@ async def delete_report(
     parent_id=report.parent_id,
     db=db,
   )
+
+  allowed, reason = await can_use_billed_features(company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(status_code=402, detail=reason)
 
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
@@ -1417,10 +1416,6 @@ async def delete_report_image(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  allowed, reason = await can_use_billed_features(company)
-  if not allowed:
-    raise HTTPException(status_code=402, detail=reason)
-
   stmt = select(Report).where(Report.id == report_id)
   result = await db.execute(stmt)
   report: Report | None = result.scalar_one_or_none()
@@ -1433,6 +1428,10 @@ async def delete_report_image(
     parent_id=report.parent_id,
     db=db,
   )
+
+  allowed, reason = await can_use_billed_features(company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(status_code=402, detail=reason)
 
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
