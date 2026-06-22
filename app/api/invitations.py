@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, delete
@@ -73,7 +73,7 @@ async def accept_invitation(
   if not invitation:
     raise HTTPException(status_code=404, detail="Invitation not found or invalid")
 
-  if invitation.expires_at < datetime.utcnow():
+  if invitation.expires_at < datetime.now(timezone.utc):
     raise HTTPException(status_code=410, detail="Invitation expired")
 
   if invitation.email != current_user.email:

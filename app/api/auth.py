@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from typing import Optional
 import secrets
@@ -17,7 +17,7 @@ from app.core.security import (
   hash_password,
   hash_token,
   get_cookie_settings,
-  line_link_code_for_user,
+  generate_unique_line_link_code,
 )
 from app.db.models.refresh_token import RefreshToken
 from app.db.models.user import User
@@ -49,6 +49,11 @@ async def login(
       detail="Invalid email or password",
     )
 
+  await db.execute(
+    delete(RefreshToken).where(RefreshToken.user_id == user.id)
+  )
+  await db.flush()
+
   access_token = create_access_token({"sub": str(user.id)})
   refresh_token = create_refresh_token({"sub": str(user.id)})
   hashed_refresh_token = hash_token(refresh_token)
@@ -58,7 +63,7 @@ async def login(
       id=uuid4(),
       user_id=user.id,
       token_hash=hashed_refresh_token,
-      expires_at=datetime.utcnow() + timedelta(days=30),
+      expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     )
   )
   await db.commit()
@@ -111,33 +116,75 @@ async def refresh_token(
   result = await db.execute(
     select(RefreshToken).where(
       RefreshToken.token_hash == hash_token(refresh_token)
-    )
+    ).with_for_update()
   )
-  db_token = result.scalar_one_or_none()
+  db_token = result.scalars().first()
 
   if not db_token:
-    raise HTTPException(status_code=401, detail="Invalid refresh token")
+    raise HTTPException(
+      status_code=401, 
+      detail="Invalid refresh token"
+    )
+
+  if db_token.expires_at < datetime.now(timezone.utc):
+    await db.delete(db_token)
+    await db.commit()
+
+    raise HTTPException(
+      status_code=401,
+      detail="Refresh token expired",
+    )
 
   user_result = await db.execute(
     select(User).where(User.id == db_token.user_id)
   )
-  user = user_result.scalar_one()
+  user = user_result.scalar_one_or_none()
 
-  access_token = create_access_token({"sub": str(user.id)})
+  if not user:
+    await db.delete(db_token)
+    await db.commit()
+
+    raise HTTPException(
+      status_code=401,
+      detail="Invalid refresh token",
+    )
+
+  new_access_token = create_access_token({ "sub": str(user.id) })
+  new_refresh_token = create_refresh_token({ "sub": str(user.id) })
+
+  await db.delete(db_token)
+
+  db.add(
+    RefreshToken(
+      id=uuid4(),
+      user_id=user.id,
+      token_hash=hash_token(new_refresh_token),
+      expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    )
+  )
+
+  await db.commit()
 
   if "refreshToken" in request.cookies:
     cookie_settings = get_cookie_settings()
-    response = JSONResponse(content={"token_type": "bearer"})
+    response = JSONResponse(
+      content={"token_type": "bearer"}
+    )
     response.set_cookie(
       key="accessToken",
-      value=access_token,
+      value=new_access_token,
+      **cookie_settings,
+    )
+    response.set_cookie(
+      key="refreshToken",
+      value=new_refresh_token,
       **cookie_settings,
     )
     return response
 
   return TokenSchema(
-    access_token=access_token,
-    refresh_token=refresh_token,
+    access_token=new_access_token,
+    refresh_token=new_refresh_token,
     token_type="bearer",
   )
 
@@ -165,13 +212,14 @@ async def signup(
   if not invitation:
     raise HTTPException(status_code=404, detail="Invitation not found or invalid")
 
-  if invitation.expires_at < datetime.utcnow():
+  if invitation.expires_at < datetime.now(timezone.utc):
     raise HTTPException(status_code=400, detail="Invitation expired")
 
   company = await db.get(Company, invitation.company_id)
   if not company:
     raise HTTPException(status_code=404, detail="Company not found")
 
+  line_link_code = await generate_unique_line_link_code(db)
   user = User(
     email=payload.email,
     first_name=payload.first_name,
@@ -179,8 +227,8 @@ async def signup(
     hashed_password=hash_password(payload.password),
     company_id=company.id,
     role=invitation.role,
+    line_link_code=line_link_code,
   )
-  user.line_link_code = line_link_code_for_user(user.id)
   db.add(user)
   await db.flush()
 
@@ -188,12 +236,14 @@ async def signup(
   refresh_token = create_refresh_token({"sub": str(user.id)})
   hashed_refresh_token = hash_token(refresh_token)
 
+  await db.delete(invitation)
+
   db.add(
     RefreshToken(
       id=uuid4(),
       user_id=user.id,
       token_hash=hashed_refresh_token,
-      expires_at=datetime.utcnow() + timedelta(days=30),
+      expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     )
   )
   await db.commit()
@@ -266,7 +316,7 @@ async def forgot_password(
   token = secrets.token_urlsafe(32)
   hashed_token = hash_token(token)
 
-  expires_at = datetime.utcnow() + timedelta(minutes=30)
+  expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
 
   reset_entry = PasswordResetToken(
     id=str(uuid4()),
@@ -303,14 +353,33 @@ async def reset_password(
   if not db_token:
     raise HTTPException(status_code=404, detail="Invalid token")
 
-  if db_token.expires_at < datetime.utcnow():
+  if db_token.expires_at < datetime.now(timezone.utc):
+    await db.delete(db_token)
+    await db.commit()
+
     raise HTTPException(status_code=400, detail="Token expired")
 
   user = await db.get(User, db_token.user_id)
 
+  if not user:
+    await db.delete(db_token)
+    await db.commit()
+
+    raise HTTPException(
+      status_code=404,
+      detail="User not found",
+    )
+
   user.hashed_password = hash_password(payload.new_password)
 
   await db.delete(db_token)
+
+  await db.execute(
+    delete(RefreshToken).where(
+      RefreshToken.user_id == user.id
+    )
+  )
+
   await db.commit()
 
   return {"success": True}

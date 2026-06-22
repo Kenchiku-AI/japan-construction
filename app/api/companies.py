@@ -449,10 +449,5 @@ async def check_billing_status(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  company = await db.get(Company, company_id)
-  if not company:
-    raise HTTPException(status_code=404, detail="Company not found")
-
-  allowed, reason = await can_use_billed_features(company)
-
+  allowed, reason = await can_use_billed_features(company_id, db)
   return {"success": allowed, "reason": reason}
