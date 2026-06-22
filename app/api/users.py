@@ -7,7 +7,7 @@ import secrets
 
 from app.core.dependencies import get_current_user
 from app.core.config import settings
-from app.core.security import hash_token
+from app.core.security import hash_token, generate_unique_line_link_code
 from app.db.models.user import User
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.session import get_db
@@ -114,7 +114,7 @@ async def patch_user(
     )
 
   if current_user.role == "manager":
-    if update_data["role"] == "admin":
+    if update_data.get("role") == "admin":
       raise HTTPException(
         status_code=403,
         detail="Cannot assign admin role",
@@ -197,13 +197,14 @@ async def create_admin(
       detail="Email already registered",
     )
 
+  line_link_code = await generate_unique_line_link_code(db)
   user = User(
     email=payload.email,
     first_name=payload.first_name,
     last_name=payload.last_name,
-    role="admin"
+    role="admin",
+    line_link_code=line_link_code
   )
-  user.line_link_code = line_link_code_for_user(user.id)
   db.add(user)
   await db.flush()
 
