@@ -7,6 +7,7 @@ from app.db.models.project import Project, ProjectStatus
 from app.db.models.project_guest_link import ProjectGuestLink
 from app.db.models.report import (
   ReportParentType,
+  ReportStatus,
   ReportTemplate,
   ReportTemplateField,
   Report,

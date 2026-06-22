@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 from sqlalchemy import Column, String, DateTime, ForeignKey, UniqueConstraint
@@ -42,13 +42,8 @@ class User(Base):
 
   line_link_code = Column(String, nullable=False, unique=True, index=True)
 
-  created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-  updated_at = Column(
-    DateTime,
-    default=datetime.utcnow,
-    onupdate=datetime.utcnow,
-    nullable=False,
-  )
+  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+  updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 class UserLineLink(Base):
   __tablename__ = "user_line_links"

@@ -3,7 +3,7 @@ from uuid import UUID
 from datetime import datetime
 from pydantic import BaseModel
 
-from app.db.models.report import ReportParentType
+from app.db.models.report import ReportParentType, ReportStatus
 
 class ReportCreate(BaseModel):
   name: str
@@ -13,6 +13,7 @@ class ReportCreate(BaseModel):
 class ReportUpdate(BaseModel):
   name: Optional[str] = None
   field_values: Optional[Dict[UUID, str]] = None
+  status: ReportStatus | None = None
 
 class ReportFieldRead(BaseModel):
   id: UUID
@@ -30,6 +31,7 @@ class ReportRead(BaseModel):
   template_id: UUID
   parent_id: UUID
   parent_type: ReportParentType
+  status: ReportStatus
   created_at: datetime
   updated_at: datetime
   fields: List[ReportFieldRead]

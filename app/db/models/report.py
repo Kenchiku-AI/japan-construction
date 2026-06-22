@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from sqlalchemy import (
@@ -21,6 +21,10 @@ from app.db.base import Base
 class ReportParentType(str, Enum):
   project = "project"
   company = "company"
+
+class ReportStatus(str, Enum):
+  open = "open"
+  closed = "closed"
 
 class ReportTemplate(Base):
   __tablename__ = "report_templates"
@@ -46,8 +50,8 @@ class ReportTemplate(Base):
     cascade="all, delete-orphan",
   )
 
-  created_at = Column(DateTime, default=datetime.utcnow)
-  updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+  updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 class ReportTemplateField(Base):
   __tablename__ = "report_template_fields"
@@ -82,6 +86,8 @@ class Report(Base):
   parent_type = Column(SQLEnum(ReportParentType), nullable=False)
   parent_id = Column(UUID(as_uuid=True), nullable=False)
 
+  status = Column(SQLEnum(ReportStatus), nullable=False, default=ReportStatus.open)
+
   fields = relationship(
     "ReportField",
     back_populates="report",
@@ -96,8 +102,8 @@ class Report(Base):
 
   template = relationship("ReportTemplate")
 
-  created_at = Column(DateTime, default=datetime.utcnow)
-  updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+  updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
   created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
   creator = relationship(
@@ -146,7 +152,7 @@ class CompanyReportTemplate(Base):
     index=True,
   )
 
-  created_at = Column(DateTime, default=datetime.utcnow)
+  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
   company = relationship("Company", back_populates="company_report_templates")
   report_template = relationship(
@@ -173,7 +179,7 @@ class ReportImage(Base):
   width = Column(Integer, nullable=True)
   height = Column(Integer, nullable=True)
   description = Column(String, nullable=True)
-  created_at = Column(DateTime, default=datetime.utcnow)
+  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
   created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
   report = relationship("Report", back_populates="images")
@@ -201,7 +207,7 @@ class ReportImageTag(Base):
 
   company = relationship("Company", back_populates="image_tags")
 
-  created_at = Column(DateTime, default=datetime.utcnow)
+  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
   tag_links = relationship(
     "ReportImageTagLink",

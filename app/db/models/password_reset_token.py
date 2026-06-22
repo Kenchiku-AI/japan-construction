@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
@@ -13,4 +13,4 @@ class PasswordResetToken(Base):
   token_hash = Column(String, nullable=False, index=True)
   expires_at = Column(DateTime, nullable=False)
 
-  created_at = Column(DateTime, default=datetime.utcnow)
+  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

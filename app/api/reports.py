@@ -18,6 +18,7 @@ from app.db.models import (
   ReportTemplate,
   ReportTemplateField,
   ReportParentType,
+  ReportStatus,
   ReportImage,
   ReportImageTag,
   ReportImageTagLink,
@@ -791,6 +792,20 @@ async def update_report(
   if not allowed and current_user.role != "admin":
     raise HTTPException(status_code=402, detail=reason)
 
+  if report.status != ReportStatus.open:
+    if current_user.role not in {"admin", "manager"}:
+      raise HTTPException(
+        status_code=403,
+        detail="This report is closed and cannot be edited",
+      )
+    
+    non_status_changes = payload.name is not None or payload.field_values is not None
+    if non_status_changes:
+      raise HTTPException(
+        status_code=403,
+        detail="A closed report can only have its status changed",
+      )
+
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
       await require_project_access(current_user, report.parent_id, company_id, db)
@@ -832,6 +847,19 @@ async def update_report(
 
   if payload.name is not None:
     report.name = payload.name
+
+  if payload.status is not None:
+    if current_user.role not in {"admin", "manager"}:
+      raise HTTPException(
+        status_code=403,
+        detail="Only managers and admins can change report status",
+      )
+    if current_user.role == "manager" and current_user.company_id != company_id:
+      raise HTTPException(
+        status_code=403,
+        detail="Cannot update status for reports outside your company",
+      ) 
+    report.status = payload.status
 
   report.updated_at = datetime.now(timezone.utc)
 
@@ -959,6 +987,8 @@ async def create_report_image(
   allowed, reason = await can_use_billed_features(company_id, db)
   if not allowed and current_user.role != "admin":
     raise HTTPException(status_code=402, detail=reason)
+
+  require_report_open(report)
 
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
@@ -1115,6 +1145,8 @@ async def update_report_image(
   if not allowed and current_user.role != "admin":
     raise HTTPException(status_code=402, detail=reason)
 
+  require_report_open(report)
+
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
       await require_project_access(current_user, report.parent_id, company_id, db)
@@ -1189,6 +1221,8 @@ async def create_report_image_tag(
   allowed, reason = await can_use_billed_features(company_id, db)
   if not allowed and current_user.role != "admin":
     raise HTTPException(status_code=402, detail=reason)
+
+  require_report_open(report)
 
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
@@ -1272,6 +1306,8 @@ async def delete_report_image_tag(
   if not allowed and current_user.role != "admin":
     raise HTTPException(status_code=402, detail=reason)
 
+  require_report_open(report)
+
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
       await require_project_access(current_user, report.parent_id, company_id, db)
@@ -1334,6 +1370,8 @@ async def report_speech(
   allowed, reason = await can_use_billed_features(company_id, db)
   if not allowed and current_user.role != "admin":
     raise HTTPException(status_code=402, detail=reason)
+
+  require_report_open(report)
 
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
@@ -1432,6 +1470,8 @@ async def delete_report_image(
   allowed, reason = await can_use_billed_features(company_id, db)
   if not allowed and current_user.role != "admin":
     raise HTTPException(status_code=402, detail=reason)
+
+  require_report_open(report)
 
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
@@ -1749,3 +1789,10 @@ async def delete_report_template(
   await db.commit()
 
   return None
+
+def require_report_open(report: Report) -> None:
+  if report.status != ReportStatus.open:
+    raise HTTPException(
+        status_code=403,
+        detail="This report is closed and cannot be edited",
+    )
