@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 from typing import Optional
 from app.db.models.company import Company
@@ -314,8 +314,8 @@ async def create_report(
     template_id=template.id,
     parent_id=payload.parent_id,
     parent_type=parent_type,
-    created_at=datetime.utcnow(),
-    updated_at=datetime.utcnow(),
+    created_at=datetime.now(timezone.utc),
+    updated_at=datetime.now(timezone.utc),
     created_by=current_user.id,
   )
 
@@ -834,7 +834,7 @@ async def update_report(
   if payload.name is not None:
     report.name = payload.name
 
-  report.updated_at = datetime.utcnow()
+  report.updated_at = datetime.now(timezone.utc)
 
   if payload.field_values:
     field_map = {f.id: f for f in report.fields}

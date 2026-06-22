@@ -1,5 +1,5 @@
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, HTTPException
@@ -50,7 +50,7 @@ async def create_company_invitation(
     token_hash=hashed_token,
     company_id=company.id,
     role=payload.role,
-    expires_at=datetime.utcnow() + timedelta(hours=INVITE_EXPIRATION_HOURS),
+    expires_at=datetime.now(timezone.utc) + timedelta(hours=INVITE_EXPIRATION_HOURS),
   )
 
   db.add(invitation)
@@ -152,7 +152,7 @@ async def create_project_guest_invitation(
       id=str(uuid4()),
       user_id=new_user.id,
       token_hash=hash_token(token),
-      expires_at=datetime.utcnow() + timedelta(hours=24),
+      expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
     )
     db.add(reset_entry)
     await db.commit()

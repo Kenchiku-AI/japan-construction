@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from typing import Optional
 import secrets
@@ -58,7 +58,7 @@ async def login(
       id=uuid4(),
       user_id=user.id,
       token_hash=hashed_refresh_token,
-      expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+      expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     )
   )
   await db.commit()
@@ -121,7 +121,7 @@ async def refresh_token(
       detail="Invalid refresh token"
     )
 
-  if db_token.expires_at < datetime.utcnow():
+  if db_token.expires_at < datetime.now(timezone.utc):
     await db.delete(db_token)
     await db.commit()
 
@@ -154,7 +154,7 @@ async def refresh_token(
       id=uuid4(),
       user_id=user.id,
       token_hash=hash_token(new_refresh_token),
-      expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+      expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     )
   )
 
@@ -207,7 +207,7 @@ async def signup(
   if not invitation:
     raise HTTPException(status_code=404, detail="Invitation not found or invalid")
 
-  if invitation.expires_at < datetime.utcnow():
+  if invitation.expires_at < datetime.now(timezone.utc):
     raise HTTPException(status_code=400, detail="Invitation expired")
 
   company = await db.get(Company, invitation.company_id)
@@ -238,7 +238,7 @@ async def signup(
       id=uuid4(),
       user_id=user.id,
       token_hash=hashed_refresh_token,
-      expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+      expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     )
   )
   await db.commit()
@@ -311,7 +311,7 @@ async def forgot_password(
   token = secrets.token_urlsafe(32)
   hashed_token = hash_token(token)
 
-  expires_at = datetime.utcnow() + timedelta(minutes=30)
+  expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
 
   reset_entry = PasswordResetToken(
     id=str(uuid4()),
@@ -348,7 +348,7 @@ async def reset_password(
   if not db_token:
     raise HTTPException(status_code=404, detail="Invalid token")
 
-  if db_token.expires_at < datetime.utcnow():
+  if db_token.expires_at < datetime.now(timezone.utc):
     await db.delete(db_token)
     await db.commit()
 

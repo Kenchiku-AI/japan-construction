@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, status, APIRouter, Depends, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -210,7 +210,7 @@ async def create_admin(
 
   token = secrets.token_urlsafe(32)
   hashed_token = hash_token(token)
-  expires_at = datetime.utcnow() + timedelta(minutes=30)
+  expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
   
   reset_entry = PasswordResetToken(
     id=str(uuid4()),

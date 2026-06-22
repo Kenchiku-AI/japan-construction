@@ -1,7 +1,7 @@
 import asyncio
 import secrets
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -34,7 +34,7 @@ async def create_super_user():
 
     token = secrets.token_urlsafe(32)
     hashed_token = hash_token(token)
-    expires_at = datetime.utcnow() + timedelta(minutes=30)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
 
     reset_entry = PasswordResetToken(
       id=str(uuid.uuid4()),
