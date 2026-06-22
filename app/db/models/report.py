@@ -22,6 +22,10 @@ class ReportParentType(str, Enum):
   project = "project"
   company = "company"
 
+class ReportStatus(str, Enum):
+  open = "open"
+  closed = "closed"
+
 class ReportTemplate(Base):
   __tablename__ = "report_templates"
 
@@ -81,6 +85,8 @@ class Report(Base):
 
   parent_type = Column(SQLEnum(ReportParentType), nullable=False)
   parent_id = Column(UUID(as_uuid=True), nullable=False)
+
+  status = Column(SQLEnum(ReportStatus), nullable=False, default=ReportStatus.open)
 
   fields = relationship(
     "ReportField",
