@@ -4,7 +4,7 @@ import hmac
 import logging
 
 import stripe
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, BackgroundTasks
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,6 +82,7 @@ async def stripe_webhook(
 async def line_webhook(
   company_id: str,
   request: Request,
+  background_tasks: BackgroundTasks,
   x_line_signature: str = Header(..., alias="X-Line-Signature"),
   db: AsyncSession = Depends(get_db),
 ):
