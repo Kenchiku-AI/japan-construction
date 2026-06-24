@@ -12,7 +12,7 @@ from app.db.models.report import Report, ReportTemplate, ReportParentType, Repor
 from app.db.models.project import Project
 from app.db.models.user import User
 from app.db.models.project_guest_link import ProjectGuestLink
-from app.services.openai import select_report_by_context, transcribe_and_extract_json
+from app.services.openai import filter_reports_by_context, transcribe_and_extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ async def find_applicable_report(
     )
     .options(selectinload(Report.fields))
     .order_by(Report.updated_at.desc())
-    .limit(5)
+    .limit(10)
   )
 
   guest_reports_stmt = (
@@ -106,19 +106,29 @@ async def find_applicable_report(
     )
     .options(selectinload(Report.fields))
     .order_by(Report.updated_at.desc())
-    .limit(5)
+    .limit(10)
   )
 
   if user.company_id == company_id:
     result = await db.execute(company_reports_stmt)
-    reports = result.scalars().all()
   else:
     result = await db.execute(guest_reports_stmt)
-    reports = result.scalars().all()
+
+  reports = result.scalars().all()
 
   if not reports:
     return None
-  if len(reports) == 1:
-    return reports[0]
 
-  return await select_report_by_context(message_text, reports)
+  # Fetch all relevant projects in one query
+  project_ids = [r.parent_id for r in reports]
+  project_result = await db.execute(
+    select(Project).where(Project.id.in_(project_ids))
+  )
+  project_map = {p.id: p for p in project_result.scalars().all()}
+
+  applicable = await filter_reports_by_context(message_text, reports, project_map)
+
+  if not applicable:
+    return None
+
+  return max(applicable, key=lambda r: r.created_at)

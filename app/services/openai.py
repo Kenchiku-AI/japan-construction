@@ -197,18 +197,23 @@ async def get_image_tags_and_description(
 
   return safe_json_loads(response.output_text)
 
-async def select_report_by_context(
+async def filter_reports_by_context(
   message_text: str,
   reports: list[Report],
-) -> Report | None:
+  project_map: dict,
+) -> list[Report]:
   candidates = "\n".join(
-    f'- id: "{r.id}" | name: "{r.name}" | fields: {", ".join(f.description for f in r.fields)}'
+    f'- id: "{r.id}"'
+    f' | report name: "{r.name}"'
+    f' | project name: "{project_map[r.parent_id].name if r.parent_id in project_map else ""}"'
+    f' | project description: "{project_map[r.parent_id].description if r.parent_id in project_map else ""}"'
+    f' | fields: {", ".join(f.description for f in r.fields)}'
     for r in reports
   )
 
   prompt = f"""
 あなたは建設現場の報告書管理システムです。
-以下のメッセージが最も関係する報告書を1つ選んでください。
+以下のメッセージが関係する可能性のある報告書をすべて選んでください。
 報告書にはそれぞれフィールドがあります。メッセージの内容がどのフィールドに当てはまるかを考慮して選択してください。
 
 メッセージ:
@@ -218,10 +223,10 @@ async def select_report_by_context(
 {candidates}
 
 必ず以下の形式のJSONのみを返してください:
-{{"report_id": "<選択したreport_id>"}}
+{{"report_ids": ["<id1>", "<id2>"]}}
 
 どの報告書にも該当しない場合は:
-{{"report_id": null}}
+{{"report_ids": []}}
 """.strip()
 
   response = await client.responses.create(
@@ -233,13 +238,10 @@ async def select_report_by_context(
   try:
     parsed = json.loads(response.output_text.strip())
   except json.JSONDecodeError:
-    return reports[0]
+    return []
 
-  selected_id = parsed.get("report_id")
-  if not selected_id:
-    return None
-
-  return next((r for r in reports if str(r.id) == selected_id), None)
+  report_ids = parsed.get("report_ids", [])
+  return [r for r in reports if str(r.id) in report_ids]
 
 def safe_json_loads(text: str):
   match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
