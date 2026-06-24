@@ -19,6 +19,7 @@ class ProjectRead(ProjectBase):
   id: UUID
   company_id: UUID
   status: str
+  line_link_code: str
 
   model_config = {
     "from_attributes": True
