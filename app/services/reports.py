@@ -46,7 +46,7 @@ async def handle_line_message(
   if report is None:
     logger.info(
       "LINE message: no applicable open report found | user_id=%s company_id=%s",
-      user_id, company_id,
+      user.id, company_id,
     )
     return
 
@@ -59,7 +59,7 @@ async def handle_line_message(
   if not changed_fields:
     logger.info(
       "LINE message: no fields matched | report_id=%s user_id=%s",
-      report.id, user_id,
+      report.id, user.id,
     )
     return
 
@@ -73,7 +73,7 @@ async def handle_line_message(
 
   logger.info(
     "LINE message: updated %d field(s) on report_id=%s | user_id=%s",
-    len(changed_fields), report.id, user_id,
+    len(changed_fields), report.id, user.id,
   )
 
 async def find_applicable_report(
