@@ -5,16 +5,19 @@ import logging
 
 import stripe
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, BackgroundTasks
-from sqlalchemy import select
+
+import sqlalchemy as sa
+from sqlalchemy import select, delete, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_db
 from app.db.models.company import Company
 from app.db.models.user import User, UserLineLink
+from app.db.models.project import Project
 from app.services.billing import get_company_by_stripe_customer_id
 from app.services.email import send_line_link_confirmation_email
-from app.services.reports import handle_line_message
+from app.services.reports import handle_line_message, handle_line_group_message
 
 logger = logging.getLogger(__name__)
 
@@ -109,72 +112,169 @@ async def line_webhook(
 
     sender_id = event.get("source", {}).get("userId")
     source_type = event.get("source", {}).get("type")
-    text = message.get("text")
+    group_id = event.get("source", {}).get("groupId")
+    text = message.get("text", "").strip()
+    candidate_code = text.upper()
 
-    link_result = await db.execute(
-      select(UserLineLink).where(
-        UserLineLink.company_id == company.id,
-        UserLineLink.line_user_id == sender_id,
-      )
-    )
-    link = link_result.scalar_one_or_none()
+    # --- Group message ---
+    if source_type == "group" and group_id:
 
-    if link:
-      logger.info(
-        "LINE message received | company_id=%s user_id=%s sender_id=%s source_type=%s text=%s",
-        company.id, link.user_id, sender_id, source_type, text,
+      # P- code: link or re-link project to this group
+      if candidate_code.startswith("P-"):
+        project_result = await db.execute(
+          select(Project).where(Project.line_link_code == candidate_code)
+        )
+        project = project_result.scalar_one_or_none()
+
+        if project:
+          await db.execute(
+            sa.update(Project)
+            .where(Project.line_group_id == group_id)
+            .values(line_group_id=None)
+          )
+          project.line_group_id = group_id
+          await db.commit()
+
+          logger.info(
+            "LINE group linked to project | company_id=%s project_id=%s group_id=%s",
+            company.id, project.id, group_id,
+          )
+        else:
+          logger.warning(
+            "LINE group sent unrecognized project code | company_id=%s group_id=%s code=%s",
+            company.id, group_id, candidate_code,
+          )
+        continue
+
+      # Regular group message: look up project by group_id
+      project_result = await db.execute(
+        select(Project).where(
+          Project.line_group_id == group_id,
+          Project.company_id == company.id,
+        )
       )
+      project = project_result.scalar_one_or_none()
+
+      if not project:
+        logger.warning(
+          "LINE message from unlinked group | company_id=%s group_id=%s",
+          company.id, group_id,
+        )
+        continue
+
+      user_link_result = await db.execute(
+        select(UserLineLink).where(
+          UserLineLink.company_id == company.id,
+          UserLineLink.line_user_id == sender_id,
+        )
+      )
+      user_link = user_link_result.scalar_one_or_none()
+
+      if not user_link:
+        logger.warning(
+          "LINE group message from unlinked user | company_id=%s group_id=%s sender_id=%s",
+          company.id, group_id, sender_id,
+        )
+        continue
 
       user_result = await db.execute(
-        select(User).where(User.id == link.user_id)
+        select(User).where(User.id == user_link.user_id)
       )
       user = user_result.scalar_one_or_none()
 
-      background_tasks.add_task(
-        handle_line_message,
-        text=text,
-        user=user,
-        company_id=company.id,
-        db=db,
-      )
-
-    else:
-      candidate_code = text.strip().upper() if text else None
-
-      user_result = await db.execute(
-        select(User).where(User.line_link_code == candidate_code)
-      )
-      user_by_code = user_result.scalar_one_or_none()
-
-      if user_by_code:
-        db.add(UserLineLink(
-          user_id=user_by_code.id,
-          company_id=company.id,
-          line_user_id=sender_id,
-        ))
-        await db.commit()
-
-        logger.info(
-          "LINE account linked | company_id=%s user_id=%s sender_id=%s",
-          company.id, user_by_code.id, sender_id,
-        )
-
+      if user:
         background_tasks.add_task(
-          send_line_link_confirmation_email,
-          email=user_by_code.email,
-          company_name=company.name,
+          handle_line_group_message,
+          text=text,
+          user=user,
+          project_id=project.id,
+          db=db,
         )
+
+    # --- DM message ---
+    else:
+      link_result = await db.execute(
+        select(UserLineLink).where(
+          UserLineLink.company_id == company.id,
+          UserLineLink.line_user_id == sender_id,
+        )
+      )
+      link = link_result.scalar_one_or_none()
+
+      if link:
+        logger.info(
+          "LINE DM received | company_id=%s user_id=%s sender_id=%s text=%s",
+          company.id, link.user_id, sender_id, text,
+        )
+
+        user_result = await db.execute(
+          select(User).where(User.id == link.user_id)
+        )
+        user = user_result.scalar_one_or_none()
+
+        if user:
+          background_tasks.add_task(
+            handle_line_message,
+            text=text,
+            user=user,
+            company_id=company.id,
+            db=db,
+          )
+
+      elif candidate_code.startswith("U-"):
+        user_result = await db.execute(
+          select(User).where(User.line_link_code == candidate_code)
+        )
+        user_by_code = user_result.scalar_one_or_none()
+
+        if user_by_code:
+          await db.execute(
+            delete(UserLineLink).where(
+              or_(
+                and_(
+                  UserLineLink.user_id == user_by_code.id,
+                  UserLineLink.company_id == company.id,
+                ),
+                and_(
+                  UserLineLink.company_id == company.id,
+                  UserLineLink.line_user_id == sender_id,
+                ),
+              )
+            )
+          )
+          db.add(UserLineLink(
+            user_id=user_by_code.id,
+            company_id=company.id,
+            line_user_id=sender_id,
+          ))
+          await db.commit()
+
+          logger.info(
+            "LINE account linked | company_id=%s user_id=%s sender_id=%s",
+            company.id, user_by_code.id, sender_id,
+          )
+
+          background_tasks.add_task(
+            send_line_link_confirmation_email,
+            email=user_by_code.email,
+            company_name=company.name,
+          )
+        else:
+          logger.warning(
+            "LINE DM with unrecognized code | company_id=%s sender_id=%s code=%s",
+            company.id, sender_id, candidate_code,
+          )
       else:
         logger.warning(
-          "LINE message from unrecognized sender | company_id=%s sender_id=%s text=%s",
+          "LINE DM from unrecognized sender | company_id=%s sender_id=%s text=%s",
           company.id, sender_id, text,
         )
 
   return {"status": "ok"}
 
+
 def verify_line_signature(body: bytes, signature: str, channel_secret: str) -> bool:
   expected = base64.b64encode(
     hmac.new(channel_secret.encode(), body, hashlib.sha256).digest()
   ).decode()
-
   return hmac.compare_digest(expected, signature)

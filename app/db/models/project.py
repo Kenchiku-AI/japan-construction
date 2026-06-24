@@ -46,5 +46,8 @@ class Project(Base):
     cascade="all, delete-orphan",
   )
 
+  line_link_code = Column(String, nullable=False, unique=True, index=True)
+  line_group_id = Column(String, nullable=True, unique=True, index=True)
+
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
   updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

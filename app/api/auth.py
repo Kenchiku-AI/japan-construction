@@ -17,7 +17,7 @@ from app.core.security import (
   hash_password,
   hash_token,
   get_cookie_settings,
-  generate_unique_line_link_code,
+  generate_unique_user_line_link_code,
 )
 from app.db.models.refresh_token import RefreshToken
 from app.db.models.user import User
@@ -219,7 +219,7 @@ async def signup(
   if not company:
     raise HTTPException(status_code=404, detail="Company not found")
 
-  line_link_code = await generate_unique_line_link_code(db)
+  line_link_code = await generate_unique_user_line_link_code(db)
   user = User(
     email=payload.email,
     first_name=payload.first_name,

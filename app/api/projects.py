@@ -7,6 +7,7 @@ from sqlalchemy import select, desc, case, or_
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import get_current_user, require_company_manager, require_project_access
+from app.core.security import generate_unique_project_line_link_code
 from app.db.session import get_db
 from app.db.models import Project, Company, User, ProjectStatus, ProjectGuestLink
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectWithReports, ProjectWithCompanyName
@@ -143,15 +144,18 @@ async def create_project(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  allowed, reason = await can_use_billed_features(company_id, db)
+  allowed, reason = await can_use_billed_features(payload.company_id, db)
   if not allowed and current_user.role != "admin":
     raise HTTPException(status_code=402, detail=reason)
 
   company = await db.get(Company, payload.company_id)
 
+  line_link_code = await generate_unique_project_line_link_code(db)
+
   project = Project(
     **payload.model_dump(),
-    status=ProjectStatus.active
+    status=ProjectStatus.active,
+    line_link_code=line_link_code,
   )
 
   db.add(project)
@@ -166,6 +170,7 @@ async def create_project(
     name=project.name,
     description=project.description,
     status=project.status,
+    line_link_code=project.line_link_code,
     company_id=project.company_id,
     reports=[]
   )

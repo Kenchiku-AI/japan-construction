@@ -7,7 +7,7 @@ import secrets
 
 from app.core.dependencies import get_current_user
 from app.core.config import settings
-from app.core.security import hash_token, generate_unique_line_link_code
+from app.core.security import hash_token, generate_unique_user_line_link_code
 from app.db.models.user import User
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.session import get_db
@@ -197,7 +197,7 @@ async def create_admin(
       detail="Email already registered",
     )
 
-  line_link_code = await generate_unique_line_link_code(db)
+  line_link_code = await generate_unique_user_line_link_code(db)
   user = User(
     email=payload.email,
     first_name=payload.first_name,
