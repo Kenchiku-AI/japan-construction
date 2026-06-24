@@ -50,7 +50,7 @@ def upgrade() -> None:
                existing_type=postgresql.TIMESTAMP(),
                type_=sa.DateTime(timezone=True),
                existing_nullable=True)
-    op.add_column('projects', sa.Column('line_link_code', sa.String(), nullable=False))
+    op.add_column('projects', sa.Column('line_link_code', sa.String(), nullable=True))
     op.add_column('projects', sa.Column('line_group_id', sa.String(), nullable=True))
     op.alter_column('projects', 'created_at',
                existing_type=postgresql.TIMESTAMP(),
