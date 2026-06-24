@@ -67,7 +67,7 @@ def decrypt_secret(ciphertext: str) -> str:
 
 def generate_line_link_code(prefix: str) -> str:
   alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-  code = "".join(secrets.choice(alphabet) for _ in range(8))
+  code = "".join(secrets.choice(alphabet) for _ in range(6))
   return f"{prefix}-{code}"
 
 async def generate_unique_user_line_link_code(db: AsyncSession) -> str:
