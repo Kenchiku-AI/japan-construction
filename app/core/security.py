@@ -65,14 +65,21 @@ def decrypt_secret(ciphertext: str) -> str:
   except InvalidToken:
     raise ValueError("Could not decrypt secret — invalid key or corrupted data")
 
-def generate_line_link_code() -> str:
+def generate_line_link_code(prefix: str) -> str:
   alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-  code = "".join(secrets.choice(alphabet) for _ in range(8))  # 8 chars instead of 6
-  return f"K-{code}"
+  code = "".join(secrets.choice(alphabet) for _ in range(8))
+  return f"{prefix}-{code}"
 
-async def generate_unique_line_link_code(db: AsyncSession) -> str:
+async def generate_unique_user_line_link_code(db: AsyncSession) -> str:
   while True:
-    code = generate_line_link_code()
+    code = generate_line_link_code("U")
     existing = await db.execute(select(User).where(User.line_link_code == code))
+    if not existing.scalar_one_or_none():
+      return code
+
+async def generate_unique_project_line_link_code(db: AsyncSession) -> str:
+  while True:
+    code = generate_line_link_code("P")
+    existing = await db.execute(select(Project).where(Project.line_link_code == code))
     if not existing.scalar_one_or_none():
       return code

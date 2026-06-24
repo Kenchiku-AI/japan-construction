@@ -7,6 +7,7 @@ from sqlalchemy import select, desc, case, or_
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import get_current_user, require_company_manager, require_project_access
+from app.core.security import generate_unique_project_line_link_code
 from app.db.session import get_db
 from app.db.models import Project, Company, User, ProjectStatus, ProjectGuestLink
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectWithReports, ProjectWithCompanyName
@@ -149,9 +150,12 @@ async def create_project(
 
   company = await db.get(Company, payload.company_id)
 
+  line_link_code = await generate_unique_project_line_link_code(db)
+
   project = Project(
     **payload.model_dump(),
-    status=ProjectStatus.active
+    status=ProjectStatus.active,
+    line_link_code=line_link_code,
   )
 
   db.add(project)
