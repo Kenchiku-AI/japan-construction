@@ -16,7 +16,7 @@ from app.db.models.company import Company
 from app.db.models.user import User, UserLineLink
 from app.db.models.project import Project
 from app.services.billing import get_company_by_stripe_customer_id
-from app.services.email import send_line_link_confirmation_email
+from app.services.email import send_line_link_confirmation_email, send_line_group_linked_email
 from app.services.reports import handle_line_message, handle_line_group_message
 
 logger = logging.getLogger(__name__)
@@ -139,6 +139,28 @@ async def line_webhook(
             "LINE group linked to project | company_id=%s project_id=%s group_id=%s",
             company.id, project.id, group_id,
           )
+
+          user_link_result = await db.execute(
+            select(UserLineLink).where(
+              UserLineLink.company_id == company.id,
+              UserLineLink.line_user_id == sender_id,
+            )
+          )
+          user_link = user_link_result.scalar_one_or_none()
+
+          if user_link:
+            user_result = await db.execute(
+              select(User).where(User.id == user_link.user_id)
+            )
+            user = user_result.scalar_one_or_none()
+
+            if user:
+              background_tasks.add_task(
+                send_line_group_linked_email,
+                email=user.email,
+                company_name=company.name,
+                project_name=project.name,
+              )
         else:
           logger.warning(
             "LINE group sent unrecognized project code | company_id=%s group_id=%s code=%s",
@@ -271,7 +293,6 @@ async def line_webhook(
         )
 
   return {"status": "ok"}
-
 
 def verify_line_signature(body: bytes, signature: str, channel_secret: str) -> bool:
   expected = base64.b64encode(
