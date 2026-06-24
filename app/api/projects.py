@@ -144,7 +144,7 @@ async def create_project(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  allowed, reason = await can_use_billed_features(company_id, db)
+  allowed, reason = await can_use_billed_features(payload.company_id, db)
   if not allowed and current_user.role != "admin":
     raise HTTPException(status_code=402, detail=reason)
 
