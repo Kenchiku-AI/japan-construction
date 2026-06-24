@@ -327,3 +327,43 @@ def send_line_link_confirmation_email(email: str, company_name: str) -> None:
   except Exception:
     logger.exception("Error sending LINE link confirmation email to %s", email)
     raise
+
+def send_line_group_linked_email(email: str, company_name: str, project_name: str) -> None:
+  subject = f"LINEグループが「{project_name}」に連携されました — {company_name}"
+
+  message = f"""
+{company_name} のプロジェクト「{project_name}」がLINEグループと連携されました。<br/>
+今後、このLINEグループから送信されたメッセージは自動的にプロジェクトの報告書に反映されます。
+"""
+
+  html_body = _build_email_template(
+    title="LINEグループ連携完了",
+    message=message,
+    button_text="建築AIを開く",
+    button_url=settings.WEB_CLIENT_URL,
+  )
+
+  text_body = f"""
+{company_name} のプロジェクト「{project_name}」がLINEグループと連携されました。
+今後、このLINEグループから送信されたメッセージは自動的にプロジェクトの報告書に反映されます。
+
+{settings.WEB_CLIENT_URL}
+"""
+
+  try:
+    ses.send_email(
+      Source=settings.NO_REPLY_EMAIL,
+      Destination={"ToAddresses": [email]},
+      ReplyToAddresses=[settings.SUPPORT_EMAIL],
+      Message={
+        "Subject": {"Data": subject},
+        "Body": {
+          "Text": {"Data": text_body},
+          "Html": {"Data": html_body},
+        },
+      },
+    )
+    logger.info(f"Sent LINE group linked email to {email}")
+  except Exception:
+    logger.exception("Error sending LINE group linked email to %s", email)
+    raise
