@@ -367,3 +367,69 @@ def send_line_group_linked_email(email: str, company_name: str, project_name: st
   except Exception:
     logger.exception("Error sending LINE group linked email to %s", email)
     raise
+
+def send_company_created_admin_email(
+  email: str,
+  company_id: str,
+  company_name: str,
+  manager_email: str | None,
+  created_by_email: str,
+) -> None:
+  company_url = f"{settings.WEB_CLIENT_URL}/companies/{company_id}"
+
+  subject = f"新しい会社が作成されました — {company_name}"
+
+  message = f"""新しい会社が作成されました。<br/><br/>
+
+会社名：{company_name}<br/>
+管理者メール：{manager_email or "未設定"}<br/>
+作成者：{created_by_email}<br/>
+課金：免除（有効）<br/><br/>
+
+以下のボタンから会社情報をご確認ください。
+"""
+
+  html_body = _build_email_template(
+    title="新しい会社が作成されました",
+    message=message,
+    button_text="会社を確認する",
+    button_url=company_url,
+  )
+
+  text_body = f"""
+新しい会社が作成されました。
+
+会社名: {company_name}
+管理者メール: {manager_email or "未設定"}
+作成者: {created_by_email}
+課金: 免除（有効）
+
+確認:
+{company_url}
+"""
+
+  try:
+    ses.send_email(
+      Source=settings.NO_REPLY_EMAIL,
+      Destination={"ToAddresses": [email]},
+      ReplyToAddresses=[settings.SUPPORT_EMAIL],
+      Message={
+        "Subject": {"Data": subject},
+        "Body": {
+          "Text": {"Data": text_body},
+          "Html": {"Data": html_body},
+        },
+      },
+    )
+
+    logger.info(
+      "Sent company creation notification email to %s",
+      email,
+    )
+
+  except Exception:
+    logger.exception(
+      "Error sending company creation notification email to %s",
+      email,
+    )
+    raise

@@ -20,6 +20,7 @@ from app.schemas.company import (
 from app.schemas.invitation import CompanyInvitationCreate
 from app.services.billing import sync_subscription_quantity, get_payment_method_display, billing_in_good_standing
 from app.services.invitations import create_company_invitation
+from app.services.email import send_company_created_admin_email
 
 import stripe
 import logging
@@ -92,15 +93,52 @@ async def create_company(
   current_user: User = Depends(get_current_user),
   db: AsyncSession = Depends(get_db),
 ):
-  if current_user.role != "admin":
+  existing_company = await db.scalar(
+    select(Company).where(
+      func.lower(Company.name) == payload.name.lower()
+    )
+  )
+
+  if existing_company:
     raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail="Only admins can create companies",
+      status_code=409,
+      detail="Company with that name already exists",
     )
 
+  if payload.corporate_number:
+    existing = await db.scalar(
+      select(Company).where(
+        Company.corporate_number == payload.corporate_number
+      )
+    )
+
+    if existing:
+      raise HTTPException(
+        status_code=409,
+        detail="Corporate number already exists",
+      )
+
+  if payload.manager_email:
+    existing_user = await db.scalar(
+      select(User).where(
+        func.lower(User.email) == payload.manager_email.lower()
+      )
+    )
+
+    if existing_user:
+      raise HTTPException(
+        status_code=409,
+        detail="Manager email already belongs to an existing user",
+      )
+
   company = Company(
-    name=payload.name,
-    corporate_number=payload.corporate_number
+    name=payload.name.strip(),
+    corporate_number=(
+      payload.corporate_number.strip()
+      if payload.corporate_number
+      else None
+    ),
+    billing_exempt=True,
   )
   db.add(company)
 
@@ -116,7 +154,10 @@ async def create_company(
     await db.commit()
     await db.refresh(company)
   except stripe.error.StripeError:
-    pass
+    logger.exception(
+      "Failed creating Stripe customer for company %s",
+      company.id,
+    )
 
   if payload.manager_email:
     invitation_payload = CompanyInvitationCreate(
@@ -130,6 +171,23 @@ async def create_company(
       db,
       current_user,
       background_tasks,
+    )
+
+  admin_users = (
+    await db.scalars(
+      select(User)
+      .where(User.role == "admin")
+    )
+  ).all()
+
+  for admin in admin_users:
+    background_tasks.add_task(
+      send_company_created_admin_email,
+      admin.email,
+      company.id,
+      company.name,
+      payload.manager_email,
+      current_user.email,
     )
 
   return company
