@@ -9,7 +9,7 @@ from app.schemas.user import UserRole
 
 class CompanyCreate(BaseModel):
   name: str
-  corporate_number: str
+  corporate_number: Optional[str] = None
   manager_email: Optional[EmailStr] = None
   pass
 

@@ -11,6 +11,5 @@ class PasswordResetToken(Base):
   user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
   token_hash = Column(String, nullable=False, index=True)
-  expires_at = Column(DateTime, nullable=False)
-
+  expires_at = Column(DateTime(timezone=True), nullable=False)
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
