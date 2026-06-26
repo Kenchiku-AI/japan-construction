@@ -24,10 +24,11 @@ INVITE_EXPIRATION_HOURS = 48
 async def create_company_invitation(
   payload: CompanyInvitationCreate,
   db: AsyncSession,
-  current_user: User,
+  current_user: User | None,
   background_tasks: BackgroundTasks,
 ) -> Invitation:
-  require_company_manager(current_user, payload.company_id)
+  if current_user is not None:
+    require_company_manager(current_user, payload.company_id)
 
   company = await db.get(Company, payload.company_id)
   if not company:

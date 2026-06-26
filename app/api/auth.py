@@ -212,6 +212,11 @@ async def signup(
   if not invitation:
     raise HTTPException(status_code=404, detail="Invitation not found or invalid")
 
+  print("invitation expires at is...")
+  print(invitation.expires_at)
+  print("datetime.now(timezone.utc) is...")
+  print(datetime.now(timezone.utc))
+
   if invitation.expires_at < datetime.now(timezone.utc):
     raise HTTPException(status_code=400, detail="Invitation expired")
 

@@ -90,7 +90,6 @@ async def search_companies(
 async def create_company(
   payload: CompanyCreate,
   background_tasks: BackgroundTasks,
-  current_user: User = Depends(get_current_user),
   db: AsyncSession = Depends(get_db),
 ):
   existing_company = await db.scalar(
@@ -169,7 +168,7 @@ async def create_company(
     await create_company_invitation(
       invitation_payload,
       db,
-      current_user,
+      None,
       background_tasks,
     )
 
@@ -187,7 +186,6 @@ async def create_company(
       company.id,
       company.name,
       payload.manager_email,
-      current_user.email,
     )
 
   return company
