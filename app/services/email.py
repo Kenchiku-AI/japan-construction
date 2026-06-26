@@ -373,7 +373,6 @@ def send_company_created_admin_email(
   company_id: str,
   company_name: str,
   manager_email: str | None,
-  created_by_email: str,
 ) -> None:
   company_url = f"{settings.WEB_CLIENT_URL}/companies/{company_id}"
 
@@ -383,7 +382,6 @@ def send_company_created_admin_email(
 
 会社名：{company_name}<br/>
 管理者メール：{manager_email or "未設定"}<br/>
-作成者：{created_by_email}<br/>
 課金：免除（有効）<br/><br/>
 
 以下のボタンから会社情報をご確認ください。
@@ -401,7 +399,6 @@ def send_company_created_admin_email(
 
 会社名: {company_name}
 管理者メール: {manager_email or "未設定"}
-作成者: {created_by_email}
 課金: 免除（有効）
 
 確認:
