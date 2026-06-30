@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.core.config import settings
+from app.db.models import User
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -44,6 +45,11 @@ def generate_invite_token() -> str:
 
 def hash_token(token: str) -> str:
   return hashlib.sha256(token.encode()).hexdigest()
+
+def is_expired(dt: datetime) -> bool:
+  if dt.tzinfo is None:
+    dt = dt.replace(tzinfo=timezone.utc)
+  return dt < datetime.now(timezone.utc)
 
 def get_cookie_settings():
   is_local = settings.ENV == "local"

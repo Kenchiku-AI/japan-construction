@@ -18,6 +18,7 @@ from app.core.security import (
   hash_token,
   get_cookie_settings,
   generate_unique_user_line_link_code,
+  is_expired,
 )
 from app.db.models.refresh_token import RefreshToken
 from app.db.models.user import User
@@ -126,7 +127,7 @@ async def refresh_token(
       detail="Invalid refresh token"
     )
 
-  if db_token.expires_at < datetime.now(timezone.utc):
+  if is_expired(db_token.expires_at):
     await db.delete(db_token)
     await db.commit()
 
@@ -212,12 +213,7 @@ async def signup(
   if not invitation:
     raise HTTPException(status_code=404, detail="Invitation not found or invalid")
 
-  print("invitation expires at is...")
-  print(invitation.expires_at)
-  print("datetime.now(timezone.utc) is...")
-  print(datetime.now(timezone.utc))
-
-  if invitation.expires_at < datetime.now(timezone.utc):
+  if is_expired(invitation.expires_at):
     raise HTTPException(status_code=400, detail="Invitation expired")
 
   company = await db.get(Company, invitation.company_id)
@@ -358,7 +354,7 @@ async def reset_password(
   if not db_token:
     raise HTTPException(status_code=404, detail="Invalid token")
 
-  if db_token.expires_at < datetime.now(timezone.utc):
+  if is_expired(db_token.expires_at):
     await db.delete(db_token)
     await db.commit()
 
