@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.core.config import settings
-from app.db.models import User
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -77,6 +76,8 @@ def generate_line_link_code(prefix: str) -> str:
   return f"{prefix}-{code}"
 
 async def generate_unique_user_line_link_code(db: AsyncSession) -> str:
+  from app.db.models import User
+  
   while True:
     code = generate_line_link_code("U")
     existing = await db.execute(select(User).where(User.line_link_code == code))
