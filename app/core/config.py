@@ -13,7 +13,6 @@ class Settings(BaseSettings):
   SUPPORT_EMAIL: str
   OPENAI_API_KEY: str
   STRIPE_SECRET_KEY: str
-  STRIPE_PROJECT_PRICE_ID: str
   STRIPE_WEBHOOK_SECRET: str
   LINE_ENCRYPTION_KEY: str
   AWS_REGION: str

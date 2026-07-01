@@ -39,7 +39,13 @@ class Company(Base):
   stripe_customer_id = Column(String, nullable=True, index=True)
   stripe_subscription_id = Column(String, nullable=True, index=True)
   stripe_subscription_status = Column(String, nullable=True)
-  billing_exempt = Column(Boolean, default=False, nullable=False)
+
+  billing_plan_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("billing_plans.id"),
+    nullable=True,
+  )
+  billing_plan = relationship("BillingPlan", backref="companies")
 
   _line_channel_secret = Column("line_channel_secret", String, nullable=True)
 

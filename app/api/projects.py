@@ -11,7 +11,7 @@ from app.core.security import generate_unique_project_line_link_code
 from app.db.session import get_db
 from app.db.models import Project, Company, User, ProjectStatus, ProjectGuestLink
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectWithReports, ProjectWithCompanyName
-from app.services.billing import ensure_subscription, sync_subscription_quantity, can_use_billed_features
+from app.services.billing import ensure_subscription, can_use_billed_features
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -163,7 +163,6 @@ async def create_project(
   await db.refresh(project)
 
   await ensure_subscription(company, db)
-  await sync_subscription_quantity(company, db)
 
   return ProjectWithReports(
     id=project.id,
@@ -199,10 +198,6 @@ async def update_project(
   status_changed = (
     payload.status is not None and payload.status != previous_status
   )
-
-  if status_changed:
-    company = await db.get(Company, project.company_id)
-    await sync_subscription_quantity(company, db)
 
   stmt = (
     select(Project)

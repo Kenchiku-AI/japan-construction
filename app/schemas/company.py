@@ -26,7 +26,6 @@ class CompanyRead(BaseModel):
   id: UUID
   name: str
   corporate_number: Optional[str]
-  billing_exempt: bool
   line_channel_secret_last4: Optional[str]
   created_at: datetime
   updated_at: datetime
@@ -47,8 +46,8 @@ class CompanyProjectRead(BaseModel):
 class CompanyUpdate(BaseModel):
   name: str | None = None
   corporate_number: str | None = None
-  billing_exempt: bool | None = None
   line_channel_secret: str | None = None
+  billing_plan_id: Optional[UUID] = None
 
 class CompanyUserRead(BaseModel):
   id: UUID
@@ -63,6 +62,7 @@ class CompanyUserRead(BaseModel):
 
 class CompanyWithProjectsAndUsers(CompanyRead):
   payment_method_name: Optional[str]
+  billing_plan_id: Optional[UUID] = None
   is_payment_method_valid: bool
   projects: List[CompanyProjectRead]
   users: List[CompanyUserRead]
