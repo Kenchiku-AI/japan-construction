@@ -45,6 +45,11 @@ def generate_invite_token() -> str:
 def hash_token(token: str) -> str:
   return hashlib.sha256(token.encode()).hexdigest()
 
+def is_expired(dt: datetime) -> bool:
+  if dt.tzinfo is None:
+    dt = dt.replace(tzinfo=timezone.utc)
+  return dt < datetime.now(timezone.utc)
+
 def get_cookie_settings():
   is_local = settings.ENV == "local"
 
@@ -71,6 +76,8 @@ def generate_line_link_code(prefix: str) -> str:
   return f"{prefix}-{code}"
 
 async def generate_unique_user_line_link_code(db: AsyncSession) -> str:
+  from app.db.models import User
+  
   while True:
     code = generate_line_link_code("U")
     existing = await db.execute(select(User).where(User.line_link_code == code))
