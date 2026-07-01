@@ -15,7 +15,7 @@ from app.schemas.billing_plan import BillingPlanCreate, BillingPlanRead, Billing
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/billing-plans", tags=["Billing Plans"])
+router = APIRouter(prefix="/billing-plans", tags=["billing plans"])
 
 async def clear_default(db: AsyncSession, exclude_id: UUID | None = None):
   stmt = select(BillingPlan).where(BillingPlan.is_default == True)

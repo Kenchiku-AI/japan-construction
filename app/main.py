@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import auth, users, companies, invitations, projects, reports, health, webhooks
+from app.api import auth, users, companies, invitations, projects, reports, health, webhooks, billing_plans
 from app.core.config import settings
 from app.middleware.logging import LoggingMiddleware
 
@@ -31,3 +31,4 @@ app.include_router(projects.router)
 app.include_router(reports.router)
 app.include_router(health.router)
 app.include_router(webhooks.router)
+app.include_router(billing_plans.router)
