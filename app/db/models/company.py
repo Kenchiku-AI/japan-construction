@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Column, String, DateTime, Boolean
+from sqlalchemy import Column, String, DateTime, Boolean, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime, timezone
@@ -45,7 +45,6 @@ class Company(Base):
     ForeignKey("billing_plans.id"),
     nullable=True,
   )
-  billing_plan = relationship("BillingPlan", backref="companies")
 
   _line_channel_secret = Column("line_channel_secret", String, nullable=True)
 
