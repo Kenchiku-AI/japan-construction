@@ -294,33 +294,31 @@ async def update_company(
   if payload.line_channel_secret is not None:
     company.line_channel_secret = payload.line_channel_secret
 
-  if payload.billing_plan_id is not None:
-    if current_user.role != "admin":
-      raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Only admins can update billing plan",
-      )
+  if "billing_plan_id" in payload.model_fields_set:
+    if payload.billing_plan_id is None:
+      company.billing_plan_id = None
+    else:
+      plan = await db.get(BillingPlan, payload.billing_plan_id)
 
-    plan = await db.get(BillingPlan, payload.billing_plan_id)
-    if not plan:
-      raise HTTPException(status_code=404, detail="Billing plan not found")
+      if not plan:
+        raise HTTPException(status_code=404, detail="Billing plan not found")
+      
+      company.billing_plan_id = plan.id
 
-    company.billing_plan_id = plan.id
-
-    if company.stripe_subscription_id:
-      try:
-        subscription = stripe.Subscription.retrieve(company.stripe_subscription_id)
-        item_id = subscription["items"]["data"][0]["id"]
-        stripe.SubscriptionItem.modify(
-          item_id,
-          price=plan.stripe_price_id,
-          quantity=1,
-          proration_behavior="create_prorations",
-        )
-      except stripe.error.StripeError:
-        logger.exception(
-          "Failed to update Stripe subscription plan for company %s", company.id
-        )
+      if company.stripe_subscription_id:
+        try:
+          subscription = stripe.Subscription.retrieve(company.stripe_subscription_id)
+          item_id = subscription["items"]["data"][0]["id"]
+          stripe.SubscriptionItem.modify(
+            item_id,
+            price=plan.stripe_price_id,
+            quantity=1,
+            proration_behavior="create_prorations",
+          )
+        except stripe.error.StripeError:
+          logger.exception(
+            "Failed to update Stripe subscription plan for company %s", company.id
+          )
 
   await db.commit()
   await db.refresh(company)
