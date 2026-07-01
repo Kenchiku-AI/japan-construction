@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 HEALTHY_SUBSCRIPTION_STATUSES = {"active", "trialing"}
 
 async def has_payment_method(company: Company) -> bool:
-  if company.billing_exempt:
+  if not company.billing_plan_id:
     return True
 
   if not company.stripe_customer_id:
@@ -32,7 +32,7 @@ async def has_payment_method(company: Company) -> bool:
   return len(payment_methods.data) > 0
 
 def billing_in_good_standing(company: Company) -> bool:
-  if company.billing_exempt:
+  if not company.billing_plan_id:
     return True
 
   if not company.stripe_subscription_id:
@@ -93,7 +93,7 @@ async def get_payment_method_display(company: Company) -> str | None:
   return f"{brand} ••••{pm.card.last4}"
 
 async def ensure_subscription(company: Company, db: AsyncSession):
-  if company.billing_exempt:
+  if not company.billing_plan_id:
     return
 
   if company.stripe_subscription_id:
@@ -113,37 +113,6 @@ async def ensure_subscription(company: Company, db: AsyncSession):
   except stripe.error.StripeError:
     logger.exception(
       "Failed to create Stripe subscription for company %s", company.id
-    )
-
-async def sync_subscription_quantity(company: Company, db: AsyncSession):
-  if company.billing_exempt:
-    return
-
-  if not company.stripe_subscription_id:
-    return
-
-  result = await db.execute(
-    select(func.count())
-    .select_from(Project)
-    .where(
-      Project.company_id == company.id,
-      Project.status == ProjectStatus.active,
-    )
-  )
-  active_count = result.scalar_one()
-
-  try:
-    subscription = stripe.Subscription.retrieve(company.stripe_subscription_id)
-    item_id = subscription["items"]["data"][0]["id"]
-
-    stripe.SubscriptionItem.modify(
-      item_id,
-      quantity=active_count,
-      proration_behavior="create_prorations",
-    )
-  except stripe.error.StripeError:
-    logger.exception(
-      "Failed to sync Stripe subscription quantity for company %s", company.id
     )
 
 async def get_company_by_stripe_customer_id(

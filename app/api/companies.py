@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import get_current_user, require_company_manager
-from app.db.models import Company, Project, User, ReportImageTag, ProjectGuestLink
+from app.db.models import Company, Project, User, ReportImageTag, ProjectGuestLink, BillingPlan
 from app.db.session import get_db
 from app.schemas.company import (
   CompanyCreate,
@@ -18,7 +18,7 @@ from app.schemas.company import (
   ReportImageTagUpdate
 )
 from app.schemas.invitation import CompanyInvitationCreate
-from app.services.billing import sync_subscription_quantity, get_payment_method_display, billing_in_good_standing
+from app.services.billing import get_payment_method_display, billing_in_good_standing
 from app.services.invitations import create_company_invitation
 from app.services.email import send_company_created_admin_email
 
@@ -136,8 +136,7 @@ async def create_company(
       payload.corporate_number.strip()
       if payload.corporate_number
       else None
-    ),
-    billing_exempt=True,
+    )
   )
   db.add(company)
 
@@ -157,6 +156,17 @@ async def create_company(
       "Failed creating Stripe customer for company %s",
       company.id,
     )
+
+  default_plan = await db.scalar(
+    select(BillingPlan).where(
+      BillingPlan.is_default == True,
+    )
+  )
+
+  if default_plan:
+    company.billing_plan_id = default_plan.id
+    await db.commit()
+    await db.refresh(company)
 
   if payload.manager_email:
     invitation_payload = CompanyInvitationCreate(
@@ -233,7 +243,7 @@ async def get_company(
     corporate_number=company.corporate_number,
     payment_method_name=payment_method_name,
     is_payment_method_valid=is_payment_method_valid,
-    billing_exempt=company.billing_exempt,
+    billing_plan_id=company.billing_plan_id,
     line_channel_secret_last4=company.line_channel_secret_last4,
     created_at=company.created_at,
     updated_at=company.updated_at,
@@ -281,27 +291,37 @@ async def update_company(
   if payload.name is not None:
     company.name = payload.name
 
-  if payload.billing_exempt is not None:
-    company.billing_exempt = payload.billing_exempt
-
-    if payload.billing_exempt and company.stripe_subscription_id:
-      try:
-        stripe.Subscription.cancel(company.stripe_subscription_id)
-      except stripe.error.StripeError:
-        logger.exception(
-          "Failed to cancel subscription for exempt company %s", company.id
-        )
-      company.stripe_subscription_id = None
-      company.stripe_subscription_status = None
-
   if payload.line_channel_secret is not None:
     company.line_channel_secret = payload.line_channel_secret
 
+  if "billing_plan_id" in payload.model_fields_set:
+    if payload.billing_plan_id is None:
+      company.billing_plan_id = None
+    else:
+      plan = await db.get(BillingPlan, payload.billing_plan_id)
+
+      if not plan:
+        raise HTTPException(status_code=404, detail="Billing plan not found")
+      
+      company.billing_plan_id = plan.id
+
+      if company.stripe_subscription_id:
+        try:
+          subscription = stripe.Subscription.retrieve(company.stripe_subscription_id)
+          item_id = subscription["items"]["data"][0]["id"]
+          stripe.SubscriptionItem.modify(
+            item_id,
+            price=plan.stripe_price_id,
+            quantity=1,
+            proration_behavior="create_prorations",
+          )
+        except stripe.error.StripeError:
+          logger.exception(
+            "Failed to update Stripe subscription plan for company %s", company.id
+          )
+
   await db.commit()
   await db.refresh(company)
-
-  if payload.billing_exempt is False and company.stripe_subscription_id:
-    await sync_subscription_quantity(company, db)
 
   return company
 
