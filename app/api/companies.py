@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import get_current_user, require_company_manager
-from app.db.models import Company, Project, User, ReportImageTag, ProjectGuestLink
+from app.db.models import Company, Project, User, ReportImageTag, ProjectGuestLink, BillingPlan
 from app.db.session import get_db
 from app.schemas.company import (
   CompanyCreate,
