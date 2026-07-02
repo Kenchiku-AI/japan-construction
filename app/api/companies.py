@@ -22,6 +22,7 @@ from app.db.models import (
 from app.db.session import get_db
 from app.schemas.company import (
   CompanyCreate,
+  CompanyCreateResponse,
   CompanyRead,
   CompanyWithMetrics,
   CompanyUpdate,
@@ -205,7 +206,7 @@ async def search_companies(
 
 @router.post(
   "",
-  response_model=CompanyRead,
+  response_model=CompanyCreateResponse,
   status_code=status.HTTP_201_CREATED,
 )
 async def create_company(
@@ -289,6 +290,8 @@ async def create_company(
     await db.commit()
     await db.refresh(company)
 
+  invitation = None
+  
   if payload.manager_email:
     invitation_payload = CompanyInvitationCreate(
       email=payload.manager_email,
@@ -296,7 +299,7 @@ async def create_company(
       role="manager",
     )
 
-    await create_company_invitation(
+    invitation = await create_company_invitation(
       invitation_payload,
       db,
       None,
@@ -319,7 +322,10 @@ async def create_company(
       payload.manager_email,
     )
 
-  return company
+  return CompanyCreateResponse(
+    company=company,
+    invitation_id=invitation.id if invitation else None,
+  )
 
 @router.get(
   "/{company_id}",

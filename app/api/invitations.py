@@ -1,11 +1,18 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user
-from app.core.security import hash_token, create_access_token, get_cookie_settings
+from app.core.security import (
+  hash_token, 
+  create_access_token, 
+  get_cookie_settings, 
+  generate_invite_token,
+  is_expired,
+)
 from app.db.session import get_db
 from app.db.models import User, Project, ProjectGuestLink, Company, Invitation
 from app.schemas.invitation import (
@@ -15,7 +22,12 @@ from app.schemas.invitation import (
   InvitationRead,
   InvitationAccept,
 )
-from app.services.invitations import create_company_invitation, create_project_guest_invitation
+from app.services.invitations import (
+  create_company_invitation, 
+  create_project_guest_invitation, 
+  send_invitation_email,
+  INVITE_EXPIRATION_HOURS,
+)
 from app.services.users import build_user_with_company_and_projects
 
 router = APIRouter(
@@ -69,11 +81,10 @@ async def accept_invitation(
     select(Invitation).where(Invitation.token_hash == hashed_token)
   )
   invitation = result.scalars().first()
-
   if not invitation:
     raise HTTPException(status_code=404, detail="Invitation not found or invalid")
 
-  if invitation.expires_at < datetime.now(timezone.utc):
+  if is_expired(invitation.expires_at):
     raise HTTPException(status_code=410, detail="Invitation expired")
 
   if invitation.email != current_user.email:
@@ -115,5 +126,35 @@ async def accept_invitation(
     cookie_settings = get_cookie_settings()
     response.set_cookie(key="accessToken", value=create_access_token({"sub": str(current_user.id)}), **cookie_settings)
     return response
+
+  return {"success": True}
+
+@router.post("/{invitation_id}/resend")
+async def resend_company_invitation(
+  invitation_id: UUID,
+  background_tasks: BackgroundTasks,
+  db: AsyncSession = Depends(get_db),
+):
+  invitation = await db.get(Invitation, invitation_id)
+  if not invitation:
+    raise HTTPException(status_code=404, detail="Invitation not found")
+
+  company = await db.get(Company, invitation.company_id)
+  if not company:
+    raise HTTPException(status_code=404, detail="Company not found")
+
+  token = generate_invite_token()
+  invitation.token_hash = hash_token(token)
+  invitation.expires_at = datetime.now(timezone.utc) + timedelta(hours=INVITE_EXPIRATION_HOURS)
+
+  await db.commit()
+  await db.refresh(invitation)
+
+  background_tasks.add_task(
+    send_invitation_email,
+    invitation.email,
+    company.name,
+    token,
+  )
 
   return {"success": True}
