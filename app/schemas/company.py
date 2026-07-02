@@ -35,6 +35,20 @@ class CompanyRead(BaseModel):
     "from_attributes": True
   }
 
+class CompanyWithMetrics(BaseModel):
+  id: UUID
+  name: str
+  corporate_number: Optional[str]
+  active_projects_count: int
+  new_projects_count: int
+  finished_projects_count: int
+  recent_reports_count: int
+  active_project_guests_count: int
+  employees_count: int
+  billing_plan_id: Optional[UUID] = None
+  created_at: datetime
+  updated_at: datetime
+
 class CompanyProjectRead(BaseModel):
   id: UUID
   name: str

@@ -1,17 +1,29 @@
+from datetime import datetime, timedelta, timezone
 from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
-from sqlalchemy import desc, func, select, or_
+from sqlalchemy import and_, desc, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import get_current_user, require_company_manager
-from app.db.models import Company, Project, User, ReportImageTag, ProjectGuestLink, BillingPlan
+from app.db.models import (
+  Company,
+  Project,
+  ProjectStatus,
+  Report,
+  ReportParentType,
+  User,
+  ReportImageTag,
+  ProjectGuestLink,
+  BillingPlan,
+)
 from app.db.session import get_db
 from app.schemas.company import (
   CompanyCreate,
   CompanyRead,
+  CompanyWithMetrics,
   CompanyUpdate,
   CompanyWithProjectsAndUsers,
   ReportImageTagCreate,
@@ -29,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 
-@router.get("", response_model=List[CompanyRead])
+@router.get("", response_model=List[CompanyWithMetrics])
 async def list_companies(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
@@ -40,8 +52,97 @@ async def list_companies(
       detail="Only admins can list all companies",
     )
 
+  thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+
+  active_projects_count = (
+    select(func.count(Project.id))
+    .where(
+      Project.company_id == Company.id,
+      Project.status == ProjectStatus.active,
+    )
+    .correlate(Company)
+    .scalar_subquery()
+  )
+
+  new_projects_count = (
+    select(func.count(Project.id))
+    .where(
+      Project.company_id == Company.id,
+      Project.created_at >= thirty_days_ago,
+    )
+    .correlate(Company)
+    .scalar_subquery()
+  )
+
+  # NOTE: no dedicated `completed_at` column exists on Project, so this
+  # treats "finished in the last 30 days" as status == completed AND the
+  # row was last touched in the last 30 days. This will over-count if a
+  # completed project is edited later without a real re-completion.
+  # Consider adding a `completed_at` column set only on the active -> completed
+  # transition if this needs to be exact.
+  finished_projects_count = (
+    select(func.count(Project.id))
+    .where(
+      Project.company_id == Company.id,
+      Project.status == ProjectStatus.completed,
+      Project.updated_at >= thirty_days_ago,
+    )
+    .correlate(Company)
+    .scalar_subquery()
+  )
+
+  # Reports are polymorphic (parent_type/parent_id), so count reports
+  # attached directly to the company OR to any of the company's projects.
+  recent_reports_count = (
+    select(func.count(Report.id))
+    .where(
+      Report.created_at >= thirty_days_ago,
+      or_(
+        and_(
+          Report.parent_type == ReportParentType.company,
+          Report.parent_id == Company.id,
+        ),
+        and_(
+          Report.parent_type == ReportParentType.project,
+          Report.parent_id.in_(
+            select(Project.id).where(Project.company_id == Company.id)
+          ),
+        ),
+      ),
+    )
+    .correlate(Company)
+    .scalar_subquery()
+  )
+
+  active_project_guests_count = (
+    select(func.count(func.distinct(ProjectGuestLink.user_id)))
+    .select_from(ProjectGuestLink)
+    .join(Project, Project.id == ProjectGuestLink.project_id)
+    .where(
+      Project.company_id == Company.id,
+      Project.status == ProjectStatus.active,
+    )
+    .correlate(Company)
+    .scalar_subquery()
+  )
+
+  employees_count = (
+    select(func.count(User.id))
+    .where(User.company_id == Company.id)
+    .correlate(Company)
+    .scalar_subquery()
+  )
+
   stmt = (
-    select(Company)
+    select(
+      Company,
+      active_projects_count.label("active_projects_count"),
+      new_projects_count.label("new_projects_count"),
+      finished_projects_count.label("finished_projects_count"),
+      recent_reports_count.label("recent_reports_count"),
+      active_project_guests_count.label("active_project_guests_count"),
+      employees_count.label("employees_count"),
+    )
     .outerjoin(Project, Project.company_id == Company.id)
     .group_by(Company.id)
     .order_by(desc(func.max(Project.created_at)))
@@ -49,7 +150,27 @@ async def list_companies(
   )
 
   result = await db.execute(stmt)
-  companies = result.scalars().all()
+  rows = result.all()
+
+  companies = []
+  for row in rows:
+    company = row.Company
+    companies.append(
+      CompanyWithMetrics(
+        id=company.id,
+        name=company.name,
+        corporate_number=company.corporate_number,
+        active_projects_count=row.active_projects_count,
+        new_projects_count=row.new_projects_count,
+        finished_projects_count=row.finished_projects_count,
+        recent_reports_count=row.recent_reports_count,
+        active_project_guests_count=row.active_project_guests_count,
+        employees_count=row.employees_count,
+        billing_plan_id=company.billing_plan_id,
+        created_at=company.created_at,
+        updated_at=company.updated_at,
+      )
+    )
 
   return companies
 
