@@ -13,15 +13,6 @@ class CompanyCreate(BaseModel):
   manager_email: Optional[EmailStr] = None
   pass
 
-class CompanyUserRead(BaseModel):
-  user_id: UUID
-  first_name: str
-  last_name: str
-  email: EmailStr
-
-  class Config:
-    from_attributes = True
-
 class CompanyRead(BaseModel):
   id: UUID
   name: str
@@ -34,6 +25,10 @@ class CompanyRead(BaseModel):
   model_config = {
     "from_attributes": True
   }
+
+class CompanyCreateResponse(BaseModel):
+  company: CompanyRead
+  invitation_id: UUID | None = None
 
 class CompanyWithMetrics(BaseModel):
   id: UUID
