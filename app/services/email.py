@@ -39,7 +39,7 @@ def _build_email_template(title: str, message: str, button_text: str, button_url
 
           <div style="text-align:center;margin:30px 0;">
             <a href="{button_url}"
-                style="background-color:#6FB37A;color:#ffffff;padding:12px 24px;
+                style="background-color:#4d9458;color:#ffffff;padding:12px 24px;
                       text-decoration:none;font-weight:600;border-radius:10px;display:inline-block;
                       width:360px;box-sizing:border-box;text-align:center;">
               {button_text}
