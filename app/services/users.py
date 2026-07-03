@@ -1,12 +1,18 @@
-from sqlalchemy import select
+import logging
+from fastapi import BackgroundTasks
+from sqlalchemy import select, delete, and_, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.user import UserCompanyRead, UserProjectRead, UserWithCompanyAndProjects
-from app.db.models.user import User
+from app.db.models.user import User, UserLineLink
+from app.db.models.company import Company
 from app.db.models.project import Project
 from app.db.models.project_guest_link import ProjectGuestLink
 from app.services.billing import has_payment_method
+from app.services.email import send_line_link_confirmation_email
+
+logger = logging.getLogger(__name__)
 
 async def build_user_with_company_and_projects(
   user: User,
@@ -96,3 +102,60 @@ async def build_user_with_company_and_projects(
     ),
     projects=projects_data,
   )
+
+async def link_line_user(
+  sender_id: str,
+  candidate_code: str,
+  company: Company,
+  background_tasks: BackgroundTasks,
+  db: AsyncSession,
+  group_id: str | None = None,
+) -> bool:
+  """Returns True if a U- code was found and handled (even if unrecognized), False otherwise."""
+  if not candidate_code.startswith("U-"):
+    return False
+
+  user_result = await db.execute(
+    select(User).where(User.line_link_code == candidate_code)
+  )
+  user_by_code = user_result.scalar_one_or_none()
+
+  if user_by_code:
+    await db.execute(
+      delete(UserLineLink).where(
+        or_(
+          and_(
+            UserLineLink.user_id == user_by_code.id,
+            UserLineLink.company_id == company.id,
+          ),
+          and_(
+            UserLineLink.company_id == company.id,
+            UserLineLink.line_user_id == sender_id,
+          ),
+        )
+      )
+    )
+    db.add(UserLineLink(
+      user_id=user_by_code.id,
+      company_id=company.id,
+      line_user_id=sender_id,
+    ))
+    await db.commit()
+
+    logger.info(
+      "LINE account linked | company_id=%s user_id=%s sender_id=%s group_id=%s",
+      company.id, user_by_code.id, sender_id, group_id,
+    )
+
+    background_tasks.add_task(
+      send_line_link_confirmation_email,
+      email=user_by_code.email,
+      company_name=company.name,
+    )
+  else:
+    logger.warning(
+      "LINE unrecognized user code | company_id=%s sender_id=%s code=%s group_id=%s",
+      company.id, sender_id, candidate_code, group_id,
+    )
+
+  return True

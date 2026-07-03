@@ -10,7 +10,7 @@ from app.db.models.report import Report, ReportParentType, ReportStatus
 from app.db.models.project import Project
 from app.db.models.user import User
 from app.db.models.project_guest_link import ProjectGuestLink
-from app.db.session import AsyncSessionLocal 
+from app.db.session import AsyncSessionLocal
 from app.services.openai import filter_reports_by_context, transcribe_and_extract_json
 
 logger = logging.getLogger(__name__)
