@@ -210,13 +210,12 @@ async def line_webhook(
       user = user_result.scalar_one_or_none()
 
       if user:
-        # TEMPORARILY DISABLING REPORT HANDLING
-        # background_tasks.add_task(
-        #   handle_line_group_message,
-        #   text=text,
-        #   user=user,
-        #   project_id=project.id,
-        # )
+        background_tasks.add_task(
+          handle_line_group_message,
+          text=text,
+          user=user,
+          project_id=project.id,
+        )
 
         background_tasks.add_task(
           handle_line_group_work_item,
@@ -229,44 +228,45 @@ async def line_webhook(
         )
 
     # --- DM message ---
-    else:
-      # U- code always takes priority — handles both initial linking and re-linking
-      if await link_line_user(sender_id, candidate_code, company, background_tasks, db):
-        continue
 
-      link_result = await db.execute(
-        select(UserLineLink).where(
-          UserLineLink.company_id == company.id,
-          UserLineLink.line_user_id == sender_id,
-        )
-      )
-      link = link_result.scalar_one_or_none()
+    # TEMPORARILY DISABLING REPORT HANDLING
+    # else:
+    #   # U- code always takes priority — handles both initial linking and re-linking
+    #   if await link_line_user(sender_id, candidate_code, company, background_tasks, db):
+    #     continue
 
-      if link:
-        logger.info(
-          "LINE DM received | company_id=%s user_id=%s sender_id=%s text=%s",
-          company.id, link.user_id, sender_id, text,
-        )
+    #   link_result = await db.execute(
+    #     select(UserLineLink).where(
+    #       UserLineLink.company_id == company.id,
+    #       UserLineLink.line_user_id == sender_id,
+    #     )
+    #   )
+    #   link = link_result.scalar_one_or_none()
 
-        user_result = await db.execute(
-          select(User).where(User.id == link.user_id)
-        )
-        user = user_result.scalar_one_or_none()
+    #   if link:
+    #     logger.info(
+    #       "LINE DM received | company_id=%s user_id=%s sender_id=%s text=%s",
+    #       company.id, link.user_id, sender_id, text,
+    #     )
 
-        if user:
-          # TEMPORARILY DISABLING REPORT HANDLING
-          # background_tasks.add_task(
-          #   handle_line_message,
-          #   text=text,
-          #   user=user,
-          #   company_id=company.id,
-          # )
+    #     user_result = await db.execute(
+    #       select(User).where(User.id == link.user_id)
+    #     )
+    #     user = user_result.scalar_one_or_none()
 
-      else:
-        logger.warning(
-          "LINE DM from unrecognized sender | company_id=%s sender_id=%s text=%s",
-          company.id, sender_id, text,
-        )
+    #     if user:
+    #       background_tasks.add_task(
+    #         handle_line_message,
+    #         text=text,
+    #         user=user,
+    #         company_id=company.id,
+    #       )
+
+    #   else:
+    #     logger.warning(
+    #       "LINE DM from unrecognized sender | company_id=%s sender_id=%s text=%s",
+    #       company.id, sender_id, text,
+    #     )
 
   return {"status": "ok"}
 
