@@ -3,11 +3,14 @@ from openai import AsyncOpenAI
 from typing import List, Iterable
 import json
 import re
+import logging
 
 from app.core.config import settings
 from app.db.models.report import ReportField, ReportImageTag
 
 client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+
+logger = logging.getLogger(__name__)
 
 async def transcribe_and_extract_json(
   speech_text: str,
@@ -287,6 +290,11 @@ async def extract_work_item(
     model="gpt-4.1-mini",
     input=[{"role": "user", "content": prompt}],
     temperature=0,
+  )
+
+  logger.info(
+    "OpenAI response: %s",
+    response.output_text,
   )
 
   try:
