@@ -18,6 +18,7 @@ from app.db.models.project import Project
 from app.services.billing import get_company_by_stripe_customer_id
 from app.services.email import send_line_link_confirmation_email, send_line_group_linked_email
 from app.services.reports import handle_line_message, handle_line_group_message
+from app.services.projects import handle_line_group_work_item
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +214,16 @@ async def line_webhook(
           text=text,
           user=user,
           project_id=project.id,
-          db=db,
+        )
+
+        background_tasks.add_task(
+          handle_line_group_work_item,
+          text=text,
+          user=user,
+          project=project,
+          sender_line_user_id=sender_id,
+          group_id=group_id,
+          company_id=company.id,
         )
 
     # --- DM message ---
@@ -247,7 +257,6 @@ async def line_webhook(
             text=text,
             user=user,
             company_id=company.id,
-            db=db,
           )
 
       else:
