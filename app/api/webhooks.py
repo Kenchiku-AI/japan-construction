@@ -210,12 +210,13 @@ async def line_webhook(
       user = user_result.scalar_one_or_none()
 
       if user:
-        background_tasks.add_task(
-          handle_line_group_message,
-          text=text,
-          user=user,
-          project_id=project.id,
-        )
+        # TEMPORARILY DISABLING REPORT HANDLING
+        # background_tasks.add_task(
+        #   handle_line_group_message,
+        #   text=text,
+        #   user=user,
+        #   project_id=project.id,
+        # )
 
         background_tasks.add_task(
           handle_line_group_work_item,
@@ -253,12 +254,13 @@ async def line_webhook(
         user = user_result.scalar_one_or_none()
 
         if user:
-          background_tasks.add_task(
-            handle_line_message,
-            text=text,
-            user=user,
-            company_id=company.id,
-          )
+          # TEMPORARILY DISABLING REPORT HANDLING
+          # background_tasks.add_task(
+          #   handle_line_message,
+          #   text=text,
+          #   user=user,
+          #   company_id=company.id,
+          # )
 
       else:
         logger.warning(
