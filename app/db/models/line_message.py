@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, String, DateTime, ForeignKey
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.base import Base
@@ -16,5 +16,6 @@ class LineMessage(Base):
   line_group_id = Column(String, nullable=True, index=True)
   
   sender_line_user_id = Column(String, nullable=False)
+  triggered_work_item = Column(Boolean, nullable=False, default=False)
   text = Column(String, nullable=False)
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
