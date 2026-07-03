@@ -38,6 +38,21 @@ class ProjectReportRead(BaseModel):
     "from_attributes": True
   }
 
-class ProjectWithReports(ProjectWithCompanyName):
-  reports: List[ProjectReportRead] = []
+class ProjectWorkItemRead(BaseModel):
+  id: UUID
+  project_id: UUID
+  name: str
+  description: str | None = None
+  status: WorkItemStatus
+  assignee_id: UUID | None = None
+  scheduled_date: datetime | None = None
+  created_at: datetime
+  updated_at: datetime
+
+  model_config = {
+    "from_attributes": True
+  }
   
+class ProjectWithReportsAndWorkItems(ProjectWithCompanyName):
+  reports: List[ProjectReportRead] = []
+  work_items: List[ProjectWorkItemRead] = []

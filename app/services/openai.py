@@ -1,10 +1,11 @@
+from __future__ import annotations
 from openai import AsyncOpenAI
 from typing import List, Iterable
 import json
 import re
 
 from app.core.config import settings
-from app.db.models.report import Report, ReportField, ReportImageTag
+from app.db.models.report import ReportField, ReportImageTag
 
 client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
@@ -242,6 +243,61 @@ async def filter_reports_by_context(
 
   report_ids = parsed.get("report_ids", [])
   return [r for r in reports if str(r.id) in report_ids]
+
+async def extract_work_item(
+  message_text: str,
+  project: Project,
+  sender: User,
+  recent_messages: list[LineMessage],
+) -> dict | None:
+  history = "\n".join(
+    f'- "{m.text}"{"  ※作業項目作成済み" if m.triggered_work_item else ""}'
+    for m in recent_messages
+  )
+
+  prompt = f"""
+あなたは建設現場のタスク管理システムです。
+以下のメッセージと会話履歴を読み、新しい作業項目（WorkItem）を作成すべきか判断してください。
+
+作業項目を作成すべき場合のみ、JSONを返してください。
+作業の依頼・指示・タスクの割り当てを示すメッセージのみ対象とします。
+単なる報告・状況共有・雑談は対象外です。
+※作業項目作成済み と記載されたメッセージはすでに処理済みです。再度作業項目を作成しないでください。
+
+プロジェクト: {project.name}
+送信者: {sender.first_name} {sender.last_name}
+
+直近の会話履歴:
+{history}
+
+最新メッセージ:
+"{message_text}"
+
+作業項目を作成すべき場合は以下の形式のJSONのみを返してください:
+{{
+  "name": "<作業名（簡潔に）>",
+  "description": "<詳細説明（任意）>"
+}}
+
+作業項目を作成すべきでない場合は以下を返してください:
+{{"create": false}}
+""".strip()
+
+  response = await client.responses.create(
+    model="gpt-4.1-mini",
+    input=[{"role": "user", "content": prompt}],
+    temperature=0,
+  )
+
+  try:
+    parsed = json.loads(response.output_text.strip())
+  except json.JSONDecodeError:
+    return None
+
+  if not parsed or parsed.get("create") is False:
+    return None
+
+  return parsed
 
 def safe_json_loads(text: str):
   match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)

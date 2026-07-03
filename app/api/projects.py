@@ -9,8 +9,20 @@ from sqlalchemy.orm import selectinload
 from app.core.dependencies import get_current_user, require_company_manager, require_project_access
 from app.core.security import generate_unique_project_line_link_code
 from app.db.session import get_db
-from app.db.models import Project, Company, User, ProjectStatus, ProjectGuestLink
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectWithReports, ProjectWithCompanyName
+from app.db.models import (
+  Project, 
+  Company, 
+  User, 
+  ProjectStatus, 
+  ProjectGuestLink,
+  WorkItem,
+)
+from app.schemas.project import (
+  ProjectCreate, 
+  ProjectUpdate,
+  ProjectWithCompanyName,
+  ProjectWithReportsAndWorkItems,
+)
 from app.services.billing import ensure_subscription, can_use_billed_features
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
@@ -89,7 +101,7 @@ async def list_projects(
 
     return all_projects
 
-@router.get("/{project_id}", response_model=ProjectWithReports)
+@router.get("/{project_id}", response_model=ProjectWithReportsAndWorkItems)
 async def get_project(
   project_id: UUID,
   db: AsyncSession = Depends(get_db),
@@ -103,11 +115,13 @@ async def get_project(
       )
       .outerjoin(Company, Project.company_id == Company.id)
       .where(Project.id == project_id)
-      .options(selectinload(Project.reports))
+      .options(
+        selectinload(Project.reports),
+        selectinload(Project.work_items),
+      )
     )
 
     result = await db.execute(stmt)
-
     row = result.first()
 
     if not row:
@@ -121,7 +135,10 @@ async def get_project(
     stmt = (
       select(Project)
       .where(Project.id == project_id)
-      .options(selectinload(Project.reports))
+      .options(
+        selectinload(Project.reports),
+        selectinload(Project.work_items),
+      )
     )
 
     result = await db.execute(stmt)
@@ -136,7 +153,7 @@ async def get_project(
 
 @router.post(
   "",
-  response_model=ProjectWithReports,
+  response_model=ProjectWithReportsAndWorkItems,
   status_code=status.HTTP_201_CREATED,
 )
 async def create_project(
@@ -164,17 +181,18 @@ async def create_project(
 
   await ensure_subscription(company, db)
 
-  return ProjectWithReports(
+  return ProjectWithReportsAndWorkItems(
     id=project.id,
     name=project.name,
     description=project.description,
     status=project.status,
     line_link_code=project.line_link_code,
     company_id=project.company_id,
-    reports=[]
+    reports=[],
+    work_items=[],  # ADD
   )
 
-@router.patch("/{project_id}", response_model=ProjectWithReports)
+@router.patch("/{project_id}", response_model=ProjectWithReportsAndWorkItems)
 async def update_project(
   project_id: UUID,
   payload: ProjectUpdate,
@@ -202,7 +220,10 @@ async def update_project(
   stmt = (
     select(Project)
     .where(Project.id == project_id)
-    .options(selectinload(Project.reports))
+    .options(
+      selectinload(Project.reports),
+      selectinload(Project.work_items),
+    )
   )
 
   result = await db.execute(stmt)
