@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from typing import Optional, List
 from uuid import UUID
 
+from app.db.models.work_item import WorkItemStatus
+
 class ProjectBase(BaseModel):
   name: str
   description: str | None = None

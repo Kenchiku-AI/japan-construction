@@ -12,7 +12,6 @@ class LineMessage(Base):
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
   company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
   
-  # One of these will be set depending on source
   line_user_id = Column(String, nullable=True, index=True)
   line_group_id = Column(String, nullable=True, index=True)
   
