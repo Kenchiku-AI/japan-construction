@@ -18,6 +18,8 @@ from app.db.models.project import Project
 from app.services.billing import get_company_by_stripe_customer_id
 from app.services.email import send_line_link_confirmation_email, send_line_group_linked_email
 from app.services.reports import handle_line_message, handle_line_group_message
+from app.services.projects import handle_line_group_work_item
+from app.services.users import link_line_user
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +215,16 @@ async def line_webhook(
           text=text,
           user=user,
           project_id=project.id,
-          db=db,
+        )
+
+        background_tasks.add_task(
+          handle_line_group_work_item,
+          text=text,
+          user=user,
+          project=project,
+          sender_line_user_id=sender_id,
+          group_id=group_id,
+          company_id=company.id,
         )
 
     # --- DM message ---
@@ -247,7 +258,6 @@ async def line_webhook(
             text=text,
             user=user,
             company_id=company.id,
-            db=db,
           )
 
       else:
@@ -257,63 +267,6 @@ async def line_webhook(
         )
 
   return {"status": "ok"}
-
-async def link_line_user(
-  sender_id: str,
-  candidate_code: str,
-  company: Company,
-  background_tasks: BackgroundTasks,
-  db: AsyncSession,
-  group_id: str | None = None,
-) -> bool:
-  """Returns True if a U- code was found and handled (even if unrecognized), False otherwise."""
-  if not candidate_code.startswith("U-"):
-    return False
-
-  user_result = await db.execute(
-    select(User).where(User.line_link_code == candidate_code)
-  )
-  user_by_code = user_result.scalar_one_or_none()
-
-  if user_by_code:
-    await db.execute(
-      delete(UserLineLink).where(
-        or_(
-          and_(
-            UserLineLink.user_id == user_by_code.id,
-            UserLineLink.company_id == company.id,
-          ),
-          and_(
-            UserLineLink.company_id == company.id,
-            UserLineLink.line_user_id == sender_id,
-          ),
-        )
-      )
-    )
-    db.add(UserLineLink(
-      user_id=user_by_code.id,
-      company_id=company.id,
-      line_user_id=sender_id,
-    ))
-    await db.commit()
-
-    logger.info(
-      "LINE account linked | company_id=%s user_id=%s sender_id=%s group_id=%s",
-      company.id, user_by_code.id, sender_id, group_id,
-    )
-
-    background_tasks.add_task(
-      send_line_link_confirmation_email,
-      email=user_by_code.email,
-      company_name=company.name,
-    )
-  else:
-    logger.warning(
-      "LINE unrecognized user code | company_id=%s sender_id=%s code=%s group_id=%s",
-      company.id, sender_id, candidate_code, group_id,
-    )
-
-  return True
 
 def verify_line_signature(body: bytes, signature: str, channel_secret: str) -> bool:
   expected = base64.b64encode(
