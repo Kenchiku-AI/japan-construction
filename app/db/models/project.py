@@ -46,6 +46,11 @@ class Project(Base):
     cascade="all, delete-orphan",
   )
 
+  work_items = relationship(
+    "WorkItem",
+    back_populates="project"
+  )
+
   line_link_code = Column(String, nullable=False, unique=True, index=True)
   line_group_id = Column(String, nullable=True, unique=True, index=True)
 
