@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timedelta, timezone
 from typing import List
 from uuid import UUID
@@ -7,6 +8,7 @@ from sqlalchemy import and_, desc, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import settings
 from app.core.dependencies import get_current_user, require_company_manager
 from app.db.models import (
   Company,
@@ -31,7 +33,11 @@ from app.schemas.company import (
   ReportImageTagUpdate
 )
 from app.schemas.invitation import CompanyInvitationCreate
-from app.services.billing import get_payment_method_display, billing_in_good_standing
+from app.services.billing import (
+  get_payment_method_display,
+  billing_in_good_standing,
+  can_use_billed_features,
+)
 from app.services.invitations import create_company_invitation
 from app.services.email import send_company_created_admin_email
 
@@ -266,11 +272,9 @@ async def create_company(
   await db.refresh(company)
 
   try:
-    stripe_customer = stripe.Customer.create(
-      name=company.name,
-      metadata={"company_id": str(company.id)},
+    company.stripe_customer_id, company.stripe_test_clock_id = (
+      await _create_stripe_customer_for_company(company)
     )
-    company.stripe_customer_id = stripe_customer.id
     await db.commit()
     await db.refresh(company)
   except stripe.error.StripeError:
@@ -631,13 +635,21 @@ async def create_setup_intent(
     raise HTTPException(status_code=404, detail="Company not found")
 
   if not company.stripe_customer_id:
-    stripe_customer = stripe.Customer.create(
-      name=company.name,
-      metadata={"company_id": str(company.id)},
-    )
-    company.stripe_customer_id = stripe_customer.id
-    await db.commit()
-    await db.refresh(company)
+    try:
+      company.stripe_customer_id, company.stripe_test_clock_id = (
+        await _create_stripe_customer_for_company(company)
+      )
+      await db.commit()
+      await db.refresh(company)
+    except stripe.error.StripeError:
+      logger.exception(
+        "Failed creating Stripe customer for company %s",
+        company.id,
+      )
+      raise HTTPException(
+        status_code=502,
+        detail="Unable to set up billing right now. Please try again shortly.",
+      )
 
   intent = stripe.SetupIntent.create(
     customer=company.stripe_customer_id,
@@ -654,3 +666,19 @@ async def check_billing_status(
 ):
   allowed, reason = await can_use_billed_features(company_id, db)
   return {"success": allowed, "reason": reason}
+
+async def _create_stripe_customer_for_company(company: Company) -> tuple[str, str | None]:
+  if settings.STRIPE_SECRET_KEY.startswith("sk_test_"):
+    clock = stripe.test_helpers.TestClock.create(
+      frozen_time=int(time.time()),
+      name=company.name,
+    )
+    customer = stripe.Customer.create(
+      name=company.name, test_clock=clock.id,
+      metadata={"company_id": str(company.id)},
+    )
+    return customer.id, clock.id
+  customer = stripe.Customer.create(
+    name=company.name, metadata={"company_id": str(company.id)},
+  )
+  return customer.id, None
