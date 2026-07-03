@@ -293,7 +293,7 @@ async def extract_work_item(
   )
 
   logger.info(
-    "OpenAI response: %s",
+    "Work item OpenAI response: %s",
     response.output_text,
   )
 
