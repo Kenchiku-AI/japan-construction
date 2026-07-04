@@ -55,7 +55,7 @@ async def handle_line_group_work_item(
       line_group_id=group_id,
       sender_line_user_id=sender_line_user_id,
       text=text,
-      triggered_work_item=False,
+      triggered_work_item_id=None,
     )
     db.add(current_message)
     await db.flush()
@@ -73,28 +73,67 @@ async def handle_line_group_work_item(
     )
     recent_messages = list(reversed(history_result.scalars().all()))
 
+    # Fetch recent work items for this project for update context
+    recent_work_items_result = await db.execute(
+      select(WorkItem)
+      .where(WorkItem.project_id == project.id)
+      .order_by(WorkItem.created_at.desc())
+      .limit(5)
+    )
+    recent_work_items = recent_work_items_result.scalars().all()
+
     # Attempt work item extraction
     work_item_data = await extract_work_item(
       message_text=text,
       project=project,
       sender=user,
       recent_messages=recent_messages,
+      recent_work_items=recent_work_items,
     )
 
     if work_item_data:
-      db.add(WorkItem(
-        project_id=project.id,
-        name=work_item_data["name"],
-        description=work_item_data.get("description"),
-        status=WorkItemStatus.new,
-      ))
-      # Mark this message so future history knows not to re-trigger on it
-      current_message.triggered_work_item = True
+      action = work_item_data.get("action")
 
-      logger.info(
-        "LINE work item created | project_id=%s user_id=%s name=%s",
-        project.id, user.id, work_item_data["name"],
-      )
+      if action == "create":
+        new_work_item = WorkItem(
+          project_id=project.id,
+          name=work_item_data["name"],
+          description=work_item_data.get("description"),
+          status=WorkItemStatus.new,
+          source_message_text=text,
+        )
+        db.add(new_work_item)
+        await db.flush()
+
+        # Link this message to the work item it created
+        current_message.triggered_work_item_id = new_work_item.id
+
+        logger.info(
+          "LINE work item created | project_id=%s user_id=%s name=%s",
+          project.id, user.id, work_item_data["name"],
+        )
+
+      elif action == "update":
+        work_item_id = work_item_data.get("work_item_id")
+        if work_item_id:
+          update_result = await db.execute(
+            select(WorkItem).where(
+              WorkItem.id == work_item_id,
+              WorkItem.project_id == project.id,
+            )
+          )
+          work_item = update_result.scalar_one_or_none()
+
+          if work_item:
+            work_item.description = work_item_data["description"]
+
+            # Also link this message to the work item it updated
+            current_message.triggered_work_item_id = UUID(work_item_id)
+
+            logger.info(
+              "LINE work item updated | work_item_id=%s user_id=%s",
+              work_item_id, user.id,
+            )
 
     # Prune old messages — keep last 20 per group
     old_messages_result = await db.execute(

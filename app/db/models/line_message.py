@@ -16,6 +16,13 @@ class LineMessage(Base):
   line_group_id = Column(String, nullable=True, index=True)
   
   sender_line_user_id = Column(String, nullable=False)
-  triggered_work_item = Column(Boolean, nullable=False, default=False)
   text = Column(String, nullable=False)
+
+  triggered_work_item_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("work_items.id", ondelete="SET NULL"),
+    nullable=True,
+    index=True,
+  )
+
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

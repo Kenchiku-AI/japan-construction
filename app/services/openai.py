@@ -252,73 +252,34 @@ async def extract_work_item(
   project: Project,
   sender: User,
   recent_messages: list[LineMessage],
+  recent_work_items: list[WorkItem],
 ) -> dict | None:
+
   history = "\n".join(
-    f'- "{m.text}"{"  ※作業項目作成済み" if m.triggered_work_item else ""}'
+    f'- "{m.text}"{"  ※作業項目作成済み(id: " + str(m.triggered_work_item_id) + ")" if m.triggered_work_item_id else ""}'
     for m in recent_messages
   )
 
+  work_items_block = "\n".join(
+    f'- id: "{w.id}" | name: "{w.name}" | description: "{w.description or ""}"'
+    for w in recent_work_items
+  ) if recent_work_items else "なし"
+
   prompt = f"""
-あなたは建設会社のプロジェクト管理アシスタントです。
+あなたは建設現場のタスク管理システムです。
+以下のメッセージと会話履歴を読み、以下のいずれかを判断してください：
 
-あなたの役割は、LINEグループの会話から、新しい作業項目（WorkItem）を作成すべきか判断することです。
+1. 新しい作業項目を作成する
+2. 既存の作業項目を更新する（スケジュールや空き状況などの追加情報がある場合）
+3. 何もしない
 
-## 作業項目とは
+作業の依頼・指示・タスクの割り当てを示すメッセージのみ対象とします。
+単なる報告・状況共有・雑談は対象外です。
+※作業項目作成済み と記載されたメッセージはすでに処理済みです。再度作業項目を作成しないでください。
 
-作業項目とは、誰かが実施すべき仕事・対応・変更・確認・準備・修理・施工・調査・依頼などを管理するための項目です。
-
-作業の規模は問いません。
-
-以下はすべて作業項目になります。
-
-- 図面を更新する
-- 現場を確認する
-- 資材を発注する
-- エアコンを全室設置する
-- 屋根を修理する
-- ガラスを交換する
-- 電気配線を確認する
-- 見積もりを作成する
-- ○○さんへ確認する
-- 業者へ連絡する
-
-## 作業項目を作成する条件
-
-次のような内容であれば、必ず作業項目を作成してください。
-
-- 作業の依頼
-- 指示
-- 誰かが今後実施すべき内容
-- 対応が必要な事項
-- 修正・変更の依頼
-- 確認・調査・点検の依頼
-- 将来やるべき仕事
-
-明確な命令だけでなく、
-
-「〜してください」
-「〜をお願いします」
-「〜する必要があります」
-「〜した方がいい」
-「〜を対応する」
-「〜を修正」
-「〜を追加」
-「〜を変更」
-
-なども作業項目になる可能性があります。
-
-## 作業項目を作成しない条件
-
-以下は作業項目を作成しません。
-
-- 作業完了報告
-- 状況報告
-- 雑談
-- 挨拶
-- 単なる事実の共有
-- すでに完了した作業
-
-また、会話履歴で「※作業項目作成済み」と書かれている内容については、重複して作業項目を作成しないでください。
+スケジュールや空き状況に関する情報がある場合は、description に含めること。
+日付は scheduled_date フィールドには設定せず、説明文として記述すること。
+例：「田中さんは来週水曜以降対応可能とのこと」
 
 プロジェクト: {project.name}
 送信者: {sender.first_name} {sender.last_name}
@@ -329,18 +290,25 @@ async def extract_work_item(
 最新メッセージ:
 "{message_text}"
 
-作業項目を作成する場合は、JSONのみ返してください。
+既存の作業項目:
+{work_items_block}
 
+新しい作業項目を作成する場合:
 {{
-  "name": "<短い作業名>",
-  "description": "<必要なら詳細>"
+  "action": "create",
+  "name": "<作業名（簡潔に）>",
+  "description": "<詳細説明。スケジュール・空き状況などの情報も含めること>"
 }}
 
-作成しない場合は
+既存の作業項目を更新する場合:
+{{
+  "action": "update",
+  "work_item_id": "<更新対象のid>",
+  "description": "<更新後の説明文>"
+}}
 
-{{"create": false}}
-
-JSON以外は一切出力しないでください。
+何もしない場合:
+{{"action": "none"}}
 """.strip()
 
   response = await client.responses.create(
@@ -349,17 +317,12 @@ JSON以外は一切出力しないでください。
     temperature=0,
   )
 
-  logger.info(
-    "Work item OpenAI response: %s",
-    response.output_text,
-  )
-
   try:
     parsed = json.loads(response.output_text.strip())
   except json.JSONDecodeError:
     return None
 
-  if not parsed or parsed.get("create") is False:
+  if not parsed or parsed.get("action") == "none":
     return None
 
   return parsed

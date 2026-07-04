@@ -24,6 +24,7 @@ class WorkItem(Base):
 
   name = Column(String, nullable=False)
   description = Column(String, nullable=True)
+  source_message_text = Column(String, nullable=True)
   status = Column(SQLEnum(WorkItemStatus), nullable=False, default=WorkItemStatus.new)
   scheduled_date = Column(DateTime(timezone=True), nullable=True)
 

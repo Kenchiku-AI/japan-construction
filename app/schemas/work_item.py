@@ -25,6 +25,7 @@ class WorkItemRead(BaseModel):
   project_id: UUID
   name: str
   description: str | None = None
+  source_message_text: str | None = None
   status: WorkItemStatus
   assignee_id: UUID | None = None
   scheduled_date: datetime | None = None
