@@ -189,44 +189,43 @@ async def line_webhook(
         )
         continue
 
-      user_link_result = await db.execute(
-        select(UserLineLink).where(
-          UserLineLink.company_id == company.id,
-          UserLineLink.line_user_id == sender_id,
-        )
+      background_tasks.add_task(
+        handle_line_group_action_item,
+        text=text,
+        project=project,
+        sender_line_user_id=sender_id,
+        group_id=group_id,
+        company_id=company.id,
       )
-      user_link = user_link_result.scalar_one_or_none()
 
-      if not user_link:
-        logger.warning(
-          "LINE group message from unlinked user | company_id=%s group_id=%s sender_id=%s",
-          company.id, group_id, sender_id,
-        )
-        continue
+      # TEMPORARILY DISABLING REPORT HANDLING
+      # user_link_result = await db.execute(
+      #   select(UserLineLink).where(
+      #     UserLineLink.company_id == company.id,
+      #     UserLineLink.line_user_id == sender_id,
+      #   )
+      # )
+      # user_link = user_link_result.scalar_one_or_none()
 
-      user_result = await db.execute(
-        select(User).where(User.id == user_link.user_id)
-      )
-      user = user_result.scalar_one_or_none()
+      # if not user_link:
+      #   logger.warning(
+      #     "LINE group message from unlinked user | company_id=%s group_id=%s sender_id=%s",
+      #     company.id, group_id, sender_id,
+      #   )
+      #   continue
 
-      if user:
-        # TEMPORARILY DISABLING REPORT HANDLING
-        # background_tasks.add_task(
-        #   handle_line_group_message,
-        #   text=text,
-        #   user=user,
-        #   project_id=project.id,
-        # )
+      # user_result = await db.execute(
+      #   select(User).where(User.id == user_link.user_id)
+      # )
+      # user = user_result.scalar_one_or_none()
 
-        background_tasks.add_task(
-          handle_line_group_action_item,
-          text=text,
-          user=user,
-          project=project,
-          sender_line_user_id=sender_id,
-          group_id=group_id,
-          company_id=company.id,
-        )
+      # if user:
+      #   background_tasks.add_task(
+      #     handle_line_group_message,
+      #     text=text,
+      #     user=user,
+      #     project_id=project.id,
+      #   )
 
     # --- DM message ---
 

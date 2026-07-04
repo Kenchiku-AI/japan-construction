@@ -42,7 +42,6 @@ async def get_project_members(
 
 async def handle_line_group_action_item(
   text: str,
-  user: User,
   project: Project,
   sender_line_user_id: str,
   group_id: str,
@@ -86,7 +85,6 @@ async def handle_line_group_action_item(
     action_item_data = await extract_action_item(
       message_text=text,
       project=project,
-      sender=user,
       recent_messages=recent_messages,
       recent_action_items=recent_action_items,
     )
@@ -109,8 +107,8 @@ async def handle_line_group_action_item(
         current_message.triggered_action_item_id = new_action_item.id
 
         logger.info(
-          "LINE action item created | project_id=%s user_id=%s name=%s",
-          project.id, user.id, action_item_data["name"],
+          "LINE action item created | project_id=%s name=%s",
+          project.id, action_item_data["name"],
         )
 
       elif action == "update":
@@ -131,8 +129,8 @@ async def handle_line_group_action_item(
             current_message.triggered_action_item_id = UUID(action_item_id)
 
             logger.info(
-              "LINE action item updated | action_item_id=%s user_id=%s",
-              action_item_id, user.id,
+              "LINE action item updated | action_item_id=%s",
+              action_item_id,
             )
 
     # Prune old messages — keep last 20 per group
