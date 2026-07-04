@@ -9,14 +9,14 @@ from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
-class WorkItemStatus(str, enum.Enum):
+class ActionItemStatus(str, enum.Enum):
   new = "new"
   scheduled = "scheduled"
   in_progress = "in_progress"
   closed = "closed"
 
-class WorkItem(Base):
-  __tablename__ = "work_items"
+class ActionItem(Base):
+  __tablename__ = "action_items"
 
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
   project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -24,10 +24,11 @@ class WorkItem(Base):
 
   name = Column(String, nullable=False)
   description = Column(String, nullable=True)
-  status = Column(SQLEnum(WorkItemStatus), nullable=False, default=WorkItemStatus.new)
+  source_message_text = Column(String, nullable=True)
+  status = Column(SQLEnum(ActionItemStatus), nullable=False, default=ActionItemStatus.new)
   scheduled_date = Column(DateTime(timezone=True), nullable=True)
 
-  project = relationship("Project", back_populates="work_items")
+  project = relationship("Project", back_populates="action_items")
   assignee = relationship("User", foreign_keys=[assignee_id])
 
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

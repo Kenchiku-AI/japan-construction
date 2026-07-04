@@ -18,7 +18,7 @@ from app.db.models.project import Project
 from app.services.billing import get_company_by_stripe_customer_id
 from app.services.email import send_line_link_confirmation_email, send_line_group_linked_email
 from app.services.reports import handle_line_message, handle_line_group_message
-from app.services.projects import handle_line_group_work_item
+from app.services.projects import handle_line_group_action_item
 from app.services.users import link_line_user
 
 logger = logging.getLogger(__name__)
@@ -189,44 +189,43 @@ async def line_webhook(
         )
         continue
 
-      user_link_result = await db.execute(
-        select(UserLineLink).where(
-          UserLineLink.company_id == company.id,
-          UserLineLink.line_user_id == sender_id,
-        )
+      background_tasks.add_task(
+        handle_line_group_action_item,
+        text=text,
+        project=project,
+        sender_line_user_id=sender_id,
+        group_id=group_id,
+        company_id=company.id,
       )
-      user_link = user_link_result.scalar_one_or_none()
 
-      if not user_link:
-        logger.warning(
-          "LINE group message from unlinked user | company_id=%s group_id=%s sender_id=%s",
-          company.id, group_id, sender_id,
-        )
-        continue
+      # TEMPORARILY DISABLING REPORT HANDLING
+      # user_link_result = await db.execute(
+      #   select(UserLineLink).where(
+      #     UserLineLink.company_id == company.id,
+      #     UserLineLink.line_user_id == sender_id,
+      #   )
+      # )
+      # user_link = user_link_result.scalar_one_or_none()
 
-      user_result = await db.execute(
-        select(User).where(User.id == user_link.user_id)
-      )
-      user = user_result.scalar_one_or_none()
+      # if not user_link:
+      #   logger.warning(
+      #     "LINE group message from unlinked user | company_id=%s group_id=%s sender_id=%s",
+      #     company.id, group_id, sender_id,
+      #   )
+      #   continue
 
-      if user:
-        # TEMPORARILY DISABLING REPORT HANDLING
-        # background_tasks.add_task(
-        #   handle_line_group_message,
-        #   text=text,
-        #   user=user,
-        #   project_id=project.id,
-        # )
+      # user_result = await db.execute(
+      #   select(User).where(User.id == user_link.user_id)
+      # )
+      # user = user_result.scalar_one_or_none()
 
-        background_tasks.add_task(
-          handle_line_group_work_item,
-          text=text,
-          user=user,
-          project=project,
-          sender_line_user_id=sender_id,
-          group_id=group_id,
-          company_id=company.id,
-        )
+      # if user:
+      #   background_tasks.add_task(
+      #     handle_line_group_message,
+      #     text=text,
+      #     user=user,
+      #     project_id=project.id,
+      #   )
 
     # --- DM message ---
 
