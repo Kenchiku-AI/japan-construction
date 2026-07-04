@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from uuid import UUID
 
-from app.db.models.work_item import WorkItemStatus
+from app.db.models.action_item import ActionItemStatus
 
 class ProjectBase(BaseModel):
   name: str
@@ -40,12 +40,12 @@ class ProjectReportRead(BaseModel):
     "from_attributes": True
   }
 
-class ProjectWorkItemRead(BaseModel):
+class ProjectActionItemRead(BaseModel):
   id: UUID
   project_id: UUID
   name: str
   description: str | None = None
-  status: WorkItemStatus
+  status: ActionItemStatus
   assignee_id: UUID | None = None
   scheduled_date: datetime | None = None
   created_at: datetime
@@ -55,6 +55,6 @@ class ProjectWorkItemRead(BaseModel):
     "from_attributes": True
   }
   
-class ProjectWithReportsAndWorkItems(ProjectWithCompanyName):
+class ProjectWithReportsAndActionItems(ProjectWithCompanyName):
   reports: List[ProjectReportRead] = []
-  work_items: List[ProjectWorkItemRead] = []
+  action_items: List[ProjectActionItemRead] = []

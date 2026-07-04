@@ -247,23 +247,23 @@ async def filter_reports_by_context(
   report_ids = parsed.get("report_ids", [])
   return [r for r in reports if str(r.id) in report_ids]
 
-async def extract_work_item(
+async def extract_action_item(
   message_text: str,
   project: Project,
   sender: User,
   recent_messages: list[LineMessage],
-  recent_work_items: list[WorkItem],
+  recent_action_items: list[ActionItem],
 ) -> dict | None:
 
   history = "\n".join(
-    f'- "{m.text}"{"  ※作業項目作成済み(id: " + str(m.triggered_work_item_id) + ")" if m.triggered_work_item_id else ""}'
+    f'- "{m.text}"{"  ※作業項目作成済み(id: " + str(m.triggered_action_item_id) + ")" if m.triggered_action_item_id else ""}'
     for m in recent_messages
   )
 
-  work_items_block = "\n".join(
+  action_items_block = "\n".join(
     f'- id: "{w.id}" | name: "{w.name}" | description: "{w.description or ""}"'
-    for w in recent_work_items
-  ) if recent_work_items else "なし"
+    for w in recent_action_items
+  ) if recent_action_items else "なし"
 
   prompt = f"""
 あなたは建設現場のタスク管理システムです。
@@ -291,7 +291,7 @@ async def extract_work_item(
 "{message_text}"
 
 既存の作業項目:
-{work_items_block}
+{action_items_block}
 
 新しい作業項目を作成する場合:
 {{
@@ -303,7 +303,7 @@ async def extract_work_item(
 既存の作業項目を更新する場合:
 {{
   "action": "update",
-  "work_item_id": "<更新対象のid>",
+  "action_item_id": "<更新対象のid>",
   "description": "<更新後の説明文>"
 }}
 

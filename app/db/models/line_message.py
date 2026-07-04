@@ -18,9 +18,9 @@ class LineMessage(Base):
   sender_line_user_id = Column(String, nullable=False)
   text = Column(String, nullable=False)
 
-  triggered_work_item_id = Column(
+  triggered_action_item_id = Column(
     UUID(as_uuid=True),
-    ForeignKey("work_items.id", ondelete="SET NULL"),
+    ForeignKey("action_items.id", ondelete="SET NULL"),
     nullable=True,
     index=True,
   )

@@ -15,13 +15,13 @@ from app.db.models import (
   User, 
   ProjectStatus, 
   ProjectGuestLink,
-  WorkItem,
+  ActionItem,
 )
 from app.schemas.project import (
   ProjectCreate, 
   ProjectUpdate,
   ProjectWithCompanyName,
-  ProjectWithReportsAndWorkItems,
+  ProjectWithReportsAndActionItems,
 )
 from app.services.billing import ensure_subscription, can_use_billed_features
 
@@ -101,7 +101,7 @@ async def list_projects(
 
     return all_projects
 
-@router.get("/{project_id}", response_model=ProjectWithReportsAndWorkItems)
+@router.get("/{project_id}", response_model=ProjectWithReportsAndActionItems)
 async def get_project(
   project_id: UUID,
   db: AsyncSession = Depends(get_db),
@@ -117,7 +117,7 @@ async def get_project(
       .where(Project.id == project_id)
       .options(
         selectinload(Project.reports),
-        selectinload(Project.work_items),
+        selectinload(Project.action_items),
       )
     )
 
@@ -137,7 +137,7 @@ async def get_project(
       .where(Project.id == project_id)
       .options(
         selectinload(Project.reports),
-        selectinload(Project.work_items),
+        selectinload(Project.action_items),
       )
     )
 
@@ -153,7 +153,7 @@ async def get_project(
 
 @router.post(
   "",
-  response_model=ProjectWithReportsAndWorkItems,
+  response_model=ProjectWithReportsAndActionItems,
   status_code=status.HTTP_201_CREATED,
 )
 async def create_project(
@@ -181,7 +181,7 @@ async def create_project(
 
   await ensure_subscription(company, db)
 
-  return ProjectWithReportsAndWorkItems(
+  return ProjectWithReportsAndActionItems(
     id=project.id,
     name=project.name,
     description=project.description,
@@ -189,10 +189,10 @@ async def create_project(
     line_link_code=project.line_link_code,
     company_id=project.company_id,
     reports=[],
-    work_items=[],  # ADD
+    action_items=[],
   )
 
-@router.patch("/{project_id}", response_model=ProjectWithReportsAndWorkItems)
+@router.patch("/{project_id}", response_model=ProjectWithReportsAndActionItems)
 async def update_project(
   project_id: UUID,
   payload: ProjectUpdate,
@@ -222,7 +222,7 @@ async def update_project(
     .where(Project.id == project_id)
     .options(
       selectinload(Project.reports),
-      selectinload(Project.work_items),
+      selectinload(Project.action_items),
     )
   )
 
