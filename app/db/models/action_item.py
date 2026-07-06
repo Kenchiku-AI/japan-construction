@@ -25,6 +25,7 @@ class ActionItem(Base):
   name = Column(String, nullable=False)
   description = Column(String, nullable=True)
   source_message_text = Column(String, nullable=True)
+  line_timestamp = Column(DateTime(timezone=True), nullable=True)
   status = Column(SQLEnum(ActionItemStatus), nullable=False, default=ActionItemStatus.new)
   scheduled_date = Column(DateTime(timezone=True), nullable=True)
 

@@ -102,6 +102,7 @@ async def handle_line_group_action_item(
           description=action_item_data.get("description"),
           status=ActionItemStatus.new,
           source_message_text=text,
+          line_timestamp=line_timestamp,
         )
         db.add(new_action_item)
         await db.flush()
