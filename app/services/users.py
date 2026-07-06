@@ -78,8 +78,9 @@ async def build_user_with_company_and_projects(
 
   needs_payment_method = False
 
-  if company:
-    needs_payment_method = not await has_payment_method(company)
+  # TEMPORARILY ALLOWING USE WITHOUT PAYMENT METHOD
+  # if company:
+  #   needs_payment_method = not await has_payment_method(company)
 
   return UserWithCompanyAndProjects(
     id=user.id,
