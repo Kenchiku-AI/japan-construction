@@ -10,6 +10,7 @@ from app.db.models.user import User
 from app.db.models.project import Project
 from app.db.models.action_item import ActionItem, ActionItemStatus
 from app.schemas.action_item import ActionItemCreate, ActionItemRead, ActionItemUpdate
+from app.services.billing import can_use_billed_features
 from app.core.dependencies import (
   get_current_user,
   require_company_manager,
@@ -34,6 +35,10 @@ async def create_action_item(
   project = await db.get(Project, payload.project_id)
   if not project:
     raise HTTPException(status_code=404, detail="Project not found")
+
+  allowed, reason = await can_use_billed_features(project.company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(status_code=402, detail=reason)
 
   if current_user.role != "admin":
     await require_project_access(current_user, payload.project_id, project.company_id, db)
@@ -75,6 +80,10 @@ async def update_action_item(
   if not project:
     raise HTTPException(status_code=404, detail="Project not found")
 
+  allowed, reason = await can_use_billed_features(project.company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(status_code=402, detail=reason)
+
   if current_user.role != "admin":
     await require_project_access(current_user, action_item.project_id, project.company_id, db)
 
@@ -106,6 +115,10 @@ async def delete_action_item(
   project = await db.get(Project, action_item.project_id)
   if not project:
     raise HTTPException(status_code=404, detail="Project not found")
+
+  allowed, reason = await can_use_billed_features(project.company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(status_code=402, detail=reason)
 
   if current_user.role != "admin":
     require_company_manager(current_user, project.company_id)
