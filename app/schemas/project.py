@@ -22,6 +22,7 @@ class ProjectRead(ProjectBase):
   company_id: UUID
   status: str
   line_link_code: str
+  line_group_id: str | None = None
 
   model_config = {
     "from_attributes": True

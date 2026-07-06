@@ -187,6 +187,7 @@ async def create_project(
     description=project.description,
     status=project.status,
     line_link_code=project.line_link_code,
+    line_group_id=project.line_group_id,
     company_id=project.company_id,
     reports=[],
     action_items=[],
