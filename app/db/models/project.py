@@ -51,6 +51,7 @@ class Project(Base):
     "ActionItem",
     back_populates="project",
     cascade="all, delete-orphan",
+    order_by="ActionItem.updated_at.desc()",
   )
 
   line_link_code = Column(String, nullable=False, unique=True, index=True)
