@@ -421,7 +421,7 @@ description は既存の内容を踏まえた更新後の全文を返してく�
 
 ## 現在のアクション項目
 
-{work_items_block}
+{action_items_block}
 
 各アクション項目は次の形式です。
 
