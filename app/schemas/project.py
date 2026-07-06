@@ -47,6 +47,7 @@ class ProjectActionItemRead(BaseModel):
   description: str | None = None
   status: ActionItemStatus
   source_message_text: str | None = None
+  line_timestamp: datetime | None = None
   assignee_id: UUID | None = None
   scheduled_date: datetime | None = None
   created_at: datetime

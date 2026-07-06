@@ -14,6 +14,7 @@ class LineMessage(Base):
   
   line_user_id = Column(String, nullable=True, index=True)
   line_group_id = Column(String, nullable=True, index=True)
+  line_timestamp = Column(DateTime(timezone=True), nullable=True)
   
   sender_line_user_id = Column(String, nullable=False)
   text = Column(String, nullable=False)

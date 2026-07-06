@@ -1,5 +1,6 @@
 from uuid import UUID
 import logging
+from datetime import datetime
 
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +47,7 @@ async def handle_line_group_action_item(
   sender_line_user_id: str,
   group_id: str,
   company_id: UUID,
+  line_timestamp: datetime | None,
 ) -> None:
   async with AsyncSessionLocal() as db:
     # Save message to history
@@ -55,6 +57,7 @@ async def handle_line_group_action_item(
       sender_line_user_id=sender_line_user_id,
       text=text,
       triggered_action_item_id=None,
+      line_timestamp=line_timestamp,
     )
     db.add(current_message)
     await db.flush()
@@ -99,6 +102,7 @@ async def handle_line_group_action_item(
           description=action_item_data.get("description"),
           status=ActionItemStatus.new,
           source_message_text=text,
+          line_timestamp=line_timestamp,
         )
         db.add(new_action_item)
         await db.flush()
