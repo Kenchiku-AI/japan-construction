@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import logging
+from datetime import datetime, timezone
 
 import stripe
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, BackgroundTasks
@@ -116,6 +117,8 @@ async def line_webhook(
     source_type = event.get("source", {}).get("type")
     group_id = event.get("source", {}).get("groupId")
     text = message.get("text", "").strip()
+    line_timestamp_ms = event.get("timestamp")
+    line_timestamp = datetime.fromtimestamp(line_timestamp_ms / 1000, tz=timezone.utc) if line_timestamp_ms else None
     candidate_code = text.upper()
 
     # --- Group message ---
@@ -196,6 +199,7 @@ async def line_webhook(
         sender_line_user_id=sender_id,
         group_id=group_id,
         company_id=company.id,
+        line_timestamp=line_timestamp,
       )
 
       # TEMPORARILY DISABLING REPORT HANDLING

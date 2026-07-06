@@ -46,6 +46,7 @@ async def handle_line_group_action_item(
   sender_line_user_id: str,
   group_id: str,
   company_id: UUID,
+  line_timestamp: datetime | None,
 ) -> None:
   async with AsyncSessionLocal() as db:
     # Save message to history
@@ -55,6 +56,7 @@ async def handle_line_group_action_item(
       sender_line_user_id=sender_line_user_id,
       text=text,
       triggered_action_item_id=None,
+      line_timestamp=line_timestamp,
     )
     db.add(current_message)
     await db.flush()
