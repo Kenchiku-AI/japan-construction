@@ -53,8 +53,9 @@ async def can_use_billed_features(company_id: str, db: AsyncSession) -> tuple[bo
   if not company:
     raise HTTPException(status_code=404, detail="Company not found")
 
-  if not await has_payment_method(company):
-    return False, "payment_method_required"
+  # TEMPORARILY ALLOWING USE WITHOUT PAYMENT METHOD
+  # if not await has_payment_method(company):
+  #   return False, "payment_method_required"
 
   if not billing_in_good_standing(company):
     return False, "subscription_past_due"
