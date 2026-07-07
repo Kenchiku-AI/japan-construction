@@ -92,13 +92,25 @@ async def line_webhook(
   x_line_signature: str = Header(..., alias="X-Line-Signature"),
   db: AsyncSession = Depends(get_db),
 ):
+  body = await request.body()
+
+  logger.info("=== LINE WEBHOOK ===")
+  logger.info("Headers: %s", dict(request.headers))
+  logger.info("Body: %s", body.decode("utf-8"))
+
+  try:
+    logger.info(
+      "JSON: %s",
+      json.dumps(json.loads(body), indent=2, ensure_ascii=False),
+    )
+  except Exception:
+    logger.exception("Request body was not valid JSON")
+
   result = await db.execute(select(Company).where(Company.id == company_id))
   company = result.scalar_one_or_none()
 
   if not company or not company.line_channel_secret:
     raise HTTPException(status_code=404)
-
-  body = await request.body()
 
   if not verify_line_signature(body, x_line_signature, company.line_channel_secret):
     raise HTTPException(status_code=403, detail="Invalid signature")
