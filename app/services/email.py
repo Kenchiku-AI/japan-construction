@@ -1,4 +1,5 @@
 from app.core.config import settings
+from urllib.parse import urlencode
 import boto3
 import logging
 
@@ -75,7 +76,12 @@ def _build_line_section(company_name: str, line_link_code: str) -> str:
 """
 
 def send_invitation_email(email: str, company_name: str, invite_token: str) -> None:
-  invite_link = f"{settings.WEB_CLIENT_URL}/signup?invitationToken={invite_token}"
+  params = urlencode({
+    "invitationToken": invite_token,
+    "email": email,
+  })
+
+  invite_link = f"{settings.WEB_CLIENT_URL}/signup?{params}"
 
   subject = f"{company_name} への招待"
 
