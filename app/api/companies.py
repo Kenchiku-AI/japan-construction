@@ -221,17 +221,17 @@ async def create_company(
   background_tasks: BackgroundTasks,
   db: AsyncSession = Depends(get_db),
 ):
-  existing_company = await db.scalar(
-    select(Company).where(
-      func.lower(Company.name) == payload.name.lower()
-    )
-  )
+  # existing_company = await db.scalar(
+  #   select(Company).where(
+  #     func.lower(Company.name) == payload.name.lower()
+  #   )
+  # )
 
-  if existing_company:
-    raise HTTPException(
-      status_code=409,
-      detail="Company with that name already exists",
-    )
+  # if existing_company:
+  #   raise HTTPException(
+  #     status_code=409,
+  #     detail="Company with that name already exists",
+  #   )
 
   if payload.corporate_number:
     existing = await db.scalar(
