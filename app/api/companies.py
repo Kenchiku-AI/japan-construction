@@ -37,6 +37,7 @@ from app.services.billing import (
   get_payment_method_display,
   can_use_billed_features,
   get_billing_status,
+  create_subscription
 )
 from app.services.invitations import create_company_invitation
 from app.services.email import send_company_created_admin_email
@@ -293,6 +294,8 @@ async def create_company(
     company.billing_plan_id = default_plan.id
     await db.commit()
     await db.refresh(company)
+
+    await create_subscription(company, db)
 
   invitation = None
   
