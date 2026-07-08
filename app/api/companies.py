@@ -226,11 +226,11 @@ async def create_company(
     )
   )
 
-  if existing_company:
-    raise HTTPException(
-      status_code=409,
-      detail="Company with that name already exists",
-    )
+  # if existing_company:
+  #   raise HTTPException(
+  #     status_code=409,
+  #     detail="Company with that name already exists",
+  #   )
 
   if payload.corporate_number:
     existing = await db.scalar(
