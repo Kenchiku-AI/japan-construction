@@ -183,6 +183,7 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
       customer=company.stripe_customer_id,
       items=[{"price": plan.stripe_price_id, "quantity": 1}],
       trial_period_days=30,
+      trial_settings={"end_behavior": {"missing_payment_method": "pause"}},
       payment_settings={"save_default_payment_method": "on_subscription"},
     )
     company.stripe_subscription_id = subscription.id
