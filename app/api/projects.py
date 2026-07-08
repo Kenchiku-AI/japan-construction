@@ -23,7 +23,7 @@ from app.schemas.project import (
   ProjectWithCompanyName,
   ProjectWithReportsAndActionItems,
 )
-from app.services.billing import ensure_subscription, can_use_billed_features
+from app.services.billing import can_use_billed_features
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -178,8 +178,6 @@ async def create_project(
   db.add(project)
   await db.commit()
   await db.refresh(project)
-
-  await ensure_subscription(company, db)
 
   return ProjectWithReportsAndActionItems(
     id=project.id,

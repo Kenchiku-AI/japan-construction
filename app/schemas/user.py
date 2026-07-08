@@ -48,7 +48,6 @@ class UserCompanyRead(BaseModel):
   id: UUID
   name: str
   corporate_number: Optional[str]
-  needs_payment_method: bool
 
   model_config = {
     "from_attributes": True

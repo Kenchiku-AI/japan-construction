@@ -9,7 +9,6 @@ from app.db.models.user import User, UserLineLink
 from app.db.models.company import Company
 from app.db.models.project import Project
 from app.db.models.project_guest_link import ProjectGuestLink
-from app.services.billing import has_payment_method
 from app.services.email import send_line_link_confirmation_email
 
 logger = logging.getLogger(__name__)
@@ -76,12 +75,6 @@ async def build_user_with_company_and_projects(
         status=project.status,
       ))
 
-  needs_payment_method = False
-
-  # TEMPORARILY ALLOWING USE WITHOUT PAYMENT METHOD
-  # if company:
-  #   needs_payment_method = not await has_payment_method(company)
-
   return UserWithCompanyAndProjects(
     id=user.id,
     first_name=user.first_name,
@@ -96,7 +89,6 @@ async def build_user_with_company_and_projects(
         id=company.id,
         name=company.name,
         corporate_number=company.corporate_number,
-        needs_payment_method=needs_payment_method
       )
       if company
       else None
