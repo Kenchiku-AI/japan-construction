@@ -38,6 +38,19 @@ def get_billing_status(company: Company) -> BillingStatus:
     subscription.status,
   )
 
+  if subscription.status == "paused" and _has_valid_payment_method(company):
+    try:
+      subscription = stripe.Subscription.resume(subscription.id)
+      logger.info(
+        "Auto-resumed paused subscription for company %s after finding payment method",
+        company.id,
+      )
+    except stripe.error.StripeError:
+      logger.exception(
+        "Failed to auto-resume subscription for company %s", company.id
+      )
+      # fall through — subscription stays paused, is_payment_method_valid will be False
+
   is_valid = subscription.status in HEALTHY_SUBSCRIPTION_STATUSES
 
   free_trial_days_left = None
@@ -136,6 +149,7 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
       customer=company.stripe_customer_id,
       items=[{"price": plan.stripe_price_id, "quantity": 1}],
       trial_period_days=30,
+      trial_settings={"end_behavior": {"missing_payment_method": "pause"}},
       payment_settings={"save_default_payment_method": "on_subscription"},
     )
     company.stripe_subscription_id = subscription.id
