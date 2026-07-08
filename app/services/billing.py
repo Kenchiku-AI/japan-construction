@@ -38,6 +38,53 @@ def get_billing_status(company: Company) -> BillingStatus:
     subscription.status,
   )
 
+  if subscription.status == "paused" and _has_valid_payment_method(company):
+    try:
+        logger.info(
+            "Attempting to resume subscription %s",
+            subscription.id,
+        )
+
+        subscription = stripe.Subscription.resume(subscription.id)
+
+        logger.info(
+            "Resume returned: status=%s latest_invoice=%s pending_update=%s default_payment_method=%s",
+            subscription.status,
+            subscription.latest_invoice,
+            subscription.pending_update,
+            subscription.default_payment_method,
+        )
+
+        if subscription.latest_invoice:
+            invoice = stripe.Invoice.retrieve(subscription.latest_invoice)
+
+            logger.info(
+                "Resume invoice: id=%s status=%s attempted=%s attempt_count=%s "
+                "amount_due=%s amount_paid=%s payment_intent=%s "
+                "default_payment_method=%s auto_advance=%s",
+                invoice.id,
+                invoice.status,
+                invoice.attempted,
+                invoice.attempt_count,
+                invoice.amount_due,
+                invoice.amount_paid,
+                invoice.payment_intent,
+                invoice.default_payment_method,
+                invoice.auto_advance,
+            )
+
+        logger.info(
+            "Auto-resume finished for company %s",
+            company.id,
+        )
+
+    except stripe.error.StripeError as e:
+        logger.exception(
+            "Resume failed for company %s: %s",
+            company.id,
+            str(e),
+        )
+
   is_valid = subscription.status in HEALTHY_SUBSCRIPTION_STATUSES
 
   free_trial_days_left = None
@@ -136,6 +183,7 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
       customer=company.stripe_customer_id,
       items=[{"price": plan.stripe_price_id, "quantity": 1}],
       trial_period_days=30,
+      trial_settings={"end_behavior": {"missing_payment_method": "pause"}},
       payment_settings={"save_default_payment_method": "on_subscription"},
     )
     company.stripe_subscription_id = subscription.id
