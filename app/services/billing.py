@@ -1,6 +1,9 @@
 import logging
+import math
+from datetime import datetime, timezone
 
 import stripe
+from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +13,36 @@ from app.db.models.project import Project, ProjectStatus
 logger = logging.getLogger(__name__)
 
 HEALTHY_SUBSCRIPTION_STATUSES = {"active", "trialing"}
+
+@dataclass
+class BillingStatus:
+  is_payment_method_valid: bool
+  free_trial_days_left: int | None
+
+def get_billing_status(company: Company) -> BillingStatus:
+  if not company.billing_plan_id or not company.stripe_subscription_id:
+    return BillingStatus(is_payment_method_valid=True, free_trial_days_left=None)
+
+  try:
+    subscription = stripe.Subscription.retrieve(company.stripe_subscription_id)
+  except stripe.error.StripeError:
+    logger.exception(
+      "Failed to retrieve subscription for company %s", company.id
+    )
+    return BillingStatus(is_payment_method_valid=True, free_trial_days_left=None)
+
+  is_valid = subscription.status in HEALTHY_SUBSCRIPTION_STATUSES
+
+  free_trial_days_left = None
+  if subscription.status == "trialing" and subscription.trial_end:
+    trial_end = datetime.fromtimestamp(subscription.trial_end, tz=timezone.utc)
+    seconds_remaining = (trial_end - datetime.now(timezone.utc)).total_seconds()
+    free_trial_days_left = max(math.ceil(seconds_remaining / 86400), 0)
+
+  return BillingStatus(
+    is_payment_method_valid=is_valid,
+    free_trial_days_left=free_trial_days_left,
+  )
 
 async def has_payment_method(company: Company) -> bool:
   if not company.billing_plan_id:
