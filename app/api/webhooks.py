@@ -51,7 +51,7 @@ async def stripe_webhook(
     "customer.subscription.updated",
     "customer.subscription.deleted",
   ):
-    customer_id = data.get("customer")
+    customer_id = getattr(data, "customer", None)
 
     if customer_id:
         company = await get_company_by_stripe_customer_id(db, customer_id)
@@ -62,7 +62,7 @@ async def stripe_webhook(
           await db.commit()
 
   elif event_type == "invoice.payment_failed":
-    customer_id = data.get("customer")
+    customer_id = getattr(data, "customer", None)
 
     if customer_id:
       company = await get_company_by_stripe_customer_id(db, customer_id)
@@ -72,7 +72,7 @@ async def stripe_webhook(
         await db.commit()
 
   elif event_type == "invoice.payment_succeeded":
-    customer_id = data.get("customer")
+    customer_id = getattr(data, "customer", None)
     if customer_id:
       company = await get_company_by_stripe_customer_id(db, customer_id)
       if company and company.stripe_subscription_status == "past_due":

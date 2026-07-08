@@ -32,6 +32,12 @@ def get_billing_status(company: Company) -> BillingStatus:
     )
     return BillingStatus(is_payment_method_valid=True, free_trial_days_left=None)
 
+  logger.info(
+    "Stripe subscription status for company %s = %s",
+    company.id,
+    subscription.status,
+  )
+
   if subscription.status == "paused" and _has_valid_payment_method(company):
     try:
       subscription = stripe.Subscription.resume(subscription.id)
