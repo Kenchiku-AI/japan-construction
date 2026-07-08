@@ -73,6 +73,7 @@ class CompanyUserRead(BaseModel):
 class CompanyWithProjectsAndUsers(CompanyRead):
   payment_method_name: Optional[str]
   is_payment_method_valid: bool
+  free_trial_days_left: int | None = None
   projects: List[CompanyProjectRead]
   users: List[CompanyUserRead]
 

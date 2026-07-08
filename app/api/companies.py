@@ -35,8 +35,8 @@ from app.schemas.company import (
 from app.schemas.invitation import CompanyInvitationCreate
 from app.services.billing import (
   get_payment_method_display,
-  billing_in_good_standing,
   can_use_billed_features,
+  get_billing_status,
 )
 from app.services.invitations import create_company_invitation
 from app.services.email import send_company_created_admin_email
@@ -366,14 +366,15 @@ async def get_company(
   )[:25]
 
   payment_method_name = await get_payment_method_display(company)
-  is_payment_method_valid = billing_in_good_standing(company)
+  billing_status = get_billing_status(company)
 
   return CompanyWithProjectsAndUsers(
     id=company.id,
     name=company.name,
     corporate_number=company.corporate_number,
     payment_method_name=payment_method_name,
-    is_payment_method_valid=is_payment_method_valid,
+    is_payment_method_valid=billing_status.is_payment_method_valid,
+    free_trial_days_left=billing_status.free_trial_days_left,
     billing_plan_id=company.billing_plan_id,
     line_channel_secret_last4=company.line_channel_secret_last4,
     created_at=company.created_at,
