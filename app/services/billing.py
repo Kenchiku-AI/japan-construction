@@ -151,6 +151,7 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
       trial_period_days=30,
       trial_settings={"end_behavior": {"missing_payment_method": "pause"}},
       payment_behavior="default_incomplete",
+      payment_settings={"save_default_payment_method": "on_subscription"},
     )
     company.stripe_subscription_id = subscription.id
     company.stripe_subscription_status = subscription.status
