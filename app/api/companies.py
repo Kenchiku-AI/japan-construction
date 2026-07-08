@@ -220,11 +220,11 @@ async def create_company(
   background_tasks: BackgroundTasks,
   db: AsyncSession = Depends(get_db),
 ):
-  existing_company = await db.scalar(
-    select(Company).where(
-      func.lower(Company.name) == payload.name.lower()
-    )
-  )
+  # existing_company = await db.scalar(
+  #   select(Company).where(
+  #     func.lower(Company.name) == payload.name.lower()
+  #   )
+  # )
 
   # if existing_company:
   #   raise HTTPException(
