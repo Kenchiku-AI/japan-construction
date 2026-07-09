@@ -78,9 +78,10 @@ def get_billing_status(company: Company) -> BillingStatus:
         paid_invoice = stripe.Invoice.pay(invoice.id)
 
         logger.info(
-          "Subscription after pay: status=%s pending_update=%s",
-          subscription.status,
-          subscription.pending_update,
+          "Invoice after pay: status=%s paid=%s",
+          paid_invoice.status,
+          paid_invoice.paid,
+        )
 
         subscription = stripe.Subscription.retrieve(subscription.id)
 
@@ -88,7 +89,7 @@ def get_billing_status(company: Company) -> BillingStatus:
           "Subscription after pay: status=%s pending_update=%s",
           subscription.status,
           subscription.pending_update,
-        ))
+        )
 
       logger.info(
         "Auto-resume finished for company %s",
