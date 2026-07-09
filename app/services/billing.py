@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.models.company import Company
 from app.db.models.billing_plan import BillingPlan
 
@@ -191,7 +192,7 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
     subscription = stripe.Subscription.create(
       customer=company.stripe_customer_id,
       items=[{"price": plan.stripe_price_id, "quantity": 1}],
-      trial_period_days=30,
+      trial_period_days=settings.STRIPE_TRIAL_PERIOD_DAYS,
       trial_settings={"end_behavior": {"missing_payment_method": "pause"}},
       payment_settings={"save_default_payment_method": "on_subscription"},
     )
