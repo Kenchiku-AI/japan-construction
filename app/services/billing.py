@@ -59,29 +59,20 @@ def get_billing_status(company: Company) -> BillingStatus:
         invoice = stripe.Invoice.retrieve(subscription.latest_invoice)
 
         logger.info(
-          "Invoice: id=%s status=%s attempted=%s attempt_count=%s "
-          "amount_due=%s amount_paid=%s paid=%s "
-          "default_payment_method=%s auto_advance=%s",
-          invoice.id,
-          invoice.status,
-          invoice.attempted,
-          invoice.attempt_count,
-          invoice.amount_due,
-          invoice.amount_paid,
-          invoice.paid,
-          invoice.default_payment_method,
-          invoice.auto_advance,
+          "Invoice after resume, before pay:\n%s",
+          invoice,
         )
 
-        logger.info("Invoice status before pay: %s", invoice.status)
+        logger.info(invoice.to_dict())
 
         paid_invoice = stripe.Invoice.pay(invoice.id)
 
         logger.info(
-          "Invoice after pay: status=%s paid=%s",
-          paid_invoice.status,
-          paid_invoice.paid,
+          "Invoice after pay:\n%s",
+          paid_invoice,
         )
+
+        logger.info(paid_invoice.to_dict())
 
         subscription = stripe.Subscription.retrieve(subscription.id)
 
