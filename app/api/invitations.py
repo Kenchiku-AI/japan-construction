@@ -22,10 +22,10 @@ from app.schemas.invitation import (
   InvitationRead,
   InvitationAccept,
 )
+from app.services.email import send_invitation_email
 from app.services.invitations import (
   create_company_invitation, 
-  create_project_guest_invitation, 
-  send_invitation_email,
+  create_project_guest_invitation,
   INVITE_EXPIRATION_HOURS,
 )
 from app.services.users import build_user_with_company_and_projects
