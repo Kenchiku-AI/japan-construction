@@ -13,7 +13,7 @@ from app.db.models.project_guest_link import ProjectGuestLink
 from app.db.models.password_reset_token import PasswordResetToken
 from app.schemas.invitation import CompanyInvitationCreate, ProjectGuestInvitationCreate
 from app.services.email import (
-  send_invitation_email,
+  send_company_created_email,
   send_existing_user_invitation_email,
   send_guest_invitation_email,
   send_project_guest_access_email,
@@ -67,7 +67,7 @@ async def create_company_invitation(
     )
   else:
     background_tasks.add_task(
-      send_invitation_email,
+      send_company_created_email,
       payload.email,
       company.name,
       token,
