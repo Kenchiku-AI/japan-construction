@@ -374,6 +374,53 @@ def send_line_group_linked_email(email: str, company_name: str, project_name: st
     logger.exception("Error sending LINE group linked email to %s", email)
     raise
 
+def send_company_created_email(email: str, company_name: str, invite_token: str) -> None:
+  params = urlencode({
+    "invitationToken": invite_token,
+    "email": email,
+  })
+
+  signup_link = f"{settings.WEB_CLIENT_URL}/signup?{params}"
+
+  subject = f"{company_name}へようこそ"
+
+  message = f"""
+{company_name} が作成されました。<br/>
+以下のボタンをクリックして、アカウント登録を完了してください。
+"""
+
+  html_body = _build_email_template(
+    title="アカウント登録を完了してください",
+    message=message,
+    button_text="アカウント登録を完了する",
+    button_url=signup_link,
+  )
+
+  text_body = f"""
+{company_name} が作成されました。
+
+以下のリンクからアカウント登録を完了してください。
+{signup_link}
+"""
+
+  try:
+    ses.send_email(
+      Source=settings.NO_REPLY_EMAIL,
+      Destination={"ToAddresses": [email]},
+      ReplyToAddresses=[settings.SUPPORT_EMAIL],
+      Message={
+        "Subject": {"Data": subject},
+        "Body": {
+          "Text": {"Data": text_body},
+          "Html": {"Data": html_body},
+        },
+      },
+    )
+    logger.info(f"Sent company created email to {email}")
+  except Exception:
+    logger.exception("Error sending email to %s", email)
+    raise
+
 def send_company_created_admin_email(
   email: str,
   company_id: str,
