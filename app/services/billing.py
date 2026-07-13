@@ -198,12 +198,11 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
     subscription = stripe.Subscription.create(
       customer=company.stripe_customer_id,
       items=[{"price": plan.stripe_price_id, "quantity": 1}],
-      trial_period_days=settings.STRIPE_TRIAL_PERIOD_DAYS,
+      trial_end=int(time.time()) + (settings.STRIPE_TRIAL_PERIOD_MINUTES * 60),
       trial_settings={"end_behavior": {"missing_payment_method": "pause"}},
       payment_settings={"save_default_payment_method": "on_subscription"},
     )
     company.stripe_subscription_id = subscription.id
-    company.stripe_subscription_status = subscription.status
     await db.commit()
   except stripe.error.StripeError:
     logger.exception(
