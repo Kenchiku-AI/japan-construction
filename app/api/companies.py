@@ -431,6 +431,21 @@ async def update_company(
 
   if "billing_plan_id" in payload.model_fields_set:
     if payload.billing_plan_id is None:
+      if company.stripe_subscription_id:
+        try:
+          stripe.Subscription.cancel(company.stripe_subscription_id)
+        except stripe.error.StripeError:
+          logger.exception(
+            "Failed to cancel Stripe subscription for company %s",
+            company.id,
+          )
+          raise HTTPException(
+            status_code=500,
+            detail="Failed to cancel Stripe subscription",
+          )
+
+        company.stripe_subscription_id = None
+
       company.billing_plan_id = None
     else:
       plan = await db.get(BillingPlan, payload.billing_plan_id)
@@ -440,7 +455,9 @@ async def update_company(
       
       company.billing_plan_id = plan.id
 
-      if company.stripe_subscription_id:
+      if not company.stripe_subscription_id:
+        await create_subscription(company, db)
+      else:
         try:
           subscription = stripe.Subscription.retrieve(company.stripe_subscription_id)
           item_id = subscription["items"]["data"][0]["id"]
