@@ -203,7 +203,6 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
       payment_settings={"save_default_payment_method": "on_subscription"},
     )
     company.stripe_subscription_id = subscription.id
-    company.stripe_subscription_status = subscription.status
     await db.commit()
   except stripe.error.StripeError:
     logger.exception(

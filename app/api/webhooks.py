@@ -54,31 +54,10 @@ async def stripe_webhook(
     customer_id = getattr(data, "customer", None)
 
     if customer_id:
-        company = await get_company_by_stripe_customer_id(db, customer_id)
-
-        if company:
-          company.stripe_subscription_id = data["id"]
-          company.stripe_subscription_status = data["status"]
-          await db.commit()
-
-  elif event_type == "invoice.payment_failed":
-    customer_id = getattr(data, "customer", None)
-
-    if customer_id:
       company = await get_company_by_stripe_customer_id(db, customer_id)
 
       if company:
-        company.stripe_subscription_status = "past_due"
-        await db.commit()
-
-  elif event_type == "invoice.payment_succeeded":
-    customer_id = getattr(data, "customer", None)
-
-    if customer_id:
-      company = await get_company_by_stripe_customer_id(db, customer_id)
-
-      if company and company.stripe_subscription_status == "past_due":
-        company.stripe_subscription_status = "active"
+        company.stripe_subscription_id = data["id"]
         await db.commit()
 
   elif event_type == "setup_intent.succeeded":
@@ -86,18 +65,18 @@ async def stripe_webhook(
     payment_method_id = getattr(data, "payment_method", None)
 
     if customer_id and payment_method_id:
-        company = await get_company_by_stripe_customer_id(db, customer_id)
-        
-        if company and company.stripe_subscription_id:
-            try:
-                stripe.Subscription.modify(
-                    company.stripe_subscription_id,
-                    default_payment_method=payment_method_id,
-                )
-            except stripe.error.StripeError:
-                logger.exception(
-                    "Failed to set default payment method for company %s", company.id
-                )
+      company = await get_company_by_stripe_customer_id(db, customer_id)
+      
+      if company and company.stripe_subscription_id:
+        try:
+          stripe.Subscription.modify(
+            company.stripe_subscription_id,
+            default_payment_method=payment_method_id,
+          )
+        except stripe.error.StripeError:
+          logger.exception(
+            "Failed to set default payment method for company %s", company.id
+          )
 
   else:
     logger.debug("Unhandled Stripe event type: %s", event_type)

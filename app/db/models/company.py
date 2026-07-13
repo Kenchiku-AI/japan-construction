@@ -38,7 +38,6 @@ class Company(Base):
 
   stripe_customer_id = Column(String, nullable=True, index=True)
   stripe_subscription_id = Column(String, nullable=True, index=True)
-  stripe_subscription_status = Column(String, nullable=True)
 
   billing_plan_id = Column(
     UUID(as_uuid=True),
