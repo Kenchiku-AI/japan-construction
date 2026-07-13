@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from typing import Optional
 import secrets
+import re
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -32,6 +33,8 @@ from app.services.users import build_user_with_company_and_projects
 from app.services.email import send_password_reset_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+PASSWORD_REGEX = re.compile(r"^[\x21-\x7E]{10,64}$")
 
 @router.post("/login", response_model=TokenSchema)
 async def login(
@@ -195,6 +198,15 @@ async def signup(
   db: AsyncSession = Depends(get_db),
   x_client_type: str | None = Header(default=None),
 ):
+  if not PASSWORD_REGEX.fullmatch(payload.password):
+    raise HTTPException(
+      status_code=400,
+      detail=(
+        "Password must be 10-64 ASCII characters. "
+        "Only half-width letters, numbers and symbols are allowed."
+      ),
+    )
+
   result = await db.execute(
     select(User).where(User.email == payload.email)
   )
