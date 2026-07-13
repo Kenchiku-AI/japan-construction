@@ -431,17 +431,29 @@ async def update_company(
 
   if "billing_plan_id" in payload.model_fields_set:
     if not company.stripe_customer_id:
+        needs_customer = True
+    else:
+      try:
+        stripe.Customer.retrieve(company.stripe_customer_id)
+        needs_customer = False
+      except stripe.error.InvalidRequestError as e:
+        if e.code == "resource_missing":
+          logger.warning(
+            "Stripe customer %s not found for company %s. Creating a new customer.",
+            company.stripe_customer_id,
+            company.id,
+          )
+          needs_customer = True
+        else:
+          raise
+    
+    if needs_customer:
       try:
         company.stripe_customer_id, company.stripe_test_clock_id = (
           await _create_stripe_customer_for_company(company)
         )
         await db.commit()
         await db.refresh(company)
-
-        logger.exception(
-          "Successfully created Stripe customer for company %s",
-          company.id,
-        )
       except stripe.error.StripeError:
         logger.exception(
           "Failed creating Stripe customer for company %s",
@@ -731,6 +743,7 @@ async def _create_stripe_customer_for_company(company: Company) -> tuple[str, st
       metadata={"company_id": str(company.id)},
     )
     return customer.id, clock.id
+    
   customer = stripe.Customer.create(
     name=company.name, metadata={"company_id": str(company.id)},
   )
