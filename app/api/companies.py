@@ -455,21 +455,48 @@ async def update_company(
       
       company.billing_plan_id = plan.id
 
+      if not company.stripe_customer_id:
+        try:
+          company.stripe_customer_id, company.stripe_test_clock_id = (
+            await _create_stripe_customer_for_company(company)
+          )
+          await db.commit()
+          await db.refresh(company)
+        except stripe.error.StripeError:
+          logger.exception(
+            "Failed creating Stripe customer for company %s",
+            company.id,
+          )
+          raise HTTPException(
+            status_code=502,
+            detail="Unable to create Stripe customer.",
+          )
+
       if not company.stripe_subscription_id:
         await create_subscription(company, db)
       else:
         try:
-          subscription = stripe.Subscription.retrieve(company.stripe_subscription_id)
+          subscription = stripe.Subscription.retrieve(
+            company.stripe_subscription_id
+          )
+
           item_id = subscription["items"]["data"][0]["id"]
+
           stripe.SubscriptionItem.modify(
             item_id,
             price=plan.stripe_price_id,
             quantity=1,
             proration_behavior="create_prorations",
           )
+
         except stripe.error.StripeError:
           logger.exception(
-            "Failed to update Stripe subscription plan for company %s", company.id
+            "Failed to update Stripe subscription plan for company %s",
+            company.id,
+          )
+          raise HTTPException(
+            status_code=500,
+            detail="Failed to update Stripe subscription.",
           )
 
   await db.commit()
