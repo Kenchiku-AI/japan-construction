@@ -99,9 +99,15 @@ def get_billing_status(company: Company) -> BillingStatus:
 
   free_trial_days_left = None
   if subscription.status == "trialing" and subscription.trial_end:
-    trial_end = datetime.fromtimestamp(subscription.trial_end, tz=timezone.utc)
-    seconds_remaining = (trial_end - datetime.now(timezone.utc)).total_seconds()
-    free_trial_days_left = max(math.ceil(seconds_remaining / 86400), 0)
+    trial_end = datetime.fromtimestamp(
+      subscription.trial_end,
+      tz=timezone.utc,
+    )
+
+    today = datetime.now(timezone.utc).date()
+    end_date = trial_end.date()
+
+    free_trial_days_left = max((end_date - today).days, 0)
 
   return BillingStatus(
     is_payment_method_valid=is_valid,
