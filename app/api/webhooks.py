@@ -37,6 +37,10 @@ async def stripe_webhook(
 ):
   payload = await request.body()
 
+  logger.info("=== STRIPE WEBHOOK ===")
+  logger.info("Headers: %s", dict(request.headers))
+  logger.info("Body: %s", payload.decode("utf-8"))
+
   try:
     event = stripe.Webhook.construct_event(
       payload, stripe_signature, settings.STRIPE_WEBHOOK_SECRET
@@ -46,6 +50,8 @@ async def stripe_webhook(
 
   event_type = event["type"]
   data = event["data"]["object"]
+
+  logger.info("Stripe event type: %s", event_type)
 
   if event_type in (
     "customer.subscription.updated",
@@ -77,9 +83,6 @@ async def stripe_webhook(
           logger.exception(
             "Failed to set default payment method for company %s", company.id
           )
-
-  else:
-    logger.debug("Unhandled Stripe event type: %s", event_type)
 
   return {"status": "ok"}
 
