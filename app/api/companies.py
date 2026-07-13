@@ -430,6 +430,28 @@ async def update_company(
     company.line_channel_secret = payload.line_channel_secret
 
   if "billing_plan_id" in payload.model_fields_set:
+    if not company.stripe_customer_id:
+      try:
+        company.stripe_customer_id, company.stripe_test_clock_id = (
+          await _create_stripe_customer_for_company(company)
+        )
+        await db.commit()
+        await db.refresh(company)
+
+        logger.exception(
+          "Successfully created Stripe customer for company %s",
+          company.id,
+        )
+      except stripe.error.StripeError:
+        logger.exception(
+          "Failed creating Stripe customer for company %s",
+          company.id,
+        )
+        raise HTTPException(
+          status_code=502,
+          detail="Unable to create Stripe customer.",
+        )
+
     if payload.billing_plan_id is None:
       if company.stripe_subscription_id:
         try:
@@ -454,23 +476,6 @@ async def update_company(
         raise HTTPException(status_code=404, detail="Billing plan not found")
       
       company.billing_plan_id = plan.id
-
-      if not company.stripe_customer_id:
-        try:
-          company.stripe_customer_id, company.stripe_test_clock_id = (
-            await _create_stripe_customer_for_company(company)
-          )
-          await db.commit()
-          await db.refresh(company)
-        except stripe.error.StripeError:
-          logger.exception(
-            "Failed creating Stripe customer for company %s",
-            company.id,
-          )
-          raise HTTPException(
-            status_code=502,
-            detail="Unable to create Stripe customer.",
-          )
 
       if not company.stripe_subscription_id:
         await create_subscription(company, db)
