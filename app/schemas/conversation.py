@@ -19,14 +19,11 @@ class ConversationUpdate(BaseModel):
 
 class ConversationItemTypeRead(BaseModel):
   id: UUID
-  company_id: UUID
   name: str
   description: str | None = None
-  created_at: datetime
-  updated_at: datetime
 
   model_config = {"from_attributes": True}
-  
+
 
 class ConversationRead(BaseModel):
   id: UUID

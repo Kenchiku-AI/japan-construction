@@ -52,3 +52,7 @@ class LineConversation(Base):
 
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
   updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+  @property
+  def item_types(self):
+    return [link.item_type for link in self.item_type_links]

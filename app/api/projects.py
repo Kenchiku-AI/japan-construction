@@ -16,6 +16,8 @@ from app.db.models import (
   ProjectStatus, 
   ProjectGuestLink,
   ActionItem,
+  LineConversation,
+  ConversationItemTypeLink
 )
 from app.schemas.project import (
   ProjectCreate, 
@@ -118,7 +120,9 @@ async def get_project(
       .options(
         selectinload(Project.reports),
         selectinload(Project.action_items),
-        selectinload(Project.conversations),
+        selectinload(Project.conversations)
+          .selectinload(LineConversation.item_type_links)
+          .selectinload(ConversationItemTypeLink.item_type), 
       )
     )
 
@@ -139,7 +143,9 @@ async def get_project(
       .options(
         selectinload(Project.reports),
         selectinload(Project.action_items),
-        selectinload(Project.conversations),
+        selectinload(Project.conversations)
+          .selectinload(LineConversation.item_type_links)
+          .selectinload(ConversationItemTypeLink.item_type),
       )
     )
 
@@ -225,7 +231,9 @@ async def update_project(
     .options(
       selectinload(Project.reports),
       selectinload(Project.action_items),
-      selectinload(Project.conversations),
+      selectinload(Project.conversations)
+        .selectinload(LineConversation.item_type_links)
+        .selectinload(ConversationItemTypeLink.item_type),
     )
   )
 

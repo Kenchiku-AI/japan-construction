@@ -4,6 +4,7 @@ from typing import Optional, List
 from uuid import UUID
 
 from app.db.models.action_item import ActionItemStatus
+from app.schemas.conversation import ConversationItemTypeRead
 
 class ProjectBase(BaseModel):
   name: str
@@ -64,6 +65,7 @@ class ProjectConversationRead(BaseModel):
   line_link_code: str
   line_group_id: str | None = None
   project_id: UUID | None = None
+  item_types: List[ConversationItemTypeRead] = []
   created_at: datetime
   updated_at: datetime
 
