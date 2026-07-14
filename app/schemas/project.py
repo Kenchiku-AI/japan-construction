@@ -57,7 +57,19 @@ class ProjectActionItemRead(BaseModel):
   model_config = {
     "from_attributes": True
   }
+
+class ProjectConversationRead(BaseModel):
+  id: UUID
+  name: str
+  line_link_code: str
+  line_group_id: str | None = None
+  project_id: UUID | None = None
+  created_at: datetime
+  updated_at: datetime
+
+  model_config = {"from_attributes": True}
   
-class ProjectWithReportsAndActionItems(ProjectWithCompanyName):
+class ProjectWithLists(ProjectWithCompanyName):
   reports: List[ProjectReportRead] = []
   action_items: List[ProjectActionItemRead] = []
+  conversations: List[ProjectConversationRead] = []

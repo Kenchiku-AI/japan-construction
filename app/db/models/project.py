@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
 from app.db.models.action_item import ActionItem
 from app.db.models.report import Report, ReportParentType
+from app.db.models.line_conversation import LineConversation
 
 class ProjectStatus(str, enum.Enum):
   active = "active"
@@ -52,6 +53,11 @@ class Project(Base):
     back_populates="project",
     cascade="all, delete-orphan",
     order_by="ActionItem.updated_at.desc()",
+  )
+
+  conversations = relationship(
+    "LineConversation",
+    back_populates="project",
   )
 
   line_link_code = Column(String, nullable=False, unique=True, index=True)

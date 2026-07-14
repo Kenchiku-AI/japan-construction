@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr
 
 from app.schemas.user import UserRole
+from app.schemas.conversation import ConversationItemTypeRead
 
 class CompanyCreate(BaseModel):
   name: str
@@ -70,12 +71,13 @@ class CompanyUserRead(BaseModel):
     "from_attributes": True
   }
 
-class CompanyWithProjectsAndUsers(CompanyRead):
+class CompanyWithLists(CompanyRead):
   payment_method_name: Optional[str]
   is_payment_method_valid: bool
   free_trial_days_left: int | None = None
   projects: List[CompanyProjectRead]
   users: List[CompanyUserRead]
+  conversation_item_types: List[ConversationItemTypeRead] = []
 
   model_config = {
     "from_attributes": True

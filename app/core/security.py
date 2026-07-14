@@ -92,3 +92,14 @@ async def generate_unique_project_line_link_code(db: AsyncSession) -> str:
     existing = await db.execute(select(Project).where(Project.line_link_code == code))
     if not existing.scalar_one_or_none():
       return code
+
+async def generate_unique_conversation_line_link_code(db: AsyncSession) -> str:
+  from app.db.models.line_conversation import LineConversation
+  
+  while True:
+    code = generate_line_link_code("C")
+    existing = await db.execute(
+      select(LineConversation).where(LineConversation.line_link_code == code)
+    )
+    if not existing.scalar_one_or_none():
+      return code

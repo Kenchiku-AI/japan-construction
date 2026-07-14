@@ -21,7 +21,7 @@ from app.schemas.project import (
   ProjectCreate, 
   ProjectUpdate,
   ProjectWithCompanyName,
-  ProjectWithReportsAndActionItems,
+  ProjectWithLists,
 )
 from app.services.billing import can_use_billed_features
 
@@ -101,7 +101,7 @@ async def list_projects(
 
     return all_projects
 
-@router.get("/{project_id}", response_model=ProjectWithReportsAndActionItems)
+@router.get("/{project_id}", response_model=ProjectWithLists)
 async def get_project(
   project_id: UUID,
   db: AsyncSession = Depends(get_db),
@@ -153,7 +153,7 @@ async def get_project(
 
 @router.post(
   "",
-  response_model=ProjectWithReportsAndActionItems,
+  response_model=ProjectWithLists,
   status_code=status.HTTP_201_CREATED,
 )
 async def create_project(
@@ -179,7 +179,7 @@ async def create_project(
   await db.commit()
   await db.refresh(project)
 
-  return ProjectWithReportsAndActionItems(
+  return ProjectWithLists(
     id=project.id,
     name=project.name,
     description=project.description,
@@ -191,7 +191,7 @@ async def create_project(
     action_items=[],
   )
 
-@router.patch("/{project_id}", response_model=ProjectWithReportsAndActionItems)
+@router.patch("/{project_id}", response_model=ProjectWithLists)
 async def update_project(
   project_id: UUID,
   payload: ProjectUpdate,

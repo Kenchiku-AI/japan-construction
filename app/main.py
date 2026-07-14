@@ -12,6 +12,7 @@ from app.api import (
   webhooks, 
   billing_plans,
   action_items,
+  conversations,
 )
 from app.core.config import settings
 from app.middleware.logging import LoggingMiddleware
@@ -45,3 +46,4 @@ app.include_router(health.router)
 app.include_router(webhooks.router)
 app.include_router(billing_plans.router)
 app.include_router(action_items.router)
+app.include_router(conversations.router)

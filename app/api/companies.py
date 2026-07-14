@@ -28,7 +28,7 @@ from app.schemas.company import (
   CompanyRead,
   CompanyWithMetrics,
   CompanyUpdate,
-  CompanyWithProjectsAndUsers,
+  CompanyWithLists,
   ReportImageTagCreate,
   ReportImageTagUpdate
 )
@@ -41,6 +41,8 @@ from app.services.billing import (
 )
 from app.services.invitations import create_company_invitation
 from app.services.email import send_company_created_admin_email
+from app.db.models.conversation_item_type import ConversationItemType, ConversationItemTypeLink
+from app.schemas.conversation import ConversationItemTypeCreate, ConversationItemTypeUpdate
 
 import stripe
 import logging
@@ -336,7 +338,7 @@ async def create_company(
 
 @router.get(
   "/{company_id}",
-  response_model=CompanyWithProjectsAndUsers,
+  response_model=CompanyWithLists,
 )
 async def get_company(
   company_id: UUID,
@@ -371,7 +373,7 @@ async def get_company(
   payment_method_name = await get_payment_method_display(company)
   billing_status = get_billing_status(company)
 
-  return CompanyWithProjectsAndUsers(
+  return CompanyWithLists(
     id=company.id,
     name=company.name,
     corporate_number=company.corporate_number,
@@ -785,3 +787,100 @@ async def _create_stripe_customer_for_company(company: Company) -> tuple[str, st
     name=company.name, metadata={"company_id": str(company.id)},
   )
   return customer.id, None
+
+@router.get("/{company_id}/conversation-item-types")
+async def list_conversation_item_types(
+  company_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin" and current_user.company_id != company_id:
+    raise HTTPException(status_code=403, detail="Not authorized")
+
+  result = await db.execute(
+    select(ConversationItemType)
+    .where(ConversationItemType.company_id == company_id)
+    .order_by(ConversationItemType.name.asc())
+  )
+  return result.scalars().all()
+
+@router.post("/{company_id}/conversation-item-types", status_code=status.HTTP_201_CREATED)
+async def create_conversation_item_type(
+  company_id: UUID,
+  payload: ConversationItemTypeCreate,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  item_type = ConversationItemType(
+    company_id=company_id,
+    name=payload.name,
+    description=payload.description,
+  )
+
+  db.add(item_type)
+  await db.commit()
+  await db.refresh(item_type)
+
+  return item_type
+
+@router.patch("/{company_id}/conversation-item-types/{item_type_id}")
+async def update_conversation_item_type(
+  company_id: UUID,
+  item_type_id: UUID,
+  payload: ConversationItemTypeUpdate,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  result = await db.execute(
+    select(ConversationItemType).where(
+      ConversationItemType.id == item_type_id,
+      ConversationItemType.company_id == company_id,
+    )
+  )
+  item_type = result.scalar_one_or_none()
+
+  if not item_type:
+    raise HTTPException(status_code=404, detail="Conversation item type not found")
+
+  for field, value in payload.model_dump(exclude_unset=True).items():
+    setattr(item_type, field, value)
+
+  await db.commit()
+  await db.refresh(item_type)
+
+  return item_type
+
+@router.delete(
+  "/{company_id}/conversation-item-types/{item_type_id}",
+  status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_conversation_item_type(
+  company_id: UUID,
+  item_type_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin":
+    require_company_manager(current_user, company_id)
+
+  result = await db.execute(
+    select(ConversationItemType).where(
+      ConversationItemType.id == item_type_id,
+      ConversationItemType.company_id == company_id,
+    )
+  )
+  item_type = result.scalar_one_or_none()
+
+  if not item_type:
+    raise HTTPException(status_code=404, detail="Conversation item type not found")
+
+  await db.delete(item_type)
+  await db.commit()
+
+  return None

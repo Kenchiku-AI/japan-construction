@@ -5,6 +5,7 @@ from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.base import Base
+from app.db.models.line_conversation import LineConversation
 
 class LineMessage(Base):
   __tablename__ = "line_messages"
@@ -25,5 +26,14 @@ class LineMessage(Base):
     nullable=True,
     index=True,
   )
+
+  conversation_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("line_conversations.id", ondelete="SET NULL"),
+    nullable=True,
+    index=True,
+  )
+
+  conversation = relationship("LineConversation", back_populates="messages")
 
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

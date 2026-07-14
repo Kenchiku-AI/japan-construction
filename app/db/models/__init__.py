@@ -7,6 +7,9 @@ from app.db.models.project import Project, ProjectStatus
 from app.db.models.project_guest_link import ProjectGuestLink
 from app.db.models.billing_plan import BillingPlan
 from app.db.models.line_message import LineMessage
+from app.db.models.line_conversation import LineConversation
+from app.db.models.conversation_item import ConversationItem
+from app.db.models.conversation_item_type import ConversationItemType
 from app.db.models.action_item import ActionItem
 from app.db.models.report import (
   ReportParentType,

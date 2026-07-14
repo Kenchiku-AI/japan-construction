@@ -5,8 +5,10 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime, timezone
 
-from app.db.base import Base
 from app.core.security import encrypt_secret, decrypt_secret
+from app.db.base import Base
+from app.db.models.line_conversation import LineConversation
+from app.db.models.conversation_item_type import ConversationItemType
 
 class Company(Base):
   __tablename__ = "companies"
@@ -43,6 +45,17 @@ class Company(Base):
     UUID(as_uuid=True),
     ForeignKey("billing_plans.id"),
     nullable=True,
+  )
+
+  conversations = relationship(
+    "LineConversation",
+    back_populates="company",
+  )
+
+  conversation_item_types = relationship(
+    "ConversationItemType",
+    back_populates="company",
+    cascade="all, delete-orphan",
   )
 
   _line_channel_secret = Column("line_channel_secret", String, nullable=True)
