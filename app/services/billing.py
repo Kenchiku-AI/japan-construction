@@ -23,7 +23,7 @@ class BillingStatus:
   free_trial_days_left: int | None
 
 def get_billing_status(company: Company) -> BillingStatus:
-  if not company.billing_plan_id or not company.stripe_subscription_id:
+  if not company.stripe_subscription_id:
     return BillingStatus(is_payment_method_valid=True, free_trial_days_left=None)
 
   try:

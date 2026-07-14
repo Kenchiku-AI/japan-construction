@@ -467,7 +467,10 @@ async def update_company(
     if payload.billing_plan_id is None:
       if company.stripe_subscription_id:
         try:
-          stripe.Subscription.cancel(company.stripe_subscription_id)
+          stripe.Subscription.modify(
+            company.stripe_subscription_id,
+            cancel_at_period_end=True,
+          )
         except stripe.error.StripeError:
           logger.exception(
             "Failed to cancel Stripe subscription for company %s",
@@ -477,8 +480,6 @@ async def update_company(
             status_code=500,
             detail="Failed to cancel Stripe subscription",
           )
-
-        company.stripe_subscription_id = None
 
       company.billing_plan_id = None
     else:
@@ -496,6 +497,12 @@ async def update_company(
           subscription = stripe.Subscription.retrieve(
             company.stripe_subscription_id
           )
+
+          if subscription.cancel_at_period_end:
+            subscription = stripe.Subscription.modify(
+              subscription.id,
+              cancel_at_period_end=False,
+            )
 
           item_id = subscription["items"]["data"][0]["id"]
 
