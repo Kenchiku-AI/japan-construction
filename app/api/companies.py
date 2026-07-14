@@ -32,6 +32,11 @@ from app.schemas.company import (
   ReportImageTagCreate,
   ReportImageTagUpdate
 )
+from app.schemas.conversation import (
+  ConversationItemTypeCreate,
+  ConversationItemTypeUpdate,
+  ConversationItemTypeRead,
+)
 from app.schemas.invitation import CompanyInvitationCreate
 from app.services.billing import (
   get_payment_method_display,
@@ -356,6 +361,7 @@ async def get_company(
     .options(
       selectinload(Company.users),
       selectinload(Company.projects),
+      selectinload(Company.conversation_item_types),
     )
     .where(Company.id == company_id)
   )
@@ -385,7 +391,8 @@ async def get_company(
     created_at=company.created_at,
     updated_at=company.updated_at,
     users=company.users,
-    projects=projects
+    projects=projects,
+    conversation_item_types=company.conversation_item_types,
   )
 
 @router.patch(

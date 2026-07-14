@@ -118,6 +118,7 @@ async def get_project(
       .options(
         selectinload(Project.reports),
         selectinload(Project.action_items),
+        selectinload(Project.conversations),
       )
     )
 
@@ -138,6 +139,7 @@ async def get_project(
       .options(
         selectinload(Project.reports),
         selectinload(Project.action_items),
+        selectinload(Project.conversations),
       )
     )
 
@@ -189,6 +191,7 @@ async def create_project(
     company_id=project.company_id,
     reports=[],
     action_items=[],
+    conversations=[],
   )
 
 @router.patch("/{project_id}", response_model=ProjectWithLists)
@@ -222,6 +225,7 @@ async def update_project(
     .options(
       selectinload(Project.reports),
       selectinload(Project.action_items),
+      selectinload(Project.conversations),
     )
   )
 
