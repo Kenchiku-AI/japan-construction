@@ -192,10 +192,10 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
       if subscription.status != "canceled":
         return
     except stripe.error.InvalidRequestError as e:
-      if e.code != "resource_missing":
+      if e.code == "resource_missing":
+        company.stripe_subscription_id = None
+      else:
         raise
-
-  company.stripe_subscription_id = None
 
   plan = await db.get(BillingPlan, company.billing_plan_id)
   if not plan:
@@ -235,6 +235,8 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
     await db.commit()
   except stripe.error.StripeError:
     logger.exception(
-      "Failed to create Stripe subscription for company %s", company.id
+      "Failed to create Stripe subscription for company %s: %s",
+      company.id,
+      str(e),
     )
     raise
