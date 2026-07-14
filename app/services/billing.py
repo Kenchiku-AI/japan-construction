@@ -1,17 +1,16 @@
 import logging
-import math
-import time
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import stripe
 from fastapi import HTTPException
-from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.models.company import Company
 from app.db.models.billing_plan import BillingPlan
+from app.db.models.company import Company
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +22,7 @@ class BillingStatus:
   free_trial_days_left: int | None
 
 def get_billing_status(company: Company) -> BillingStatus:
-  if not company.billing_plan_id or not company.stripe_subscription_id:
+  if not company.stripe_subscription_id:
     return BillingStatus(is_payment_method_valid=True, free_trial_days_left=None)
 
   try:
@@ -186,7 +185,17 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
     return
 
   if company.stripe_subscription_id:
-    return
+    try:
+      subscription = stripe.Subscription.retrieve(
+        company.stripe_subscription_id
+      )
+      if subscription.status != "canceled":
+        return
+    except stripe.error.InvalidRequestError as e:
+      if e.code == "resource_missing":
+        company.stripe_subscription_id = None
+      else:
+        raise
 
   plan = await db.get(BillingPlan, company.billing_plan_id)
   if not plan:
@@ -195,17 +204,39 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
     )
     return
 
+  created_at = company.created_at
+
+  if created_at.tzinfo is None:
+    created_at = created_at.replace(tzinfo=timezone.utc)
+
+  trial_end = created_at + timedelta(
+    minutes=settings.STRIPE_TRIAL_PERIOD_MINUTES
+  )
+
+  subscription_args: dict[str, Any] = {
+    "customer": company.stripe_customer_id,
+    "items": [{"price": plan.stripe_price_id, "quantity": 1}],
+    "trial_settings": {
+      "end_behavior": {
+        "missing_payment_method": "pause",
+      }
+    },
+    "payment_settings": {
+      "save_default_payment_method": "on_subscription",
+    },
+  }
+
+  if trial_end > datetime.now(timezone.utc):
+    subscription_args["trial_end"] = int(trial_end.timestamp())
+  
   try:
-    subscription = stripe.Subscription.create(
-      customer=company.stripe_customer_id,
-      items=[{"price": plan.stripe_price_id, "quantity": 1}],
-      trial_end=int(time.time()) + (settings.STRIPE_TRIAL_PERIOD_MINUTES * 60),
-      trial_settings={"end_behavior": {"missing_payment_method": "pause"}},
-      payment_settings={"save_default_payment_method": "on_subscription"},
-    )
+    subscription = stripe.Subscription.create(**subscription_args)
     company.stripe_subscription_id = subscription.id
     await db.commit()
   except stripe.error.StripeError:
     logger.exception(
-      "Failed to create Stripe subscription for company %s", company.id
+      "Failed to create Stripe subscription for company %s: %s",
+      company.id,
+      str(e),
     )
+    raise

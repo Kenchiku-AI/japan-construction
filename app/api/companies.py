@@ -467,7 +467,10 @@ async def update_company(
     if payload.billing_plan_id is None:
       if company.stripe_subscription_id:
         try:
-          stripe.Subscription.cancel(company.stripe_subscription_id)
+          stripe.Subscription.modify(
+            company.stripe_subscription_id,
+            cancel_at_period_end=True,
+          )
         except stripe.error.StripeError:
           logger.exception(
             "Failed to cancel Stripe subscription for company %s",
@@ -477,8 +480,6 @@ async def update_company(
             status_code=500,
             detail="Failed to cancel Stripe subscription",
           )
-
-        company.stripe_subscription_id = None
 
       company.billing_plan_id = None
     else:
@@ -493,18 +494,54 @@ async def update_company(
         await create_subscription(company, db)
       else:
         try:
-          subscription = stripe.Subscription.retrieve(
-            company.stripe_subscription_id
-          )
+          try:
+            subscription = stripe.Subscription.retrieve(
+              company.stripe_subscription_id
+            )
+          except stripe.error.InvalidRequestError as e:
+            if e.code == "resource_missing":
+              logger.info(
+                "Stripe subscription %s no longer exists for company %s. Creating a new subscription.",
+                company.stripe_subscription_id,
+                company.id,
+              )
 
-          item_id = subscription["items"]["data"][0]["id"]
+              company.stripe_subscription_id = None
+              await db.commit()
 
-          stripe.SubscriptionItem.modify(
-            item_id,
-            price=plan.stripe_price_id,
-            quantity=1,
-            proration_behavior="create_prorations",
-          )
+              await create_subscription(company, db)
+              subscription = None
+            else:
+              raise
+
+          if subscription:
+            if subscription.status == "canceled":
+              logger.info(
+                "Stripe subscription %s is canceled for company %s. Creating a new subscription.",
+                subscription.id,
+                company.id,
+              )
+
+              company.stripe_subscription_id = None
+              await db.commit()
+
+              await create_subscription(company, db)
+
+            else:
+              if subscription.cancel_at_period_end:
+                subscription = stripe.Subscription.modify(
+                  subscription.id,
+                  cancel_at_period_end=False,
+                )
+
+              item_id = subscription["items"]["data"][0]["id"]
+
+              stripe.SubscriptionItem.modify(
+                item_id,
+                price=plan.stripe_price_id,
+                quantity=1,
+                proration_behavior="create_prorations",
+              )
 
         except stripe.error.StripeError:
           logger.exception(
