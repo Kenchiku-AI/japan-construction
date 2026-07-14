@@ -6,6 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
+from app.db.models.conversation_item_type import (
+  ConversationItemType,
+  ConversationItemTypeLink,
+)
 from app.db.models.user import User
 from app.db.models.project import Project
 from app.db.models.line_conversation import LineConversation
@@ -21,6 +25,21 @@ router = APIRouter(
   prefix="/conversations",
   tags=["conversations"],
 )
+
+async def get_conversation_with_item_types(
+  db: AsyncSession,
+  conversation_id: UUID,
+) -> LineConversation:
+  result = await db.execute(
+    select(LineConversation)
+    .options(
+      selectinload(LineConversation.item_type_links)
+      .selectinload(ConversationItemTypeLink.item_type)
+    )
+    .where(LineConversation.id == conversation_id)
+  )
+
+  return result.scalar_one()
 
 @router.post(
   "",
@@ -52,10 +71,35 @@ async def create_conversation(
   )
 
   db.add(conversation)
-  await db.commit()
-  await db.refresh(conversation)
+  await db.flush()
 
-  return conversation
+  if payload.item_type_ids:
+    result = await db.execute(
+      select(ConversationItemType).where(
+        ConversationItemType.id.in_(payload.item_type_ids),
+        ConversationItemType.company_id == payload.company_id,
+      )
+    )
+
+    item_types = result.scalars().all()
+
+    if len(item_types) != len(set(payload.item_type_ids)):
+      raise HTTPException(
+        status_code=400,
+        detail="One or more conversation item types are invalid.",
+      )
+
+    conversation.item_type_links = [
+      ConversationItemTypeLink(item_type=item_type)
+      for item_type in item_types
+    ]
+
+  await db.commit()
+
+  return await get_conversation_with_item_types(
+    db,
+    conversation.id,
+  )
 
 @router.patch(
   "/{conversation_id}",
@@ -68,7 +112,11 @@ async def update_conversation(
   current_user: User = Depends(get_current_user),
 ):
   result = await db.execute(
-    select(LineConversation).where(LineConversation.id == conversation_id)
+    select(LineConversation)
+    .options(
+      selectinload(LineConversation.item_type_links)
+    )
+    .where(LineConversation.id == conversation_id)
   )
   conversation = result.scalar_one_or_none()
 
@@ -78,13 +126,58 @@ async def update_conversation(
   if current_user.role != "admin":
     require_company_manager(current_user, conversation.company_id)
 
-  for field, value in payload.model_dump(exclude_unset=True).items():
+  update_data = payload.model_dump(exclude_unset=True)
+
+  item_type_ids = update_data.pop("item_type_ids", None)
+
+  if "project_id" in update_data and update_data["project_id"] is not None:
+    project_id = update_data.get("project_id")
+    project = await db.get(Project, project_id)
+
+    if not project:
+      raise HTTPException(
+        status_code=404,
+        detail="Project not found",
+      )
+
+    if project.company_id != conversation.company_id:
+      raise HTTPException(
+        status_code=400,
+        detail="Project does not belong to this company",
+      )
+
+  for field, value in update_data.items():
     setattr(conversation, field, value)
 
-  await db.commit()
-  await db.refresh(conversation)
+  if item_type_ids is not None:
+    result = await db.execute(
+      select(ConversationItemType).where(
+        ConversationItemType.id.in_(item_type_ids),
+        ConversationItemType.company_id == conversation.company_id,
+      )
+    )
 
-  return conversation
+    item_types = result.scalars().all()
+
+    if len(item_types) != len(set(item_type_ids)):
+      raise HTTPException(
+        status_code=400,
+        detail="One or more conversation item types are invalid.",
+      )
+
+    conversation.item_type_links.clear()
+
+    conversation.item_type_links.extend(
+      ConversationItemTypeLink(item_type=item_type)
+      for item_type in item_types
+    )
+
+  await db.commit()
+  
+  return await get_conversation_with_item_types(
+    db,
+    conversation.id,
+  )
 
 @router.delete(
   "/{conversation_id}",
