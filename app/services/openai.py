@@ -474,6 +474,113 @@ JSON以外は一切出力しないでください。
 
   return parsed
 
+async def extract_conversation_items(
+  message_text: str,
+  project: Project,
+  item_types: list[ConversationItemType],
+  existing_items: list[ConversationItem],
+):
+
+  item_types_block = "\n".join(
+    f"""
+- id: {item.id}
+  name: {item.name}
+  description: {item.description or ""}
+"""
+    for item in item_types
+  )
+
+
+  existing_items_block = "\n".join(
+    f"""
+- id: {item.id}
+  type_id: {item.conversation_item_type_id}
+  name: {item.name}
+  description: {item.description or ""}
+"""
+    for item in existing_items
+  )
+
+
+  prompt = f"""
+あなたは建設会社のプロジェクト管理AIです。
+
+LINE会話から、管理対象の情報（Conversation Item）を抽出してください。
+
+## 管理対象項目
+
+{item_types_block}
+
+
+## ルール
+
+- 会話から新しい情報が取得できる場合のみ作成してください
+- 既存項目と同じ情報の場合は更新してください
+- 関係ない会話は何もしません
+- 推測は禁止です
+
+
+## 現在保存されている項目
+
+{existing_items_block}
+
+
+## 最新メッセージ
+
+"{message_text}"
+
+
+## 出力
+
+作成:
+
+[
+{{
+ "action":"create",
+ "conversation_item_type_id":"<type id>",
+ "name":"<項目名>",
+ "description":"<内容>"
+}}
+]
+
+
+更新:
+
+[
+{{
+ "action":"update",
+ "conversation_item_id":"<item id>",
+ "description":"<更新後全文>",
+ "status":"new|in_progress|closed"
+}}
+]
+
+
+何もしない:
+
+[
+]
+ 
+JSONのみ返してください。
+"""
+
+  response = await client.responses.create(
+    model="gpt-4.1-mini",
+    input=[
+      {
+        "role":"user",
+        "content":prompt
+      }
+    ],
+    temperature=0,
+  )
+
+  try:
+    return json.loads(response.output_text)
+
+  except json.JSONDecodeError:
+    return []
+
 def safe_json_loads(text: str):
   match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
   if not match:

@@ -11,7 +11,7 @@ from app.db.models.project_guest_link import ProjectGuestLink
 from app.db.models.line_message import LineMessage
 from app.db.models.action_item import ActionItem, ActionItemStatus
 from app.db.session import AsyncSessionLocal
-from app.services.openai import extract_action_item
+from app.services.openai import extract_action_item, extract_conversation_items
 
 logger = logging.getLogger(__name__)
 
@@ -152,5 +152,97 @@ async def handle_line_group_action_item(
       await db.execute(
         delete(LineMessage).where(LineMessage.id.in_(old_ids))
       )
+
+    await db.commit()
+
+async def handle_line_group_conversation_items(
+  text: str,
+  project: Project,
+  group_id: str,
+  company_id: UUID,
+  line_timestamp: datetime | None,
+):
+  async with AsyncSessionLocal() as db:
+    conversation_result = await db.execute(
+      select(LineConversation)
+      .where(
+        LineConversation.line_group_id == group_id,
+        LineConversation.project_id == project.id,
+      )
+      .options(
+        selectinload(LineConversation.item_type_links)
+        .selectinload(ConversationItemTypeLink.item_type)
+      )
+    )
+
+    conversation = conversation_result.scalar_one_or_none()
+
+    if not conversation:
+      return
+
+    item_types = [
+      link.item_type
+      for link in conversation.item_type_links
+    ]
+
+    if not item_types:
+      return
+
+    recent_items_result = await db.execute(
+      select(ConversationItem)
+      .where(
+        ConversationItem.project_id == project.id
+      )
+      .order_by(
+        ConversationItem.updated_at.desc()
+      )
+      .limit(20)
+    )
+
+    recent_items = recent_items_result.scalars().all()
+
+    extracted_items = await extract_conversation_items(
+      message_text=text,
+      project=project,
+      item_types=item_types,
+      existing_items=recent_items,
+    )
+
+    for extracted in extracted_items:
+      action = extracted.get("action")
+
+      if action == "create":
+        item = ConversationItem(
+          project_id=project.id,
+          conversation_id=conversation.id,
+          conversation_item_type_id=UUID(
+            extracted["conversation_item_type_id"]
+          ),
+          name=extracted["name"],
+          description=extracted.get("description"),
+          status=ConversationItemStatus.new,
+          source_message_text=text,
+          line_timestamp=line_timestamp,
+        )
+
+        db.add(item)
+
+      elif action == "update":
+        item_result = await db.execute(
+          select(ConversationItem)
+          .where(
+            ConversationItem.id == extracted["conversation_item_id"],
+            ConversationItem.project_id == project.id,
+          )
+        )
+
+        item = item_result.scalar_one_or_none()
+
+        if item:
+          item.description = extracted["description"]
+          item.status = extracted.get(
+            "status",
+            item.status,
+          )
 
     await db.commit()
