@@ -47,6 +47,7 @@ class LineConversation(Base):
     "LineMessage",
     back_populates="conversation",
     cascade="all, delete-orphan",
+    order_by="desc(LineMessage.line_timestamp)",
   )
 
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

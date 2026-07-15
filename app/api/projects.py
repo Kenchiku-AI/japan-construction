@@ -17,6 +17,7 @@ from app.db.models import (
   ProjectGuestLink,
   ActionItem,
   LineConversation,
+  LineMessage,
   ConversationItem,
   ConversationItemTypeLink,
 )
@@ -85,6 +86,37 @@ async def get_project_conversation_items(
 
   return list(grouped.values())
 
+async def get_last_message_text(
+  db: AsyncSession,
+  conversation_ids: list[UUID],
+):
+  latest_message = (
+    select(
+      LineMessage.conversation_id,
+      LineMessage.text.label("last_message_text"),
+    )
+    .where(
+      LineMessage.conversation_id.in_(conversation_ids)
+    )
+    .order_by(
+      LineMessage.conversation_id,
+      LineMessage.line_timestamp.desc(),
+    )
+    .distinct(
+      LineMessage.conversation_id
+    )
+    .subquery()
+  )
+
+  result = await db.execute(
+    select(
+      latest_message.c.conversation_id,
+      latest_message.c.last_message_text,
+    )
+  )
+
+  return dict(result.all())
+
 async def build_project_response(
   db: AsyncSession,
   project: Project,
@@ -93,6 +125,24 @@ async def build_project_response(
     db,
     project.id,
   )
+
+  conversation_ids = [
+    conversation.id
+    for conversation in project.conversations
+  ]
+
+  last_messages = await get_conversation_last_messages(
+    db,
+    conversation_ids,
+  )
+
+  conversations = []
+
+  for conversation in project.conversations:
+    conversation.last_message_text = last_messages.get(
+      conversation.id
+    )
+    conversations.append(conversation)
 
   return ProjectWithLists(
     id=project.id,
@@ -105,7 +155,7 @@ async def build_project_response(
     company_name=getattr(project, "company_name", None),
     reports=project.reports,
     action_items=project.action_items,
-    conversations=project.conversations,
+    conversations=conversations,
     conversation_items=conversation_items,
   )
 

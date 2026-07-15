@@ -28,11 +28,11 @@ class ConversationItemTypeRead(BaseModel):
 class ConversationRead(BaseModel):
   id: UUID
   name: str
-  company_id: UUID
-  project_id: UUID | None = None
   line_link_code: str
   line_group_id: str | None = None
-  item_types: list[ConversationItemTypeRead]
+  project_id: UUID | None = None
+  item_types: list[ConversationItemTypeRead] = []
+  last_message_text: str | None = None
   created_at: datetime
   updated_at: datetime
 

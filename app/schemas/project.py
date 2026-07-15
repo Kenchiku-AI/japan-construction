@@ -69,9 +69,10 @@ class ProjectConversationRead(BaseModel):
   line_group_id: str | None = None
   project_id: UUID | None = None
   item_types: List[ConversationItemTypeRead] = []
+  last_message_text: str | None = None
   created_at: datetime
   updated_at: datetime
-
+  
   model_config = {"from_attributes": True}
 
 class ConversationItemsGroupedRead(BaseModel):
