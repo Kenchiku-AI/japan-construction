@@ -35,7 +35,6 @@ class LineConversation(Base):
   conversation_items = relationship(
     "ConversationItem",
     back_populates="conversation",
-    cascade="all, delete-orphan",
   )
 
   item_type_links = relationship(

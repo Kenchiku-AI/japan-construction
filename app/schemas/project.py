@@ -4,7 +4,10 @@ from typing import Optional, List
 from uuid import UUID
 
 from app.db.models.action_item import ActionItemStatus
-from app.schemas.conversation import ConversationItemTypeRead
+from app.schemas.conversation import (
+  ConversationItemTypeRead,
+  ConversationItemRead,
+)
 
 class ProjectBase(BaseModel):
   name: str
@@ -70,8 +73,18 @@ class ProjectConversationRead(BaseModel):
   updated_at: datetime
 
   model_config = {"from_attributes": True}
+
+class ConversationItemsGroupedRead(BaseModel):
+  conversation_item_type_id: UUID
+  conversation_item_type_name: str
+  items: List[ConversationItemRead] = []
+
+  model_config = {
+    "from_attributes": True
+  }
   
 class ProjectWithLists(ProjectWithCompanyName):
   reports: List[ProjectReportRead] = []
   action_items: List[ProjectActionItemRead] = []
   conversations: List[ProjectConversationRead] = []
+  conversation_items: List[ConversationItemsGroupedRead] = []

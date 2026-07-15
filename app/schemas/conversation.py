@@ -47,3 +47,24 @@ class ConversationItemTypeCreate(BaseModel):
 class ConversationItemTypeUpdate(BaseModel):
   name: str | None = None
   description: str | None = None
+
+class ConversationItemCreate(BaseModel):
+  project_id: UUID
+  conversation_item_type_id: UUID
+  name: str
+  description: str | None = None
+
+class ConversationItemUpdate(BaseModel):
+  value: str | None = None
+
+class ConversationItemRead(BaseModel):
+  id: UUID
+  conversation_id: UUID | None = None
+  item_type_id: UUID
+  value: str
+  created_at: datetime
+  updated_at: datetime
+
+  model_config = {
+    "from_attributes": True
+  }

@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, case, or_
+from sqlalchemy import select, desc, case, or_, func
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import get_current_user, require_company_manager, require_project_access
@@ -17,7 +17,8 @@ from app.db.models import (
   ProjectGuestLink,
   ActionItem,
   LineConversation,
-  ConversationItemTypeLink
+  ConversationItem,
+  ConversationItemTypeLink,
 )
 from app.schemas.project import (
   ProjectCreate, 
@@ -28,6 +29,85 @@ from app.schemas.project import (
 from app.services.billing import can_use_billed_features
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
+
+async def get_project_conversation_items(
+  db: AsyncSession,
+  project_id: UUID,
+):
+  ranked_items = (
+    select(
+      ConversationItem.id,
+      func.row_number()
+      .over(
+        partition_by=ConversationItem.conversation_item_type_id,
+        order_by=ConversationItem.updated_at.desc(),
+      )
+      .label("row_num"),
+    )
+    .where(
+      ConversationItem.project_id == project_id
+    )
+    .subquery()
+  )
+
+  result = await db.execute(
+    select(ConversationItem)
+    .join(
+      ranked_items,
+      ConversationItem.id == ranked_items.c.id,
+    )
+    .where(
+      ranked_items.c.row_num <= 5
+    )
+    .options(
+      selectinload(ConversationItem.item_type)
+    )
+    .order_by(
+      ConversationItem.updated_at.desc()
+    )
+  )
+
+  items = result.scalars().all()
+
+  grouped = {}
+
+  for item in items:
+    item_type_id = item.conversation_item_type_id
+
+    if item_type_id not in grouped:
+      grouped[item_type_id] = {
+        "conversation_item_type_id": item_type_id,
+        "conversation_item_type_name": item.item_type.name,
+        "items": [],
+      }
+
+    grouped[item_type_id]["items"].append(item)
+
+  return list(grouped.values())
+
+async def build_project_response(
+  db: AsyncSession,
+  project: Project,
+):
+  conversation_items = await get_project_conversation_items(
+    db,
+    project.id,
+  )
+
+  return ProjectWithLists(
+    id=project.id,
+    name=project.name,
+    description=project.description,
+    status=project.status,
+    line_link_code=project.line_link_code,
+    line_group_id=project.line_group_id,
+    company_id=project.company_id,
+    company_name=getattr(project, "company_name", None),
+    reports=project.reports,
+    action_items=project.action_items,
+    conversations=project.conversations,
+    conversation_items=conversation_items,
+  )
 
 @router.get("", response_model=List[ProjectWithCompanyName])
 async def list_projects(
@@ -157,7 +237,10 @@ async def get_project(
 
     await require_project_access(current_user, project_id, project.company_id, db)
 
-  return project
+  return await build_project_response(
+    db,
+    project,
+  ) 
 
 @router.post(
   "",
@@ -198,6 +281,7 @@ async def create_project(
     reports=[],
     action_items=[],
     conversations=[],
+    conversation_items=[],
   )
 
 @router.patch("/{project_id}", response_model=ProjectWithLists)
@@ -239,8 +323,13 @@ async def update_project(
 
   result = await db.execute(stmt)
   project = result.scalars().first()
+  if not project:
+    raise HTTPException(status_code=404, detail="Project not found")
 
-  return project
+  return await build_project_response(
+    db,
+    project,
+  )
 
 @router.delete(
   "/{project_id}/guests/{guest_link_id}",

@@ -11,6 +11,7 @@ from app.db.base import Base
 from app.db.models.action_item import ActionItem
 from app.db.models.report import Report, ReportParentType
 from app.db.models.line_conversation import LineConversation
+from app.db.models.conversation_item import ConversationItem
 
 class ProjectStatus(str, enum.Enum):
   active = "active"
@@ -58,6 +59,12 @@ class Project(Base):
   conversations = relationship(
     "LineConversation",
     back_populates="project",
+  )
+
+  conversation_items = relationship(
+    "ConversationItem",
+    back_populates="project",
+    cascade="all, delete-orphan",
   )
 
   line_link_code = Column(String, nullable=False, unique=True, index=True)
