@@ -7,6 +7,8 @@ import logging
 
 from app.core.config import settings
 from app.db.models.report import ReportField, ReportImageTag
+from app.db.models.line_conversation import LineConversation
+from app.db.models.line_message import LineMessage
 
 client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
@@ -473,6 +475,178 @@ JSON以外は一切出力しないでください。
     return None
 
   return parsed
+
+async def extract_conversation_items(
+  message_text: str,
+  conversation: LineConversation,
+  recent_messages: list[LineMessage],
+  item_types: list[ConversationItemType],
+  existing_items: list[ConversationItem],
+):
+  history_block = "\n".join(
+    f'- "{m.text}"'
+    for m in recent_messages
+  ) or "なし"
+
+  item_types_block = "\n".join(
+    f"""
+- id: {item.id}
+  name: {item.name}
+  description: {item.description or ""}
+""".strip()
+    for item in item_types
+  ) or "なし"
+
+  existing_items_block = "\n".join(
+    f"""
+- id: {item.id}
+  type_id: {item.conversation_item_type_id}
+  status: {item.status}
+  name: {item.name}
+  description: {item.description or ""}
+""".strip()
+    for item in existing_items
+  ) or "なし"
+
+  prompt = f"""
+あなたは建設会社向けAIアシスタントです。
+
+LINEグループの会話から、
+設定済みの「トークから抽出する情報」を管理してください。
+
+あなたは必ず次のいずれかを判断してください。
+
+- 新しい情報を作成する
+- 既存の情報を更新する
+- 何もしない
+
+## プロジェクト
+
+{conversation.project.name if conversation.project else "なし"}
+
+## LINEグループ
+
+{conversation.name}
+
+## トークから抽出する情報
+
+以下は、このLINEグループで抽出対象として設定されている情報です。
+
+それぞれ
+
+- name
+- description
+
+をよく読み、その情報に該当する内容だけを抽出してください。
+
+{item_types_block}
+
+description は、その情報として何を保存したいかを説明しています。
+
+必ず description を参考にしてください。
+
+## 現在保存されている情報
+
+{existing_items_block}
+
+## ルール
+
+### create
+
+以下の場合は create してください。
+
+- 新しい情報
+- まだ存在しない情報
+- 新しい対象
+- 新しい設備
+- 新しい場所
+- 新しい担当
+- 新しい内容
+
+### update
+
+以下の場合は update してください。
+
+- 同じ対象について追加情報があった
+- 状況が変わった
+- 詳細が増えた
+- 完了した
+- 進捗があった
+
+更新する場合は description 全体を返してください。
+
+追加部分だけではなく、
+保存後の description 全体を返してください。
+
+status は
+
+- new
+- in_progress
+- closed
+
+のいずれかを返してください。
+
+### none
+
+抽出対象に関係ない会話は何もしません。
+
+推測は禁止です。
+
+## 最近のトーク
+
+{history_block}
+
+## 最新メッセージ
+
+"{message_text}"
+
+## 出力
+
+新規作成
+
+[
+  {{
+    "action": "create",
+    "conversation_item_type_id": "<type id>",
+    "name": "<名前>",
+    "description": "<内容>"
+  }}
+]
+
+更新
+
+[
+  {{
+    "action": "update",
+    "conversation_item_id": "<item id>",
+    "name": "<更新後の名前>",
+    "description": "<更新後全文>",
+    "status": "new|in_progress|closed"
+  }}
+]
+
+何もしない
+
+[]
+
+JSONのみ返してください。
+""".strip()
+
+  response = await client.responses.create(
+    model="gpt-4.1-mini",
+    input=[
+      {
+        "role": "user",
+        "content": prompt,
+      }
+    ],
+    temperature=0,
+  )
+
+  try:
+    return safe_json_loads(response.output_text)
+  except Exception:
+    return []
 
 def safe_json_loads(text: str):
   match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)

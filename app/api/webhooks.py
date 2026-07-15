@@ -19,7 +19,7 @@ from app.db.models.project import Project
 from app.services.billing import get_company_by_stripe_customer_id
 from app.services.email import send_line_link_confirmation_email, send_line_group_linked_email
 from app.services.reports import handle_line_message, handle_line_group_message
-from app.services.projects import handle_line_group_action_item
+from app.services.projects import handle_line_group_action_item, handle_line_group_conversation_items
 from app.services.users import link_line_user
 
 logger = logging.getLogger(__name__)
@@ -186,35 +186,104 @@ async def line_webhook(
           )
         continue
 
+      # C- code: link or re-link conversation to this group
+      if candidate_code.startswith("C-"):
+        conversation_result = await db.execute(
+          select(LineConversation).where(
+            LineConversation.line_link_code == candidate_code,
+            LineConversation.company_id == company.id,
+          )
+        )
+        conversation = conversation_result.scalar_one_or_none()
+
+        if conversation:
+          # Remove this group from any existing conversation
+          await db.execute(
+            sa.update(LineConversation)
+            .where(LineConversation.line_group_id == group_id)
+            .values(line_group_id=None)
+          )
+
+          conversation.line_group_id = group_id
+          await db.commit()
+
+          logger.info(
+            "LINE group linked to conversation | company_id=%s conversation_id=%s group_id=%s",
+            company.id,
+            conversation.id,
+            group_id,
+          )
+
+        else:
+          logger.warning(
+            "LINE group sent unrecognized conversation code | company_id=%s group_id=%s code=%s",
+            company.id,
+            group_id,
+            candidate_code,
+          )
+
+        continue
+
       # U- code: link or re-link user account (works from group or DM)
       if await link_line_user(sender_id, candidate_code, company, background_tasks, db, group_id):
         continue
 
       # Regular group message: look up project by group_id
-      project_result = await db.execute(
-        select(Project).where(
-          Project.line_group_id == group_id,
-          Project.company_id == company.id,
+      # project_result = await db.execute(
+      #   select(Project).where(
+      #     Project.line_group_id == group_id,
+      #     Project.company_id == company.id,
+      #   )
+      # )
+      # project = project_result.scalar_one_or_none()
+
+      # if not project:
+      #   logger.warning(
+      #     "LINE message from unlinked group | company_id=%s group_id=%s",
+      #     company.id, group_id,
+      #   )
+      #   continue
+
+      # background_tasks.add_task(
+      #   handle_line_group_action_item,
+      #   text=text,
+      #   project=project,
+      #   sender_line_user_id=sender_id,
+      #   group_id=group_id,
+      #   company_id=company.id,
+      #   line_timestamp=line_timestamp,
+      # )
+
+      conversation_result = await db.execute(
+        select(LineConversation)
+        .options(
+          selectinload(LineConversation.item_type_links)
+          .selectinload(ConversationItemTypeLink.item_type)
+        )
+        .where(
+          LineConversation.line_group_id == group_id,
+          LineConversation.company_id == company.id,
         )
       )
-      project = project_result.scalar_one_or_none()
+      conversation = conversation_result.scalar_one_or_none()
 
-      if not project:
+      if not conversation:
         logger.warning(
           "LINE message from unlinked group | company_id=%s group_id=%s",
-          company.id, group_id,
+          company.id,
+          group_id,
         )
         continue
 
       background_tasks.add_task(
-        handle_line_group_action_item,
+        handle_line_group_conversation_items,
         text=text,
-        project=project,
+        conversation=conversation,
         sender_line_user_id=sender_id,
-        group_id=group_id,
         company_id=company.id,
         line_timestamp=line_timestamp,
       )
+
 
       # TEMPORARILY DISABLING REPORT HANDLING
       # user_link_result = await db.execute(
