@@ -13,6 +13,7 @@ from app.api import (
   billing_plans,
   action_items,
   conversations,
+  conversation_items,
 )
 from app.core.config import settings
 from app.middleware.logging import LoggingMiddleware
@@ -47,3 +48,4 @@ app.include_router(webhooks.router)
 app.include_router(billing_plans.router)
 app.include_router(action_items.router)
 app.include_router(conversations.router)
+app.include_router(conversation_items.router)
