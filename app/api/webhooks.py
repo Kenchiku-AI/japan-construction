@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import logging
+import json
 from datetime import datetime, timezone
 
 import stripe
@@ -10,12 +11,15 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Backgrou
 import sqlalchemy as sa
 from sqlalchemy import select, delete, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.db.session import get_db
 from app.db.models.company import Company
 from app.db.models.user import User, UserLineLink
 from app.db.models.project import Project
+from app.db.models.line_conversation import LineConversation
+from app.db.models.conversation_item_type import ConversationItemTypeLink
 from app.services.billing import get_company_by_stripe_customer_id
 from app.services.email import send_line_link_confirmation_email, send_line_group_linked_email
 from app.services.reports import handle_line_message, handle_line_group_message
