@@ -48,8 +48,36 @@ async def get_project_conversation_items(
       .label("row_num"),
     )
     .where(
-      ConversationItem.project_id == project_id
+      ConversationItem.project_id == project_id,
     )
+    .subquery()
+  )
+
+  linked_item_types = (
+    select(
+      ConversationItemTypeLink.item_type_id.label("item_type_id")
+    )
+    .join(
+      LineConversation,
+      LineConversation.id == ConversationItemTypeLink.conversation_id,
+    )
+    .where(
+      LineConversation.project_id == project_id,
+    )
+  )
+
+  existing_item_types = (
+    select(
+      ConversationItem.conversation_item_type_id.label("item_type_id")
+    )
+    .where(
+      ConversationItem.project_id == project_id,
+    )
+  )
+
+  relevant_item_types = (
+    linked_item_types
+    .union(existing_item_types)
     .subquery()
   )
 
@@ -59,12 +87,8 @@ async def get_project_conversation_items(
       ConversationItem,
     )
     .join(
-      ConversationItemTypeLink,
-      ConversationItemTypeLink.item_type_id == ConversationItemType.id,
-    )
-    .join(
-      LineConversation,
-      LineConversation.id == ConversationItemTypeLink.conversation_id,
+      relevant_item_types,
+      relevant_item_types.c.item_type_id == ConversationItemType.id,
     )
     .outerjoin(
       ranked_items,
@@ -77,15 +101,12 @@ async def get_project_conversation_items(
       ConversationItem,
       ConversationItem.id == ranked_items.c.id,
     )
-    .where(
-      LineConversation.project_id == project_id
-    )
     .options(
-      selectinload(ConversationItemType.conversation_links),
       selectinload(ConversationItem.item_type),
     )
     .order_by(
-      ConversationItem.updated_at.desc()
+      ConversationItemType.name,
+      ConversationItem.updated_at.desc(),
     )
   )
 
@@ -101,7 +122,7 @@ async def get_project_conversation_items(
         "items": [],
       }
 
-    if item:
+    if item is not None:
       grouped[item_type.id]["items"].append(item)
 
   return list(grouped.values())

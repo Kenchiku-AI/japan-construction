@@ -3,13 +3,20 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy import select
 
 from app.db.session import get_db
 from app.db.models.user import User
 from app.db.models.project import Project
 from app.db.models.conversation_item import ConversationItem, ConversationItemStatus
-from app.schemas.conversation import ConversationItemCreate, ConversationItemRead, ConversationItemUpdate
+from app.db.models.conversation_item_type import ConversationItemType
+from app.schemas.conversation import (
+  ConversationItemCreate, 
+  ConversationItemRead, 
+  ConversationItemUpdate,
+)
+from app.schemas.project import ConversationItemsGroupedRead
 from app.services.billing import can_use_billed_features
 from app.core.dependencies import (
   get_current_user,
@@ -21,6 +28,70 @@ router = APIRouter(
   prefix="/conversation-items",
   tags=["conversation-items"],
 )
+
+@router.get(
+  "",
+  response_model=ConversationItemsGroupedRead,
+)
+async def get_conversation_items(
+  project_id: UUID,
+  conversation_item_type_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  project = await db.get(Project, project_id)
+  if not project:
+    raise HTTPException(status_code=404, detail="Project not found")
+
+  allowed, reason = await can_use_billed_features(project.company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(status_code=402, detail=reason)
+
+  if current_user.role != "admin":
+    await require_project_access(
+      current_user,
+      project_id,
+      project.company_id,
+      db,
+    )
+
+  result = await db.execute(
+    select(ConversationItemType)
+    .where(
+      ConversationItemType.id == conversation_item_type_id,
+      ConversationItemType.company_id == project.company_id,
+    )
+  )
+
+  item_type = result.scalar_one_or_none()
+
+  if not item_type:
+    raise HTTPException(
+      status_code=404,
+      detail="Conversation item type not found",
+    )
+
+  result = await db.execute(
+    select(ConversationItem)
+    .where(
+      ConversationItem.project_id == project_id,
+      ConversationItem.conversation_item_type_id == conversation_item_type_id,
+    )
+    .options(
+      selectinload(ConversationItem.item_type),
+    )
+    .order_by(
+      ConversationItem.updated_at.desc(),
+    )
+  )
+
+  items = result.scalars().all()
+
+  return ConversationItemsGroupedRead(
+    conversation_item_type_id=item_type.id,
+    conversation_item_type_name=item_type.name,
+    items=items,
+  )
 
 @router.post(
   "",
