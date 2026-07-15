@@ -19,7 +19,7 @@ from app.db.models.project import Project
 from app.services.billing import get_company_by_stripe_customer_id
 from app.services.email import send_line_link_confirmation_email, send_line_group_linked_email
 from app.services.reports import handle_line_message, handle_line_group_message
-from app.services.projects import handle_line_group_action_item
+from app.services.projects import handle_line_group_message_processing
 from app.services.users import link_line_user
 
 logger = logging.getLogger(__name__)
@@ -207,7 +207,7 @@ async def line_webhook(
         continue
 
       background_tasks.add_task(
-        handle_line_group_action_item,
+        handle_line_group_message_processing,
         text=text,
         project=project,
         sender_line_user_id=sender_id,

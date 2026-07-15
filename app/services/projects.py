@@ -246,3 +246,28 @@ async def handle_line_group_conversation_items(
           )
 
     await db.commit()
+
+async def handle_line_group_message_processing(
+  text: str,
+  project: Project,
+  sender_line_user_id: str,
+  group_id: str,
+  company_id: UUID,
+  line_timestamp: datetime | None,
+):
+  # await handle_line_group_action_item(
+  #   text=text,
+  #   project=project,
+  #   sender_line_user_id=sender_line_user_id,
+  #   group_id=group_id,
+  #   company_id=company_id,
+  #   line_timestamp=line_timestamp,
+  # )
+
+  await handle_line_group_conversation_items(
+    text=text,
+    project=project,
+    group_id=group_id,
+    company_id=company_id,
+    line_timestamp=line_timestamp,
+  )
