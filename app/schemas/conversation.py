@@ -3,6 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from app.db.models.conversation_item import ConversationItemStatus
 
 class ConversationCreate(BaseModel):
   name: str
@@ -61,7 +62,10 @@ class ConversationItemRead(BaseModel):
   id: UUID
   conversation_id: UUID | None = None
   item_type_id: UUID
-  value: str
+  name: str
+  description: str
+  source_message_text: str | None = None
+  status: ConversationItemStatus
   created_at: datetime
   updated_at: datetime
 

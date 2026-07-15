@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, case, or_, func
+from sqlalchemy import select, desc, case, or_, func, and_
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import get_current_user, require_company_manager, require_project_access
@@ -19,6 +19,7 @@ from app.db.models import (
   LineConversation,
   LineMessage,
   ConversationItem,
+  ConversationItemType,
   ConversationItemTypeLink,
 )
 from app.schemas.project import (
@@ -38,6 +39,7 @@ async def get_project_conversation_items(
   ranked_items = (
     select(
       ConversationItem.id,
+      ConversationItem.conversation_item_type_id,
       func.row_number()
       .over(
         partition_by=ConversationItem.conversation_item_type_id,
@@ -52,37 +54,55 @@ async def get_project_conversation_items(
   )
 
   result = await db.execute(
-    select(ConversationItem)
+    select(
+      ConversationItemType,
+      ConversationItem,
+    )
     .join(
+      ConversationItemTypeLink,
+      ConversationItemTypeLink.item_type_id == ConversationItemType.id,
+    )
+    .join(
+      LineConversation,
+      LineConversation.id == ConversationItemTypeLink.conversation_id,
+    )
+    .outerjoin(
       ranked_items,
+      and_(
+        ranked_items.c.conversation_item_type_id == ConversationItemType.id,
+        ranked_items.c.row_num <= 5,
+      ),
+    )
+    .outerjoin(
+      ConversationItem,
       ConversationItem.id == ranked_items.c.id,
     )
     .where(
-      ranked_items.c.row_num <= 5
+      LineConversation.project_id == project_id
     )
     .options(
-      selectinload(ConversationItem.item_type)
+      selectinload(ConversationItemType.conversation_links),
+      selectinload(ConversationItem.item_type),
     )
     .order_by(
       ConversationItem.updated_at.desc()
     )
   )
 
-  items = result.scalars().all()
+  rows = result.all()
 
   grouped = {}
 
-  for item in items:
-    item_type_id = item.conversation_item_type_id
-
-    if item_type_id not in grouped:
-      grouped[item_type_id] = {
-        "conversation_item_type_id": item_type_id,
-        "conversation_item_type_name": item.item_type.name,
+  for item_type, item in rows:
+    if item_type.id not in grouped:
+      grouped[item_type.id] = {
+        "conversation_item_type_id": item_type.id,
+        "conversation_item_type_name": item_type.name,
         "items": [],
       }
 
-    grouped[item_type_id]["items"].append(item)
+    if item:
+      grouped[item_type.id]["items"].append(item)
 
   return list(grouped.values())
 

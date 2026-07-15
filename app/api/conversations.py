@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
@@ -63,15 +63,7 @@ async def create_conversation(
 
   line_link_code = await generate_unique_conversation_line_link_code(db)
 
-  conversation = LineConversation(
-    name=payload.name,
-    company_id=payload.company_id,
-    project_id=payload.project_id,
-    line_link_code=line_link_code,
-  )
-
-  db.add(conversation)
-  await db.flush()
+  item_links = []
 
   if payload.item_type_ids:
     result = await db.execute(
@@ -89,10 +81,20 @@ async def create_conversation(
         detail="One or more conversation item types are invalid.",
       )
 
-    conversation.item_type_links = [
+    item_links = [
       ConversationItemTypeLink(item_type=item_type)
       for item_type in item_types
     ]
+
+  conversation = LineConversation(
+    name=payload.name,
+    company_id=payload.company_id,
+    project_id=payload.project_id,
+    line_link_code=line_link_code,
+    item_type_links=item_links,
+  )
+
+  db.add(conversation)
 
   await db.commit()
 
@@ -131,7 +133,8 @@ async def update_conversation(
   item_type_ids = update_data.pop("item_type_ids", None)
 
   if "project_id" in update_data and update_data["project_id"] is not None:
-    project_id = update_data.get("project_id")
+    project_id = update_data["project_id"]
+
     project = await db.get(Project, project_id)
 
     if not project:
@@ -165,15 +168,21 @@ async def update_conversation(
         detail="One or more conversation item types are invalid.",
       )
 
-    conversation.item_type_links.clear()
-
-    conversation.item_type_links.extend(
-      ConversationItemTypeLink(item_type=item_type)
-      for item_type in item_types
+    await db.execute(
+      delete(ConversationItemTypeLink).where(
+        ConversationItemTypeLink.conversation_id == conversation.id
+      )
     )
 
+    await db.flush()
+
+    conversation.item_type_links = [
+      ConversationItemTypeLink(item_type=item_type)
+      for item_type in item_types
+    ]
+
   await db.commit()
-  
+
   return await get_conversation_with_item_types(
     db,
     conversation.id,
