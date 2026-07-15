@@ -86,11 +86,14 @@ async def get_project_conversation_items(
 
   return list(grouped.values())
 
-async def get_last_message_text(
+async def get_conversation_last_messages(
   db: AsyncSession,
   conversation_ids: list[UUID],
 ):
-  latest_message = (
+  if not conversation_ids:
+    return {}
+
+  latest_messages = (
     select(
       LineMessage.conversation_id,
       LineMessage.text.label("last_message_text"),
@@ -110,8 +113,8 @@ async def get_last_message_text(
 
   result = await db.execute(
     select(
-      latest_message.c.conversation_id,
-      latest_message.c.last_message_text,
+      latest_messages.c.conversation_id,
+      latest_messages.c.last_message_text,
     )
   )
 
