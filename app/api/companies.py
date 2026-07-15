@@ -811,7 +811,11 @@ async def list_conversation_item_types(
   )
   return result.scalars().all()
 
-@router.post("/{company_id}/conversation-item-types", status_code=status.HTTP_201_CREATED)
+@router.post(
+  "/{company_id}/conversation-item-types",
+  response_model=list[ConversationItemTypeRead],
+  status_code=status.HTTP_201_CREATED,
+)
 async def create_conversation_item_type(
   company_id: UUID,
   payload: ConversationItemTypeCreate,
@@ -829,11 +833,19 @@ async def create_conversation_item_type(
 
   db.add(item_type)
   await db.commit()
-  await db.refresh(item_type)
 
-  return item_type
+  result = await db.execute(
+    select(ConversationItemType)
+    .where(ConversationItemType.company_id == company_id)
+    .order_by(ConversationItemType.name)
+  )
 
-@router.patch("/{company_id}/conversation-item-types/{item_type_id}")
+  return result.scalars().all()
+
+@router.patch(
+  "/{company_id}/conversation-item-types/{item_type_id}",
+  response_model=list[ConversationItemTypeRead],
+)
 async def update_conversation_item_type(
   company_id: UUID,
   item_type_id: UUID,
@@ -859,9 +871,14 @@ async def update_conversation_item_type(
     setattr(item_type, field, value)
 
   await db.commit()
-  await db.refresh(item_type)
 
-  return item_type
+  result = await db.execute(
+    select(ConversationItemType)
+    .where(ConversationItemType.company_id == company_id)
+    .order_by(ConversationItemType.name)
+  )
+
+  return result.scalars().all()
 
 @router.delete(
   "/{company_id}/conversation-item-types/{item_type_id}",
