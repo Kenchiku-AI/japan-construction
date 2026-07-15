@@ -70,7 +70,7 @@ async def get_project_conversation_items(
       ranked_items,
       and_(
         ranked_items.c.conversation_item_type_id == ConversationItemType.id,
-        ranked_items.c.row_num <= 5,
+        ranked_items.c.row_num <= 6,
       ),
     )
     .outerjoin(
