@@ -22,7 +22,7 @@ from app.db.models.conversation_item_type import ConversationItemTypeLink
 from app.services.billing import get_company_by_stripe_customer_id
 from app.services.email import send_line_link_confirmation_email, send_line_group_linked_email
 from app.services.reports import handle_line_message, handle_line_group_message
-from app.services.projects import handle_line_group_action_item, handle_line_group_conversation_items
+from app.services.projects import handle_line_group_conversation_items
 from app.services.users import link_line_user
 
 logger = logging.getLogger(__name__)

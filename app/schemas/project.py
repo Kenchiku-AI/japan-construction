@@ -3,7 +3,6 @@ from pydantic import BaseModel
 from typing import Optional, List
 from uuid import UUID
 
-from app.db.models.action_item import ActionItemStatus
 from app.schemas.conversation import (
   ConversationItemTypeRead,
   ConversationItemRead,
@@ -45,23 +44,6 @@ class ProjectReportRead(BaseModel):
     "from_attributes": True
   }
 
-class ProjectActionItemRead(BaseModel):
-  id: UUID
-  project_id: UUID
-  name: str
-  description: str | None = None
-  status: ActionItemStatus
-  source_message_text: str | None = None
-  line_timestamp: datetime | None = None
-  assignee_id: UUID | None = None
-  scheduled_date: datetime | None = None
-  created_at: datetime
-  updated_at: datetime
-
-  model_config = {
-    "from_attributes": True
-  }
-
 class ProjectConversationRead(BaseModel):
   id: UUID
   name: str
@@ -86,6 +68,5 @@ class ConversationItemsGroupedRead(BaseModel):
   
 class ProjectWithLists(ProjectWithCompanyName):
   reports: List[ProjectReportRead] = []
-  action_items: List[ProjectActionItemRead] = []
   conversations: List[ProjectConversationRead] = []
   conversation_items: List[ConversationItemsGroupedRead] = []
