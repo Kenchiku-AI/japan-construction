@@ -806,7 +806,10 @@ async def list_conversation_item_types(
 
   result = await db.execute(
     select(ConversationItemType)
-    .where(ConversationItemType.company_id == company_id)
+    .where(
+      ConversationItemType.company_id == company_id,
+      ConversationItemType.is_active == True
+    )
     .order_by(ConversationItemType.name.asc())
   )
   return result.scalars().all()
@@ -902,9 +905,13 @@ async def delete_conversation_item_type(
   item_type = result.scalar_one_or_none()
 
   if not item_type:
-    raise HTTPException(status_code=404, detail="Conversation item type not found")
+    raise HTTPException(
+      status_code=404,
+      detail="Conversation item type not found",
+    )
 
-  await db.delete(item_type)
+  item_type.is_active = False
+
   await db.commit()
 
   return None
