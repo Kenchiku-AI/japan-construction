@@ -19,7 +19,7 @@ from app.db.models.user import User
 from app.db.models.project import Project
 from app.db.models.line_conversation import LineConversation
 from app.db.models.conversation_item_type import ConversationItemTypeLink
-from app.services.billing import get_company_by_stripe_customer_id
+from app.services.billing import get_company_by_stripe_customer_id, can_use_billed_features
 from app.services.email import send_line_group_linked_email
 from app.services.reports import handle_line_group_message
 from app.services.projects import handle_line_group_conversation_items
@@ -118,6 +118,15 @@ async def line_webhook(
 
   if not verify_line_signature(body, x_line_signature, company.line_channel_secret):
     raise HTTPException(status_code=403, detail="Invalid signature")
+
+  can_use_features, reason = await can_use_billed_features(company.id, db)
+  if not can_use_features:
+    logger.info(
+      "Ignoring LINE webhook because billed features are disabled | company_id=%s reason=%s",
+      company.id,
+      reason,
+    )
+    return {"status": "billing_disabled"}
 
   payload = await request.json()
 
