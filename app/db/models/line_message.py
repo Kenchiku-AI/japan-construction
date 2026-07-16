@@ -47,29 +47,37 @@ class LineMessageConversationItemLink(Base):
     ),
   )
 
-  id: Mapped[UUID] = mapped_column(
+  id = Column(
+    UUID(as_uuid=True),
     primary_key=True,
     default=uuid4,
   )
 
-  line_message_id: Mapped[UUID] = mapped_column(
+  line_message_id = Column(
+    UUID(as_uuid=True),
     ForeignKey("line_messages.id", ondelete="CASCADE"),
     nullable=False,
     index=True,
   )
 
-  conversation_item_id: Mapped[UUID] = mapped_column(
+  conversation_item_id = Column(
+    UUID(as_uuid=True),
     ForeignKey("conversation_items.id", ondelete="CASCADE"),
     nullable=False,
     index=True,
   )
 
-  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+  created_at = Column(
+    DateTime(timezone=True),
+    default=lambda: datetime.now(timezone.utc),
+  )
 
-  line_message: Mapped["LineMessage"] = relationship(
+  line_message = relationship(
+    "LineMessage",
     back_populates="conversation_item_links",
   )
 
-  conversation_item: Mapped["ConversationItem"] = relationship(
+  conversation_item = relationship(
+    "ConversationItem",
     back_populates="line_message_links",
   )
