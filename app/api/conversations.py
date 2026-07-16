@@ -70,6 +70,7 @@ async def create_conversation(
       select(ConversationItemType).where(
         ConversationItemType.id.in_(payload.item_type_ids),
         ConversationItemType.company_id == payload.company_id,
+        ConversationItemType.is_active == True
       )
     )
 

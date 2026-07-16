@@ -86,6 +86,7 @@ async def handle_line_group_conversation_items(
     item_types = [
       link.item_type
       for link in conversation.item_type_links
+      if link.is_active and link.item_type.is_active
     ]
 
     if not item_types:

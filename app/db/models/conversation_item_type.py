@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -35,13 +35,18 @@ class ConversationItemType(Base):
     back_populates="item_type",
   )
 
+  is_active = Column(
+    Boolean,
+    nullable=False,
+    default=True,
+  )
+
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
   updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
   __table_args__ = (
     UniqueConstraint("company_id", "name", name="uq_conversation_item_type_company_name"),
   )
-
 
 class ConversationItemTypeLink(Base):
   __tablename__ = "conversation_item_type_links"
