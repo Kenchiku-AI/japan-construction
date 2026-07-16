@@ -44,10 +44,6 @@ class ConversationItemType(Base):
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
   updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-  __table_args__ = (
-    UniqueConstraint("company_id", "name", name="uq_conversation_item_type_company_name"),
-  )
-
 class ConversationItemTypeLink(Base):
   __tablename__ = "conversation_item_type_links"
 

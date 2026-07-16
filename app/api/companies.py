@@ -827,6 +827,20 @@ async def create_conversation_item_type(
   if current_user.role != "admin":
     require_company_manager(current_user, company_id)
 
+  existing = await db.scalar(
+    select(ConversationItemType).where(
+      ConversationItemType.company_id == company_id,
+      ConversationItemType.name == payload.name,
+      ConversationItemType.is_active == True,
+    )
+  )
+
+  if existing:
+    raise HTTPException(
+      status_code=409,
+      detail="An active conversation item type with this name already exists.",
+    )
+
   item_type = ConversationItemType(
     company_id=company_id,
     name=payload.name,
