@@ -20,6 +20,7 @@ from app.db.models import (
   ReportImageTag,
   ProjectGuestLink,
   BillingPlan,
+  ConversationItem
 )
 from app.db.session import get_db
 from app.schemas.company import (
@@ -837,7 +838,10 @@ async def create_conversation_item_type(
 
   result = await db.execute(
     select(ConversationItemType)
-    .where(ConversationItemType.company_id == company_id)
+    .where(
+      ConversationItemType.company_id == company_id,
+      ConversationItemType.is_active == True
+    )
     .order_by(ConversationItemType.name)
   )
 
@@ -875,7 +879,10 @@ async def update_conversation_item_type(
 
   result = await db.execute(
     select(ConversationItemType)
-    .where(ConversationItemType.company_id == company_id)
+    .where(
+      ConversationItemType.company_id == company_id,
+      ConversationItemType.is_active == True
+    )
     .order_by(ConversationItemType.name)
   )
 
@@ -909,6 +916,27 @@ async def delete_conversation_item_type(
     )
 
   item_type.is_active = False
+
+  links_result = await db.execute(
+    select(ConversationItemTypeLink)
+    .where(
+      ConversationItemTypeLink.item_type_id == item_type.id,
+    )
+  )
+  links = links_result.scalars().all()
+
+  for link in links:
+    items_result = await db.execute(
+      select(ConversationItem.id)
+      .where(
+        ConversationItem.conversation_id == link.conversation_id,
+        ConversationItem.conversation_item_type_id == item_type.id,
+      )
+      .limit(1)
+    )
+
+    if items_result.scalar_one_or_none() is None:
+      await db.delete(link)
 
   await db.commit()
 
