@@ -15,7 +15,6 @@ from app.db.models import (
   User, 
   ProjectStatus, 
   ProjectGuestLink,
-  ActionItem,
   LineConversation,
   LineMessage,
   ConversationItem,
@@ -198,7 +197,6 @@ async def build_project_response(
     company_id=project.company_id,
     company_name=getattr(project, "company_name", None),
     reports=project.reports,
-    action_items=project.action_items,
     conversations=conversations,
     conversation_items=conversation_items,
   )
@@ -293,7 +291,6 @@ async def get_project(
       .where(Project.id == project_id)
       .options(
         selectinload(Project.reports),
-        selectinload(Project.action_items),
         selectinload(Project.conversations)
           .selectinload(LineConversation.item_type_links)
           .selectinload(ConversationItemTypeLink.item_type), 
@@ -316,7 +313,6 @@ async def get_project(
       .where(Project.id == project_id)
       .options(
         selectinload(Project.reports),
-        selectinload(Project.action_items),
         selectinload(Project.conversations)
           .selectinload(LineConversation.item_type_links)
           .selectinload(ConversationItemTypeLink.item_type),
@@ -373,7 +369,6 @@ async def create_project(
     line_group_id=project.line_group_id,
     company_id=project.company_id,
     reports=[],
-    action_items=[],
     conversations=[],
     conversation_items=[],
   )
@@ -408,7 +403,6 @@ async def update_project(
     .where(Project.id == project_id)
     .options(
       selectinload(Project.reports),
-      selectinload(Project.action_items),
       selectinload(Project.conversations)
         .selectinload(LineConversation.item_type_links)
         .selectinload(ConversationItemTypeLink.item_type),

@@ -70,5 +70,15 @@ class ConversationItem(Base):
     back_populates="conversation_items",
   )
 
-  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-  updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+  created_at = Column(
+    DateTime(timezone=True), 
+    default=lambda: datetime.now(timezone.utc),
+    index=True,
+  )
+
+  updated_at = Column(
+    DateTime(timezone=True), 
+    default=lambda: datetime.now(timezone.utc), 
+    onupdate=lambda: datetime.now(timezone.utc),
+    index=True,
+  )

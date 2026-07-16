@@ -11,7 +11,6 @@ from app.api import (
   health, 
   webhooks, 
   billing_plans,
-  action_items,
   conversations,
   conversation_items,
 )
@@ -46,6 +45,5 @@ app.include_router(reports.router)
 app.include_router(health.router)
 app.include_router(webhooks.router)
 app.include_router(billing_plans.router)
-app.include_router(action_items.router)
 app.include_router(conversations.router)
 app.include_router(conversation_items.router)
