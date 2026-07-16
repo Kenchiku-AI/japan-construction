@@ -203,52 +203,6 @@ async def get_image_tags_and_description(
 
   return safe_json_loads(response.output_text)
 
-async def filter_reports_by_context(
-  message_text: str,
-  reports: list[Report],
-  project_map: dict,
-) -> list[Report]:
-  candidates = "\n".join(
-    f'- id: "{r.id}"'
-    f' | report name: "{r.name}"'
-    f' | project name: "{project_map[r.parent_id].name if r.parent_id in project_map else ""}"'
-    f' | project description: "{project_map[r.parent_id].description if r.parent_id in project_map else ""}"'
-    f' | fields: {", ".join(f.description for f in r.fields)}'
-    for r in reports
-  )
-
-  prompt = f"""
-あなたは建設現場の報告書管理システムです。
-以下のメッセージが関係する可能性のある報告書をすべて選んでください。
-報告書にはそれぞれフィールドがあります。メッセージの内容がどのフィールドに当てはまるかを考慮して選択してください。
-
-メッセージ:
-{message_text}
-
-候補の報告書（id | 報告書名 | フィールド説明）:
-{candidates}
-
-必ず以下の形式のJSONのみを返してください:
-{{"report_ids": ["<id1>", "<id2>"]}}
-
-どの報告書にも該当しない場合は:
-{{"report_ids": []}}
-""".strip()
-
-  response = await client.responses.create(
-    model="gpt-4.1-mini",
-    input=[{"role": "user", "content": prompt}],
-    temperature=0,
-  )
-
-  try:
-    parsed = json.loads(response.output_text.strip())
-  except json.JSONDecodeError:
-    return []
-
-  report_ids = parsed.get("report_ids", [])
-  return [r for r in reports if str(r.id) in report_ids]
-
 async def extract_conversation_items(
   message_text: str,
   conversation: LineConversation,
