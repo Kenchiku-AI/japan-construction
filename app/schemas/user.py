@@ -22,7 +22,6 @@ class UserCreate(UserBase):
 class UserWithCompanyIdAndRole(UserBase):
   company_id: Optional[UUID] = None
   role: UserRole
-  line_link_code: str
 
   model_config = {
     "from_attributes": True
@@ -38,7 +37,6 @@ class UserRead(UserBase):
   id: UUID
   created_at: datetime
   updated_at: datetime
-  line_link_code: str
 
   model_config = {
     "from_attributes": True
@@ -71,7 +69,6 @@ class UserWithCompanyAndProjects(BaseModel):
   created_at: datetime
   updated_at: datetime
   role: UserRole
-  line_link_code: str
   company: Optional[UserCompanyRead] = None
   projects: List[UserProjectRead]
 

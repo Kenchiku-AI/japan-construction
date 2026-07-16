@@ -75,29 +75,11 @@ def generate_line_link_code(prefix: str) -> str:
   code = "".join(secrets.choice(alphabet) for _ in range(6))
   return f"{prefix}-{code}"
 
-async def generate_unique_user_line_link_code(db: AsyncSession) -> str:
-  from app.db.models import User
-  
-  while True:
-    code = generate_line_link_code("U")
-    existing = await db.execute(select(User).where(User.line_link_code == code))
-    if not existing.scalar_one_or_none():
-      return code
-
-async def generate_unique_project_line_link_code(db: AsyncSession) -> str:
-  from app.db.models.project import Project
-  
-  while True:
-    code = generate_line_link_code("P")
-    existing = await db.execute(select(Project).where(Project.line_link_code == code))
-    if not existing.scalar_one_or_none():
-      return code
-
 async def generate_unique_conversation_line_link_code(db: AsyncSession) -> str:
   from app.db.models.line_conversation import LineConversation
   
   while True:
-    code = generate_line_link_code("C")
+    code = generate_line_link_code("K")
     existing = await db.execute(
       select(LineConversation).where(LineConversation.line_link_code == code)
     )
