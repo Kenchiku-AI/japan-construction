@@ -45,6 +45,7 @@ class ProjectReportRead(BaseModel):
 class ProjectConversationRead(BaseModel):
   id: UUID
   name: str
+  line_link_code: str
   line_group_id: str | None = None
   project_id: UUID | None = None
   item_types: List[ConversationItemTypeRead] = []
