@@ -11,7 +11,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Backgrou
 import sqlalchemy as sa
 from sqlalchemy import select, delete, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.db.session import get_db
@@ -142,54 +141,6 @@ async def line_webhook(
     # --- Group message ---
     if source_type == "group" and group_id:
 
-      # P- code: link or re-link project to this group
-      if candidate_code.startswith("P-"):
-        project_result = await db.execute(
-          select(Project).where(Project.line_link_code == candidate_code)
-        )
-        project = project_result.scalar_one_or_none()
-
-        if project:
-          await db.execute(
-            sa.update(Project)
-            .where(Project.line_group_id == group_id)
-            .values(line_group_id=None)
-          )
-          project.line_group_id = group_id
-          await db.commit()
-
-          logger.info(
-            "LINE group linked to project | company_id=%s project_id=%s group_id=%s",
-            company.id, project.id, group_id,
-          )
-
-          user_link_result = await db.execute(
-            select(UserLineLink).where(
-              UserLineLink.company_id == company.id,
-              UserLineLink.line_user_id == sender_id,
-            )
-          )
-          user_link = user_link_result.scalar_one_or_none()
-
-          if user_link:
-            user_result = await db.execute(
-              select(User).where(User.id == user_link.user_id)
-            )
-            user = user_result.scalar_one_or_none()
-            if user:
-              background_tasks.add_task(
-                send_line_group_linked_email,
-                email=user.email,
-                company_name=company.name,
-                project_name=project.name,
-              )
-        else:
-          logger.warning(
-            "LINE group sent unrecognized project code | company_id=%s group_id=%s code=%s",
-            company.id, group_id, candidate_code,
-          )
-        continue
-
       # C- code: link or re-link conversation to this group
       if candidate_code.startswith("C-"):
         conversation_result = await db.execute(
@@ -228,43 +179,8 @@ async def line_webhook(
 
         continue
 
-      # U- code: link or re-link user account (works from group or DM)
-      if await link_line_user(sender_id, candidate_code, company, background_tasks, db, group_id):
-        continue
-
-      # Regular group message: look up project by group_id
-      # project_result = await db.execute(
-      #   select(Project).where(
-      #     Project.line_group_id == group_id,
-      #     Project.company_id == company.id,
-      #   )
-      # )
-      # project = project_result.scalar_one_or_none()
-
-      # if not project:
-      #   logger.warning(
-      #     "LINE message from unlinked group | company_id=%s group_id=%s",
-      #     company.id, group_id,
-      #   )
-      #   continue
-
-      # background_tasks.add_task(
-      #   handle_line_group_action_item,
-      #   text=text,
-      #   project=project,
-      #   sender_line_user_id=sender_id,
-      #   group_id=group_id,
-      #   company_id=company.id,
-      #   line_timestamp=line_timestamp,
-      # )
-
       conversation_result = await db.execute(
-        select(LineConversation)
-        .options(
-          selectinload(LineConversation.item_type_links)
-          .selectinload(ConversationItemTypeLink.item_type)
-        )
-        .where(
+        select(LineConversation).where(
           LineConversation.line_group_id == group_id,
           LineConversation.company_id == company.id,
         )
@@ -282,82 +198,11 @@ async def line_webhook(
       background_tasks.add_task(
         handle_line_group_conversation_items,
         text=text,
-        conversation=conversation,
+        conversation_id=conversation.id,
         sender_line_user_id=sender_id,
         company_id=company.id,
         line_timestamp=line_timestamp,
       )
-
-
-      # TEMPORARILY DISABLING REPORT HANDLING
-      # user_link_result = await db.execute(
-      #   select(UserLineLink).where(
-      #     UserLineLink.company_id == company.id,
-      #     UserLineLink.line_user_id == sender_id,
-      #   )
-      # )
-      # user_link = user_link_result.scalar_one_or_none()
-
-      # if not user_link:
-      #   logger.warning(
-      #     "LINE group message from unlinked user | company_id=%s group_id=%s sender_id=%s",
-      #     company.id, group_id, sender_id,
-      #   )
-      #   continue
-
-      # user_result = await db.execute(
-      #   select(User).where(User.id == user_link.user_id)
-      # )
-      # user = user_result.scalar_one_or_none()
-
-      # if user:
-      #   background_tasks.add_task(
-      #     handle_line_group_message,
-      #     text=text,
-      #     user=user,
-      #     project_id=project.id,
-      #   )
-
-    # --- DM message ---
-
-    # TEMPORARILY DISABLING REPORT HANDLING
-    # else:
-    #   # U- code always takes priority — handles both initial linking and re-linking
-    #   if await link_line_user(sender_id, candidate_code, company, background_tasks, db):
-    #     continue
-
-    #   link_result = await db.execute(
-    #     select(UserLineLink).where(
-    #       UserLineLink.company_id == company.id,
-    #       UserLineLink.line_user_id == sender_id,
-    #     )
-    #   )
-    #   link = link_result.scalar_one_or_none()
-
-    #   if link:
-    #     logger.info(
-    #       "LINE DM received | company_id=%s user_id=%s sender_id=%s text=%s",
-    #       company.id, link.user_id, sender_id, text,
-    #     )
-
-    #     user_result = await db.execute(
-    #       select(User).where(User.id == link.user_id)
-    #     )
-    #     user = user_result.scalar_one_or_none()
-
-    #     if user:
-    #       background_tasks.add_task(
-    #         handle_line_message,
-    #         text=text,
-    #         user=user,
-    #         company_id=company.id,
-    #       )
-
-    #   else:
-    #     logger.warning(
-    #       "LINE DM from unrecognized sender | company_id=%s sender_id=%s text=%s",
-    #       company.id, sender_id, text,
-    #     )
 
   return {"status": "ok"}
 

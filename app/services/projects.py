@@ -10,7 +10,7 @@ from app.db.models.user import User
 from app.db.models.project import Project
 from app.db.models.project_guest_link import ProjectGuestLink
 from app.db.models.line_conversation import LineConversation
-from app.db.models.line_message import LineMessage
+from app.db.models.line_message import LineMessage, LineMessageConversationItemLink
 from app.db.models.conversation_item import ConversationItem, ConversationItemStatus
 from app.db.models.conversation_item_type import ConversationItemType, ConversationItemTypeLink
 from app.db.models.action_item import ActionItem, ActionItemStatus
@@ -161,12 +161,27 @@ async def handle_line_group_action_item(
 
 async def handle_line_group_conversation_items(
   text: str,
-  conversation: LineConversation,
+  conversation_id: UUID,
   sender_line_user_id: str,
   company_id: UUID,
   line_timestamp: datetime | None,
 ):
   async with AsyncSessionLocal() as db:
+    conversation_result = await db.execute(
+      select(LineConversation)
+      .options(
+        selectinload(LineConversation.project),
+        selectinload(LineConversation.item_type_links)
+          .selectinload(ConversationItemTypeLink.item_type),
+      )
+      .where(LineConversation.id == conversation_id)
+    )
+
+    conversation = conversation_result.scalar_one_or_none()
+
+    if not conversation:
+      return
+
     current_message = LineMessage(
       conversation_id=conversation.id,
       company_id=company_id,
@@ -179,19 +194,8 @@ async def handle_line_group_conversation_items(
     db.add(current_message)
     await db.flush()
 
-    conversation = await db.get(
-      LineConversation,
-      conversation.id,
-      options=[
-        selectinload(LineConversation.item_type_links)
-        .selectinload(ConversationItemTypeLink.item_type),
-      ],
-    )
-
-    if not conversation:
-      return
-
     if not conversation.project_id:
+      await db.commit()
       return
 
     item_types = [
@@ -200,16 +204,29 @@ async def handle_line_group_conversation_items(
     ]
 
     if not item_types:
+      await db.commit()
       return
 
     history_result = await db.execute(
       select(LineMessage)
+      .options(
+        selectinload(
+          LineMessage.conversation_item_links
+        ).selectinload(
+          LineMessageConversationItemLink.conversation_item
+        ).selectinload(
+          ConversationItem.item_type
+        )
+      )
       .where(
         LineMessage.conversation_id == conversation.id,
         LineMessage.id != current_message.id,
       )
-      .order_by(LineMessage.created_at.desc())
-      .limit(8)
+      .order_by(
+        LineMessage.line_timestamp.desc().nullslast(),
+        LineMessage.created_at.desc(),
+      )
+      .limit(10)
     )
 
     recent_messages = list(reversed(history_result.scalars().all()))
@@ -240,11 +257,9 @@ async def handle_line_group_conversation_items(
     limited_items = []
 
     for items in grouped_items.values():
-      items.sort(
-        key=lambda i: i.updated_at,
-        reverse=True,
-      )
       limited_items.extend(items[:5])
+
+    limited_items = limited_items[:30]
 
     extracted_items = await extract_conversation_items(
       message_text=text,
@@ -272,6 +287,20 @@ async def handle_line_group_conversation_items(
         )
 
         db.add(item)
+        await db.flush()
+
+        db.add(
+          LineMessageConversationItemLink(
+            line_message_id=current_message.id,
+            conversation_item_id=item.id,
+          )
+        )
+
+        logger.info(
+          "Conversation item created | type=%s name=%s",
+          item.conversation_item_type_id,
+          item.name,
+        )
 
       elif action == "update":
         item_result = await db.execute(
@@ -289,19 +318,29 @@ async def handle_line_group_conversation_items(
 
           if "description" in extracted:
             item.description = extracted["description"]
-
-          if "status" in extracted:
-            item.status = ConversationItemStatus(
-              extracted["status"]
+          
+          db.add(
+            LineMessageConversationItemLink(
+              line_message_id=current_message.id,
+              conversation_item_id=item.id,
             )
+          )
+
+          logger.info(
+            "Conversation item updated | id=%s",
+            item.id,
+          )
 
     old_messages_result = await db.execute(
       select(LineMessage.id)
       .where(
         LineMessage.company_id == company_id,
-        LineMessage.line_group_id == group_id,
+        LineMessage.line_group_id == conversation.line_group_id,
       )
-      .order_by(LineMessage.created_at.desc())
+      .order_by(
+        LineMessage.line_timestamp.desc().nullslast(),
+        LineMessage.created_at.desc(),
+      )
       .offset(20)
     )
     old_ids = old_messages_result.scalars().all()

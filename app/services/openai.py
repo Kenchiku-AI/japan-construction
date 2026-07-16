@@ -483,10 +483,25 @@ async def extract_conversation_items(
   item_types: list[ConversationItemType],
   existing_items: list[ConversationItem],
 ):
-  history_block = "\n".join(
-    f'- "{m.text}"'
-    for m in recent_messages
-  ) or "なし"
+  history_lines = []
+
+  for message in recent_messages:
+    line = f'- "{message.text}"'
+
+    if message.conversation_item_links:
+      extracted = "\n".join(
+        (
+          f'    - {link.conversation_item.item_type.name}: '
+          f'{link.conversation_item.name}'
+        )
+        for link in message.conversation_item_links
+      )
+
+      line += f"\n  ※抽出済み:\n{extracted}"
+
+    history_lines.append(line)
+
+  history_block = "\n".join(history_lines) or "なし"
 
   item_types_block = "\n".join(
     f"""
@@ -501,7 +516,6 @@ async def extract_conversation_items(
     f"""
 - id: {item.id}
   type_id: {item.conversation_item_type_id}
-  status: {item.status}
   name: {item.name}
   description: {item.description or ""}
 """.strip()
@@ -551,6 +565,29 @@ description は、その情報として何を保存したいかを説明して�
 
 ## ルール
 
+## 重複防止
+
+最近のトークで
+
+※抽出済み:
+
+と表示されているメッセージは、
+そのメッセージからすでに以下の情報が抽出されています。
+
+同じ情報を重複して create しないでください。
+
+既存の情報に対する追加情報や変更であれば update してください。
+
+新しい対象や別の内容であれば、新しい create を行ってください。
+
+- 新しい対象が追加された
+- 新しい情報が判明した
+- 状況が変わった
+- 進捗があった
+- 内容が修正された
+
+場合は、必要に応じて update または新しい create を行ってください。
+
 ### create
 
 以下の場合は create してください。
@@ -573,18 +610,15 @@ description は、その情報として何を保存したいかを説明して�
 - 完了した
 - 進捗があった
 
+同じ情報であれば、新しく create せず update を行ってください。
+
+すでに「現在保存されている情報」に存在する対象については、
+新しく create するより update を優先してください。
+
 更新する場合は description 全体を返してください。
 
 追加部分だけではなく、
 保存後の description 全体を返してください。
-
-status は
-
-- new
-- in_progress
-- closed
-
-のいずれかを返してください。
 
 ### none
 
@@ -619,9 +653,8 @@ status は
   {{
     "action": "update",
     "conversation_item_id": "<item id>",
-    "name": "<更新後の名前>",
-    "description": "<更新後全文>",
-    "status": "new|in_progress|closed"
+    "name": "<name（更新後）>",
+    "description": "<更新後全文>"
   }}
 ]
 

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import Column, String, DateTime, ForeignKey, Enum
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Mapped, relationship
 
 from app.db.base import Base
 
@@ -37,6 +37,11 @@ class ConversationItem(Base):
     ForeignKey("conversation_item_types.id", ondelete="CASCADE"),
     nullable=False,
     index=True,
+  )
+
+  line_message_links: Mapped[list["LineMessageConversationItemLink"]] = relationship(
+    back_populates="conversation_item",
+    cascade="all, delete-orphan",
   )
 
   name = Column(String, nullable=False)
