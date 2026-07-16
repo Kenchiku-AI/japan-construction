@@ -7,7 +7,6 @@ from sqlalchemy import select, desc, case, or_, func, and_
 from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import get_current_user, require_company_manager, require_project_access
-from app.core.security import generate_unique_project_line_link_code
 from app.db.session import get_db
 from app.db.models import (
   Project, 
@@ -192,7 +191,6 @@ async def build_project_response(
     name=project.name,
     description=project.description,
     status=project.status,
-    line_link_code=project.line_link_code,
     line_group_id=project.line_group_id,
     company_id=project.company_id,
     company_name=getattr(project, "company_name", None),
@@ -348,12 +346,9 @@ async def create_project(
 
   company = await db.get(Company, payload.company_id)
 
-  line_link_code = await generate_unique_project_line_link_code(db)
-
   project = Project(
     **payload.model_dump(),
     status=ProjectStatus.active,
-    line_link_code=line_link_code,
   )
 
   db.add(project)
@@ -365,7 +360,6 @@ async def create_project(
     name=project.name,
     description=project.description,
     status=project.status,
-    line_link_code=project.line_link_code,
     line_group_id=project.line_group_id,
     company_id=project.company_id,
     reports=[],

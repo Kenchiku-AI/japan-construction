@@ -24,8 +24,6 @@ class ProjectRead(ProjectBase):
   id: UUID
   company_id: UUID
   status: str
-  line_link_code: str
-  line_group_id: str | None = None
 
   model_config = {
     "from_attributes": True
@@ -47,7 +45,6 @@ class ProjectReportRead(BaseModel):
 class ProjectConversationRead(BaseModel):
   id: UUID
   name: str
-  line_link_code: str
   line_group_id: str | None = None
   project_id: UUID | None = None
   item_types: List[ConversationItemTypeRead] = []

@@ -15,15 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.session import get_db
 from app.db.models.company import Company
-from app.db.models.user import User, UserLineLink
+from app.db.models.user import User
 from app.db.models.project import Project
 from app.db.models.line_conversation import LineConversation
 from app.db.models.conversation_item_type import ConversationItemTypeLink
 from app.services.billing import get_company_by_stripe_customer_id
-from app.services.email import send_line_link_confirmation_email, send_line_group_linked_email
+from app.services.email import send_line_group_linked_email
 from app.services.reports import handle_line_group_message
 from app.services.projects import handle_line_group_conversation_items
-from app.services.users import link_line_user
 
 logger = logging.getLogger(__name__)
 
@@ -141,8 +140,8 @@ async def line_webhook(
     # --- Group message ---
     if source_type == "group" and group_id:
 
-      # C- code: link or re-link conversation to this group
-      if candidate_code.startswith("C-"):
+      # K- code: link or re-link conversation to this group
+      if candidate_code.startswith("K-"):
         conversation_result = await db.execute(
           select(LineConversation).where(
             LineConversation.line_link_code == candidate_code,
