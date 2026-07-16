@@ -361,7 +361,6 @@ async def get_company(
     .options(
       selectinload(Company.users),
       selectinload(Company.projects),
-      selectinload(Company.conversation_item_types),
     )
     .where(Company.id == company_id)
   )
@@ -392,7 +391,6 @@ async def get_company(
     updated_at=company.updated_at,
     users=company.users,
     projects=projects,
-    conversation_item_types=company.conversation_item_types,
   )
 
 @router.patch(

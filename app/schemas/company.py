@@ -77,7 +77,6 @@ class CompanyWithLists(CompanyRead):
   free_trial_days_left: int | None = None
   projects: List[CompanyProjectRead]
   users: List[CompanyUserRead]
-  conversation_item_types: List[ConversationItemTypeRead] = []
 
   model_config = {
     "from_attributes": True
