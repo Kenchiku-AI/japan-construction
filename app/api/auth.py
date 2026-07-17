@@ -382,7 +382,11 @@ async def reset_password(
 
   user.hashed_password = hash_password(payload.new_password)
 
-  await db.delete(db_token)
+  await db.execute(
+    delete(PasswordResetToken).where(
+      PasswordResetToken.user_id == user.id
+    )
+  )
 
   await db.execute(
     delete(RefreshToken).where(

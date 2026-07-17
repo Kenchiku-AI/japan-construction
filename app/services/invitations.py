@@ -116,14 +116,37 @@ async def create_project_guest_invitation(
       project_id=payload.project_id,
     )
     db.add(link)
+
+    has_password = bool(existing_user.hashed_password)
+
+    if not has_password:
+      token = secrets.token_urlsafe(32)
+
+      reset_entry = PasswordResetToken(
+          id=str(uuid4()),
+          user_id=existing_user.id,
+          token_hash=hash_token(token),
+          expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+      )
+      db.add(reset_entry)
+
     await db.commit()
 
-    background_tasks.add_task(
-      send_project_guest_access_email,
-      email=existing_user.email,
-      project_name=project.name,
-      company_name=company.name,
-    )
+    if has_password:
+      background_tasks.add_task(
+        send_project_guest_access_email,
+        email=existing_user.email,
+        project_name=project.name,
+        company_name=company.name,
+      )
+    else:
+      background_tasks.add_task(
+        send_guest_invitation_email,
+        email=existing_user.email,
+        project_name=project.name,
+        company_name=company.name,
+        set_password_token=token,
+      )
 
     return link
 
