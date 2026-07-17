@@ -105,7 +105,7 @@ def send_invitation_email(email: str, company_name: str, invite_token: str) -> N
     raise
 
 def send_password_reset_email(email: str, reset_token: str) -> None:
-  reset_link = f"{settings.WEB_CLIENT_URL}/reset-password?token={reset_token}"
+  reset_link = f"{settings.WEB_CLIENT_URL}/new-password?token={reset_token}"
 
   subject = "パスワード再設定のご案内"
 
@@ -190,7 +190,7 @@ def send_project_guest_access_email(email: str, project_name: str, company_name:
     raise
 
 def send_guest_invitation_email(email: str, project_name: str, company_name: str, set_password_token: str) -> None:
-  set_password_link = f"{settings.WEB_CLIENT_URL}/reset-password?token={set_password_token}&newUser=true"
+  set_password_link = f"{settings.WEB_CLIENT_URL}/new-password?token={set_password_token}&newUser=true"
 
   subject = f"プロジェクト「{project_name}」への招待"
 
