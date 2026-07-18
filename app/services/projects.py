@@ -44,7 +44,7 @@ async def get_project_members(
 
   return members
 
-async def handle_line_group_conversation_items(
+async def handle_line_conversation_items(
   text: str,
   conversation_id: UUID,
   sender_line_user_id: str,
