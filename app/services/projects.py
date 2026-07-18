@@ -44,7 +44,7 @@ async def get_project_members(
 
   return members
 
-async def handle_line_group_conversation_items(
+async def handle_line_conversation_items(
   text: str,
   conversation_id: UUID,
   sender_line_user_id: str,
@@ -70,7 +70,7 @@ async def handle_line_group_conversation_items(
     current_message = LineMessage(
       conversation_id=conversation.id,
       company_id=company_id,
-      line_group_id=conversation.line_group_id,
+      line_chat_id=conversation.line_chat_id,
       text=text,
       line_timestamp=line_timestamp,
       sender_line_user_id=sender_line_user_id,
@@ -221,7 +221,7 @@ async def handle_line_group_conversation_items(
       select(LineMessage.id)
       .where(
         LineMessage.company_id == company_id,
-        LineMessage.line_group_id == conversation.line_group_id,
+        LineMessage.line_chat_id == conversation.line_chat_id,
       )
       .order_by(
         LineMessage.line_timestamp.desc().nullslast(),

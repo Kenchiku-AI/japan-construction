@@ -46,7 +46,7 @@ class ProjectConversationRead(BaseModel):
   id: UUID
   name: str
   line_link_code: str
-  line_group_id: str | None = None
+  line_chat_id: str | None = None
   project_id: UUID | None = None
   item_types: List[ConversationItemTypeRead] = []
   last_message_text: str | None = None

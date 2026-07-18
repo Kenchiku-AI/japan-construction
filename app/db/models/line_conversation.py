@@ -13,7 +13,7 @@ class LineConversation(Base):
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
   name = Column(String, nullable=False)
   line_link_code = Column(String, nullable=False, unique=True, index=True)
-  line_group_id = Column(String, nullable=True, unique=True, index=True)
+  line_chat_id = Column(String, nullable=True, unique=True, index=True)
 
   project_id = Column(
     UUID(as_uuid=True),
