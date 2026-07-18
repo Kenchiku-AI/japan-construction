@@ -110,16 +110,29 @@ async def line_webhook(
   except Exception:
     logger.exception("Request body was not valid JSON")
 
-  result = await db.execute(select(Company).where(Company.id == company_id))
+  result = await db.execute(
+    select(Company).where(Company.id == company_id)
+  )
   company = result.scalar_one_or_none()
 
   if not company or not company.line_channel_secret:
     raise HTTPException(status_code=404)
 
-  if not verify_line_signature(body, x_line_signature, company.line_channel_secret):
-    raise HTTPException(status_code=403, detail="Invalid signature")
+  if not verify_line_signature(
+    body,
+    x_line_signature,
+    company.line_channel_secret,
+  ):
+    raise HTTPException(
+      status_code=403,
+      detail="Invalid signature",
+    )
 
-  can_use_features, reason = await can_use_billed_features(company.id, db)
+  can_use_features, reason = await can_use_billed_features(
+    company.id,
+    db,
+  )
+
   if not can_use_features:
     logger.info(
       "Ignoring LINE webhook because billed features are disabled | company_id=%s reason=%s",
@@ -131,86 +144,116 @@ async def line_webhook(
   payload = await request.json()
 
   for event in payload.get("events", []):
+
     if event.get("type") != "message":
       continue
 
     message = event.get("message", {})
+
     if message.get("type") != "text":
       continue
 
-    sender_id = event.get("source", {}).get("userId")
-    source_type = event.get("source", {}).get("type")
-    group_id = event.get("source", {}).get("groupId")
+    source = event.get("source", {})
+
+    source_type = source.get("type")
+    sender_id = source.get("userId")
+
+    if source_type == "group":
+      line_chat_id = source.get("groupId")
+    elif source_type == "user":
+      line_chat_id = source.get("userId")
+    else:
+      continue
+
+    if not line_chat_id:
+      continue
+
     text = message.get("text", "").strip()
-    line_timestamp_ms = event.get("timestamp")
-    line_timestamp = datetime.fromtimestamp(line_timestamp_ms / 1000, tz=timezone.utc) if line_timestamp_ms else None
     candidate_code = text.upper()
 
-    # --- Group message ---
-    if source_type == "group" and group_id:
+    line_timestamp_ms = event.get("timestamp")
 
-      # K- code: link or re-link conversation to this group
-      if candidate_code.startswith("K-"):
-        conversation_result = await db.execute(
-          select(LineConversation).where(
-            LineConversation.line_link_code == candidate_code,
-            LineConversation.company_id == company.id,
-          )
-        )
-        conversation = conversation_result.scalar_one_or_none()
+    line_timestamp = (
+      datetime.fromtimestamp(
+        line_timestamp_ms / 1000,
+        tz=timezone.utc,
+      )
+      if line_timestamp_ms
+      else None
+    )
 
-        if conversation:
-          # Remove this group from any existing conversation
-          await db.execute(
-            sa.update(LineConversation)
-            .where(LineConversation.line_group_id == group_id)
-            .values(line_group_id=None)
-          )
-
-          conversation.line_group_id = group_id
-          await db.commit()
-
-          logger.info(
-            "LINE group linked to conversation | company_id=%s conversation_id=%s group_id=%s",
-            company.id,
-            conversation.id,
-            group_id,
-          )
-
-        else:
-          logger.warning(
-            "LINE group sent unrecognized conversation code | company_id=%s group_id=%s code=%s",
-            company.id,
-            group_id,
-            candidate_code,
-          )
-
-        continue
+    if candidate_code.startswith("K-"):
 
       conversation_result = await db.execute(
         select(LineConversation).where(
-          LineConversation.line_group_id == group_id,
+          LineConversation.line_link_code == candidate_code,
           LineConversation.company_id == company.id,
         )
       )
+
       conversation = conversation_result.scalar_one_or_none()
 
-      if not conversation:
-        logger.warning(
-          "LINE message from unlinked group | company_id=%s group_id=%s",
-          company.id,
-          group_id,
-        )
-        continue
+      if conversation:
 
-      background_tasks.add_task(
-        handle_line_group_conversation_items,
-        text=text,
-        conversation_id=conversation.id,
-        sender_line_user_id=sender_id,
-        company_id=company.id,
-        line_timestamp=line_timestamp,
+        # Remove this LINE chat from any previous conversation
+        await db.execute(
+          sa.update(LineConversation)
+          .where(
+            LineConversation.line_chat_id == line_chat_id
+          )
+          .values(
+            line_chat_id=None
+          )
+        )
+
+        conversation.line_chat_id = line_chat_id
+
+        await db.commit()
+
+        logger.info(
+          "LINE chat linked to conversation | company_id=%s conversation_id=%s line_chat_id=%s",
+          company.id,
+          conversation.id,
+          line_chat_id,
+        )
+
+      else:
+        logger.warning(
+          "LINE chat sent unrecognized conversation code | company_id=%s line_chat_id=%s code=%s",
+          company.id,
+          line_chat_id,
+          candidate_code,
+        )
+
+      continue
+
+    conversation_result = await db.execute(
+      select(LineConversation).where(
+        LineConversation.line_chat_id == line_chat_id,
+        LineConversation.company_id == company.id,
       )
+    )
+
+    conversation = conversation_result.scalar_one_or_none()
+
+    if not conversation:
+      logger.warning(
+        "LINE message from unlinked chat | company_id=%s line_chat_id=%s",
+        company.id,
+        line_chat_id,
+      )
+      continue
+
+
+    background_tasks.add_task(
+      handle_line_conversation_items,
+      text=text,
+      conversation_id=conversation.id,
+      sender_line_user_id=sender_id,
+      company_id=company.id,
+      line_timestamp=line_timestamp,
+    )
+
 
   return {"status": "ok"}
 
