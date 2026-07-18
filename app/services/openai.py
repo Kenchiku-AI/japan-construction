@@ -212,8 +212,17 @@ async def extract_conversation_items(
 ):
   history_lines = []
 
-  for message in recent_messages:
-    line = f'- "{message.text}"'
+  for message in sorted(
+    recent_messages,
+    key=lambda m: m.line_timestamp or m.created_at,
+  ):
+    timestamp = message.line_timestamp or message.created_at
+
+    line = (
+      f'[{timestamp.strftime("%Y-%m-%d %H:%M")}] '
+      f'{message.line_user_id or message.sender_line_user_id}\n'
+      f'{message.text}'
+    )
 
     if message.conversation_item_links:
       extracted = "\n".join(
@@ -224,11 +233,11 @@ async def extract_conversation_items(
         for link in message.conversation_item_links
       )
 
-      line += f"\n  ※抽出済み:\n{extracted}"
+      line += f"\n\n※抽出済み:\n{extracted}"
 
     history_lines.append(line)
 
-  history_block = "\n".join(history_lines) or "なし"
+  history_block = "\n\n".join(history_lines) or "なし"
 
   item_types_block = "\n".join(
     f"""
@@ -355,6 +364,11 @@ description は、その情報として何を保存したいかを説明して�
 
 ## 最近のトーク
 
+各メッセージには発言日時と発言者が表示されています。
+
+発言の順序や発言者も考慮しながら、
+新規作成・更新・何もしないを判断してください。
+
 {history_block}
 
 ## 最新メッセージ
@@ -407,6 +421,171 @@ JSONのみ返してください。
     return safe_json_loads(response.output_text)
   except Exception:
     return []
+
+async def extract_report_fields_from_line_conversations(
+  conversation_segments: list[tuple[LineConversation, list[LineMessage]]],
+  fields: list[ReportField],
+  output_language: str,
+) -> dict:
+  field_block = "\n".join(
+    f"""
+- id: {field.id}
+  name: {field.name}
+  description: {field.description}
+""".strip()
+    for field in fields
+  ) or "なし"
+
+  conversation_blocks = []
+
+  for conversation, messages in conversation_segments:
+    sorted_messages = sorted(
+      messages,
+      key=lambda m: m.line_timestamp or m.created_at,
+    )
+
+    history_lines = []
+
+    for message in sorted_messages:
+      timestamp = message.line_timestamp or message.created_at
+
+      history_lines.append(
+        f"""[{timestamp.strftime("%Y-%m-%d %H:%M")}] {message.line_user_id or message.sender_line_user_id}
+
+{message.text}"""
+      )
+
+    history = "\n\n".join(history_lines) or "なし"
+
+    if sorted_messages:
+      start = sorted_messages[0].line_timestamp or sorted_messages[0].created_at
+      end = sorted_messages[-1].line_timestamp or sorted_messages[-1].created_at
+
+      if start.date() == end.date():
+        date_range = start.strftime("%Y-%m-%d")
+      else:
+        date_range = (
+          f"{start.strftime('%Y-%m-%d')} ～ "
+          f"{end.strftime('%Y-%m-%d')}"
+        )
+    else:
+      date_range = "不明"
+
+    conversation_blocks.append(
+      f"""
+### LINEグループ
+
+{conversation.name}
+
+### プロジェクト
+
+{conversation.project.name if conversation.project else "なし"}
+
+### 対象期間
+
+{date_range}
+
+### 会話
+
+{history}
+""".strip()
+    )
+
+  conversations_block = "\n\n---\n\n".join(conversation_blocks)
+
+  prompt = f"""
+あなたは建設会社向けAIアシスタントです。
+
+複数のLINEグループの会話履歴から、
+工事報告書の各項目を作成してください。
+
+各会話は指定された期間の会話のみを含んでいます。
+会話全体ではなく、対象期間内に確認できる情報だけを利用してください。
+
+各会話には異なる工事やプロジェクトが含まれる場合があります。
+
+会話ごとの文脈を保ったまま内容を理解し、
+Report Field に該当する情報だけを抽出してください。
+
+発言者や時系列も考慮しながら内容を理解してください。
+
+同じ内容が複数の会話で言及されている場合は、
+重複しないよう整理してください。
+
+複数の会話から得られた情報を統合して、
+より完全な報告内容を作成して構いません。
+
+ただし、会話間で推測による補完や、
+無関係な情報の結合は禁止です。
+
+---
+
+## Report Fields
+
+{field_block}
+
+description は、その項目に何を記録したいかを説明しています。
+
+必ず description を参考にしてください。
+
+---
+
+## LINE会話
+
+{conversations_block}
+
+---
+
+## 出力ルール
+
+必ずJSONオブジェクトのみ返してください。
+
+形式
+
+{{
+  "<field_id>": "<整形後の内容>"
+}}
+
+厳守事項
+
+- 有効なJSONのみ返す
+- キーは必ず field id
+- 値はそのフィールドに保存する文章
+- field名は返さない
+- descriptionは返さない
+- 会話に存在しない情報は返さない
+- 推測しない
+- 該当する項目がない場合は {{}}
+
+文章整形ルール
+
+- 工事報告書に適した自然で正式な文章にする
+- 元の意味は変えない
+- 不要な主語や代名詞は省略する
+- 客観的・記録的な表現を使用する
+- 新しい情報は追加しない
+- 推測しない
+- 同じフィールドに関する情報が複数のメッセージや複数の会話に分かれている場合は、内容を統合して最終的な報告内容を作成する
+- 重複する内容は一度だけ記載する
+
+出力言語: {output_language}
+""".strip()
+
+  response = await client.responses.create(
+    model="gpt-4.1-mini",
+    input=[
+      {
+        "role": "user",
+        "content": prompt,
+      }
+    ],
+    temperature=0,
+  )
+
+  try:
+    return safe_json_loads(response.output_text)
+  except Exception:
+    return {}
 
 def safe_json_loads(text: str):
   match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
