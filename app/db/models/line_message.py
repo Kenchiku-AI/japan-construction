@@ -14,7 +14,7 @@ class LineMessage(Base):
   company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
   
   line_user_id = Column(String, nullable=True, index=True)
-  line_group_id = Column(String, nullable=True, index=True)
+  line_chat_id = Column(String, nullable=True, index=True)
   line_timestamp = Column(DateTime(timezone=True), nullable=True)
   
   sender_line_user_id = Column(String, nullable=False)
