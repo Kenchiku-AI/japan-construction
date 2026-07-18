@@ -105,3 +105,12 @@ class ReportImageUpdate(BaseModel):
 
 class ReportImageTagCreate(BaseModel):
   tag_id: UUID
+
+class ReportLineConversationRange(BaseModel):
+  conversation_id: UUID
+  start_time: datetime
+  end_time: datetime
+
+class ReportLineConversationRequest(BaseModel):
+  conversations: list[ReportLineConversationRange]
+  output_language: str = "ja"

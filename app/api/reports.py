@@ -24,6 +24,8 @@ from app.db.models import (
   ReportImageTagLink,
   CompanyReportTemplate,
   ProjectGuestLink,
+  LineConversation,
+  LineMessage,
 )
 from app.schemas.report import (
   ReportCreate, 
@@ -39,7 +41,8 @@ from app.schemas.report import (
   ShareReportTemplateRequest,
   ReportImageCreate,
   ReportImageUpdate,
-  ReportImageTagCreate
+  ReportImageTagCreate,
+  ReportLineConversationRequest,
 )
 from app.core.dependencies import (
   get_current_user,
@@ -47,7 +50,10 @@ from app.core.dependencies import (
   require_project_access,
 )
 from app.services.reports import get_company_id
-from app.services.openai import transcribe_and_extract_json
+from app.services.openai import (
+  transcribe_and_extract_json,
+  extract_report_fields_from_line_conversations,
+)
 from app.services.billing import can_use_billed_features
 from app.services.s3 import s3_client, BUCKET_NAME
 
@@ -1390,6 +1396,125 @@ async def report_speech(
     raise HTTPException(
       status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=f"Error extracting JSON: {str(e)}"
+    )
+
+@router.post(
+  "/{report_id}/line-conversations",
+  response_model=ReportSpeechResponse,
+)
+async def report_line_conversations(
+  report_id: UUID,
+  payload: ReportLineConversationRequest,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  stmt = (
+    select(Report)
+    .where(Report.id == report_id)
+    .options(
+      selectinload(Report.fields),
+    )
+  )
+
+  result = await db.execute(stmt)
+  report: Report | None = result.scalar_one_or_none()
+
+  if report is None:
+    raise HTTPException(
+      status_code=404,
+      detail="Report not found",
+    )
+
+  company_id = await get_company_id(
+    parent_type=report.parent_type,
+    parent_id=report.parent_id,
+    db=db,
+  )
+
+  allowed, reason = await can_use_billed_features(company_id, db)
+  if not allowed and current_user.role != "admin":
+    raise HTTPException(
+      status_code=402,
+      detail=reason,
+    )
+
+  require_report_open(report)
+
+  if current_user.role != "admin":
+    if report.parent_type == ReportParentType.project:
+      await require_project_access(
+        current_user,
+        report.parent_id,
+        company_id,
+        db,
+      )
+    else:
+      require_company_manager(
+        current_user,
+        company_id,
+      )
+
+  conversation_segments = []
+
+  for conversation_range in payload.conversations:
+    conversation_result = await db.execute(
+      select(LineConversation)
+      .options(
+        selectinload(LineConversation.project),
+      )
+      .where(
+        LineConversation.id == conversation_range.conversation_id,
+        LineConversation.company_id == company_id,
+      )
+    )
+
+    conversation = conversation_result.scalar_one_or_none()
+
+    if not conversation:
+      raise HTTPException(
+        status_code=404,
+        detail=f"Conversation {conversation_range.conversation_id} not found",
+      )
+
+    messages_result = await db.execute(
+      select(LineMessage)
+      .where(
+        LineMessage.conversation_id == conversation.id,
+        func.coalesce(
+          LineMessage.line_timestamp,
+          LineMessage.created_at,
+        ) >= conversation_range.start_time,
+        func.coalesce(
+          LineMessage.line_timestamp,
+          LineMessage.created_at,
+        ) <= conversation_range.end_time,
+      )
+    )
+
+    messages = list(messages_result.scalars().all())
+
+    conversation_segments.append(
+      (
+        conversation,
+        messages,
+      )
+    )
+
+  try:
+    changed_fields = await extract_report_fields_from_line_conversations(
+      conversation_segments=conversation_segments,
+      fields=report.fields,
+      output_language=payload.output_language,
+    )
+
+    return ReportSpeechResponse(
+      field_values=changed_fields,
+    )
+
+  except Exception as e:
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=f"Error extracting JSON: {str(e)}",
     )
 
 @router.delete(
