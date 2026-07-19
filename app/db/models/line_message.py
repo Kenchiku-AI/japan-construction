@@ -1,5 +1,4 @@
 from uuid import uuid4
-import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, String, DateTime, ForeignKey, UniqueConstraint, Enum
@@ -7,11 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.base import Base
-
-class LineChatType(str, enum.Enum):
-  user = "user"
-  group = "group"
-  room = "room"
+from app.db.models.line_conversation import LineChatType
 
 class LineMessage(Base):
   __tablename__ = "line_messages"
