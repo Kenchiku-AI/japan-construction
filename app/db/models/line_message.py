@@ -21,7 +21,7 @@ class LineMessage(Base):
   
   line_user_id = Column(String, nullable=True, index=True)
   line_chat_id = Column(String, nullable=True, index=True)
-  line_chat_type = Column(Enum(LineChatType), nullable=True)
+  # line_chat_type = Column(Enum(LineChatType), nullable=True)
   line_timestamp = Column(DateTime(timezone=True), nullable=True)
   
   sender_line_user_id = Column(String, nullable=False)
