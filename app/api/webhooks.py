@@ -201,27 +201,27 @@ async def line_webhook(
         await db.execute(
           sa.update(LineConversation)
           .where(
-            # LineConversation.line_chat_type == source_type,
+            LineConversation.line_chat_type == source_type,
             LineConversation.line_chat_id == line_chat_id,
           )
           .values(
-            # line_chat_type=None,
+            line_chat_type=None,
             line_chat_id=None,
           )
         )
 
         conversation.line_chat_id = line_chat_id
-        # conversation.line_chat_type = source_type
+        conversation.line_chat_type = source_type
 
         await db.commit()
 
-        # logger.info(
-        #   "LINE chat linked to conversation | company_id=%s conversation_id=%s line_chat_type=%s line_chat_id=%s",
-        #   company.id,
-        #   conversation.id,
-        #   source_type,
-        #   line_chat_id,
-        # )
+        logger.info(
+          "LINE chat linked to conversation | company_id=%s conversation_id=%s line_chat_type=%s line_chat_id=%s",
+          company.id,
+          conversation.id,
+          source_type,
+          line_chat_id,
+        )
 
       else:
         logger.warning(
@@ -235,7 +235,7 @@ async def line_webhook(
 
     conversation_result = await db.execute(
       select(LineConversation).where(
-        # LineConversation.line_chat_type == source_type,
+        LineConversation.line_chat_type == source_type,
         LineConversation.line_chat_id == line_chat_id,
         LineConversation.company_id == company.id,
       )
