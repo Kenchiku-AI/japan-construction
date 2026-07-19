@@ -160,6 +160,8 @@ async def line_webhook(
 
     if source_type == "group":
       line_chat_id = source.get("groupId")
+    elif source_type == "room":
+      line_chat_id = source.get("roomId")
     elif source_type == "user":
       line_chat_id = source.get("userId")
     else:
@@ -199,21 +201,25 @@ async def line_webhook(
         await db.execute(
           sa.update(LineConversation)
           .where(
-            LineConversation.line_chat_id == line_chat_id
+            LineConversation.line_chat_type == source_type,
+            LineConversation.line_chat_id == line_chat_id,
           )
           .values(
-            line_chat_id=None
+            line_chat_type=None,
+            line_chat_id=None,
           )
         )
 
         conversation.line_chat_id = line_chat_id
+        conversation.line_chat_type = source_type
 
         await db.commit()
 
         logger.info(
-          "LINE chat linked to conversation | company_id=%s conversation_id=%s line_chat_id=%s",
+          "LINE chat linked to conversation | company_id=%s conversation_id=%s line_chat_type=%s line_chat_id=%s",
           company.id,
           conversation.id,
+          source_type,
           line_chat_id,
         )
 
@@ -229,6 +235,7 @@ async def line_webhook(
 
     conversation_result = await db.execute(
       select(LineConversation).where(
+        LineConversation.line_chat_type == source_type,
         LineConversation.line_chat_id == line_chat_id,
         LineConversation.company_id == company.id,
       )
