@@ -112,7 +112,7 @@ async def handle_line_conversation_items(
         LineMessage.line_timestamp.desc().nullslast(),
         LineMessage.created_at.desc(),
       )
-      .limit(10)
+      .limit(20)
     )
 
     recent_messages = list(reversed(history_result.scalars().all()))
@@ -216,24 +216,5 @@ async def handle_line_conversation_items(
             "Conversation item updated | id=%s",
             item.id,
           )
-
-    old_messages_result = await db.execute(
-      select(LineMessage.id)
-      .where(
-        LineMessage.company_id == company_id,
-        LineMessage.line_chat_id == conversation.line_chat_id,
-      )
-      .order_by(
-        LineMessage.line_timestamp.desc().nullslast(),
-        LineMessage.created_at.desc(),
-      )
-      .offset(20)
-    )
-    old_ids = old_messages_result.scalars().all()
-    
-    if old_ids:
-      await db.execute(
-        delete(LineMessage).where(LineMessage.id.in_(old_ids))
-      )
 
     await db.commit()
