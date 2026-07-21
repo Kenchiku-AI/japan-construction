@@ -437,6 +437,12 @@ async def extract_report_fields_from_line_conversations(
   fields: list[ReportField],
   output_language: str,
 ) -> dict:
+  logger.info(
+    "Preparing extraction: %d conversations, %d report fields",
+    len(conversation_segments),
+    len(fields),
+  )
+
   field_block = "\n".join(
     f"""
 - id: {field.id}
@@ -614,6 +620,11 @@ description:
 出力言語: {output_language}
 """.strip()
 
+  logger.info(
+    "===== OpenAI Prompt =====\n%s\n===== End Prompt =====",
+    prompt,
+  )
+
   response = await client.responses.create(
     model="gpt-4.1-mini",
     input=[
@@ -625,9 +636,26 @@ description:
     temperature=0,
   )
 
+  logger.info(
+    "===== OpenAI Raw Response =====\n%s\n===== End Response =====",
+    response.output_text,
+  )
+
   try:
-    return safe_json_loads(response.output_text)
+    parsed = safe_json_loads(response.output_text)
+
+    logger.info(
+      "===== Parsed JSON =====\n%s\n===== End Parsed JSON =====",
+      parsed,
+    )
+
+    return parsed
+
   except Exception:
+    logger.exception(
+      "Failed to parse OpenAI response:\n%s",
+      response.output_text,
+    )
     return {}
 
 def safe_json_loads(text: str):
