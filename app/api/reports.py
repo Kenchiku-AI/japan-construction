@@ -1489,9 +1489,14 @@ async def report_line_conversations(
           LineMessage.created_at,
         ) <= conversation_range.end_time,
       )
+      .order_by(
+        LineMessage.line_timestamp.desc().nullslast(),
+        LineMessage.created_at.desc(),
+      )
+      .limit(500)
     )
 
-    messages = list(messages_result.scalars().all())
+    messages = list(reversed(messages_result.scalars().all()))
 
     conversation_segments.append(
       (
