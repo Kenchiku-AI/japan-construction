@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 from typing import Optional
@@ -56,6 +57,8 @@ from app.services.openai import (
 )
 from app.services.billing import can_use_billed_features
 from app.services.s3 import s3_client, BUCKET_NAME
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
   prefix="/reports",
@@ -1497,6 +1500,21 @@ async def report_line_conversations(
     )
 
     messages = list(reversed(messages_result.scalars().all()))
+
+    logger.info(
+      "Retrieved %d messages from conversation '%s' (%s)",
+      len(messages),
+      conversation.name,
+      conversation.id,
+    )
+
+    for message in messages:
+      logger.info(
+        "[%s] %s: %s",
+        message.line_timestamp or message.created_at,
+        message.line_user_id or message.sender_line_user_id,
+        message.text,
+      )
 
     conversation_segments.append(
       (
