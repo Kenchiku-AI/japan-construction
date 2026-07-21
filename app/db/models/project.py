@@ -51,6 +51,7 @@ class Project(Base):
   conversations = relationship(
     "LineConversation",
     back_populates="project",
+    order_by="desc(LineConversation.updated_at)",
   )
 
   conversation_items = relationship(
