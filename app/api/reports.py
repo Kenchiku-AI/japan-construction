@@ -1411,6 +1411,8 @@ async def report_line_conversations(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
+  logger.warning("Starting line conversations endpoint...")
+
   stmt = (
     select(Report)
     .where(Report.id == report_id)
@@ -1459,6 +1461,8 @@ async def report_line_conversations(
 
   conversation_segments = []
 
+  logger.warning("Starting conversation iteration...")
+
   for conversation_range in payload.conversations:
     conversation_result = await db.execute(
       select(LineConversation)
@@ -1478,6 +1482,8 @@ async def report_line_conversations(
         status_code=404,
         detail=f"Conversation {conversation_range.conversation_id} not found",
       )
+
+    logger.warning("About to query messages")
 
     messages_result = await db.execute(
       select(LineMessage)
