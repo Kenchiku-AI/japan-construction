@@ -70,8 +70,8 @@ async def process_report_image(
     try:
       ai_result = await get_image_tags_and_description(
         image_url=image_url,
-        tags_list=tags_list,
-        image_descriptions_enabled=company.image_descriptions_enabled,
+        tags=tags_list,
+        include_description=company.image_descriptions_enabled,
       )
       break
 
