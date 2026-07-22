@@ -169,6 +169,10 @@ class CompanyReportTemplate(Base):
     ),
   )
 
+class ReportImageProcessingType(str, Enum):
+  report = "report"
+  status = "status"
+
 class ReportImage(Base):
   __tablename__ = "report_images"
 
@@ -181,6 +185,9 @@ class ReportImage(Base):
   description = Column(String, nullable=True)
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
   created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+  # Leaving as string instead of enum - no migrations required as enum values change
+  processing_type = Column(String, nullable=True)
 
   report = relationship("Report", back_populates="images")
   
