@@ -9,6 +9,13 @@ from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
 from app.db.models.line_conversation import LineChatType
 
+class LineMessageType(enum.Enum):
+  text = "text"
+  image = "image"
+  video = "video"
+  audio = "audio"
+  file = "file"
+
 class LineMessage(Base):
   __tablename__ = "line_messages"
 
@@ -51,13 +58,6 @@ class LineMessage(Base):
   )
 
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-class LineMessageType(enum.Enum):
-  text = "text"
-  image = "image"
-  video = "video"
-  audio = "audio"
-  file = "file"
 
 class LineMessageAttachmentType(enum.Enum):
   image = "image"
