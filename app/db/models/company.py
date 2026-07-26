@@ -59,6 +59,7 @@ class Company(Base):
   )
 
   _line_channel_secret = Column("line_channel_secret", String, nullable=True)
+  _line_channel_access_token = Column("line_channel_access_token", String, nullable=True)
 
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
   updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -70,6 +71,14 @@ class Company(Base):
   @line_channel_secret.setter
   def line_channel_secret(self, value: str | None) -> None:
     self._line_channel_secret = encrypt_secret(value) if value else None
+
+  @property
+  def line_channel_access_token(self) -> str | None:
+    return decrypt_secret(self._line_channel_access_token) if self._line_channel_access_token else None
+
+  @line_channel_access_token.setter
+  def line_channel_access_token(self, value: str | None) -> None:
+    self._line_channel_access_token = encrypt_secret(value) if value else None
 
   @property
   def line_channel_secret_last4(self) -> str | None:

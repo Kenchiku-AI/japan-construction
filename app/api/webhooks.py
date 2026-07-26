@@ -118,20 +118,10 @@ async def line_webhook(
   if not company or not company.line_channel_secret:
     raise HTTPException(status_code=404)
 
-  if not verify_line_signature(
-    body,
-    x_line_signature,
-    company.line_channel_secret,
-  ):
-    raise HTTPException(
-      status_code=403,
-      detail="Invalid signature",
-    )
+  if not verify_line_signature(body, x_line_signature, company.line_channel_secret):
+    raise HTTPException(status_code=403, detail="Invalid signature")
 
-  can_use_features, reason = await can_use_billed_features(
-    company.id,
-    db,
-  )
+  can_use_features, reason = await can_use_billed_features(company.id, db)
 
   if not can_use_features:
     logger.info(
@@ -149,12 +139,18 @@ async def line_webhook(
       continue
 
     message = event.get("message", {})
+    message_type = message.get("type")
 
-    if message.get("type") != "text":
+    if message_type not in [
+      "text",
+      "image",
+      "audio",
+      # "video",
+      # "file",
+    ]:
       continue
 
     source = event.get("source", {})
-
     source_type = source.get("type")
     sender_id = source.get("userId")
 
@@ -170,8 +166,13 @@ async def line_webhook(
     if not line_chat_id:
       continue
 
-    text = message.get("text", "").strip()
-    candidate_code = text.upper()
+    text = (
+      message.get("text", "").strip()
+      if message_type == "text"
+      else None
+    )
+
+    candidate_code = text.upper() if text else ""
 
     line_timestamp_ms = event.get("timestamp")
 
@@ -184,7 +185,7 @@ async def line_webhook(
       else None
     )
 
-    if candidate_code.startswith("K-"):
+    if message_type == "text" and candidate_code.startswith("K-"):
 
       conversation_result = await db.execute(
         select(LineConversation).where(
@@ -251,16 +252,62 @@ async def line_webhook(
       )
       continue
 
-
-    background_tasks.add_task(
-      handle_line_conversation_items,
-      text=text,
+    line_message = LineMessage(
+      company_id=company.id,
       conversation_id=conversation.id,
       sender_line_user_id=sender_id,
-      company_id=company.id,
+      line_user_id=sender_id,
+      line_chat_id=line_chat_id,
+      line_chat_type=source_type,
       line_timestamp=line_timestamp,
+      line_platform_message_id=message["id"],
+      message_type=message_type,
+      text=text,
     )
 
+    db.add(line_message)
+    await db.flush()
+
+    if message_type == "text":
+      background_tasks.add_task(
+        handle_line_conversation_items,
+        line_message_id=line_message.id,
+      )
+      continue
+    
+    if not company.line_channel_access_token:
+      logger.warning(
+        "Ignoring LINE image because no channel access token is configured | company_id=%s",
+        company.id,
+      )
+      continue
+
+    if message_type == "image":
+      background_tasks.add_task(
+        process_line_image,
+        line_message_id=line_message.id,
+      )
+    elif message_type == "audio":
+      background_tasks.add_task(
+        process_line_audio,
+        line_message_id=line_message.id,
+      )
+    # elif message_type == "video":
+    #   background_tasks.add_task(
+    #     process_line_video,
+    #     company_id=company.id,
+    #     line_message_id=line_message.id,
+    #     line_message_api_id=message["id"],
+    #   )
+    # elif message_type == "file":
+    #   background_tasks.add_task(
+    #     process_line_file,
+    #     company_id=company.id,
+    #     line_message_id=line_message.id,
+    #     line_message_api_id=message["id"],
+    #   )
+
+  await db.commit()  
 
   return {"status": "ok"}
 
