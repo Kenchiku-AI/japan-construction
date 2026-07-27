@@ -1104,7 +1104,7 @@ async def get_report_image_status(
 
   stmt_tags = (
     select(ImageTagLink)
-    .where(ImageTagLink.report_image_id == image_id)
+    .where(ImageTagLink.image_id == image_id)
     .options(selectinload(ImageTagLink.tag))
   )
 
@@ -1260,7 +1260,7 @@ async def create_report_image_tag(
     raise HTTPException(404, "Tag not found")
 
   stmt = select(ImageTagLink).where(
-    ImageTagLink.report_image_id == image_id,
+    ImageTagLink.image_id == image_id,
     ImageTagLink.tag_id == payload.tag_id,
   )
   result = await db.execute(stmt)
@@ -1274,7 +1274,7 @@ async def create_report_image_tag(
 
   link = ImageTagLink(
     id=uuid4(),
-    report_image_id=image_id,
+    image_id=image_id,
     tag_id=payload.tag_id,
   )
 
@@ -1335,7 +1335,7 @@ async def delete_report_image_tag(
 
   stmt = select(ImageTagLink).where(
     ImageTagLink.id == link_id,
-    ImageTagLink.report_image_id == image_id,
+    ImageTagLink.image_id == image_id,
   )
   result = await db.execute(stmt)
   link = result.scalar_one_or_none()
@@ -1645,7 +1645,7 @@ async def delete_report_image(
       )
 
   stmt_links = select(ImageTagLink).where(
-    ImageTagLink.report_image_id == image_id
+    ImageTagLink.image_id == image_id
   )
   result = await db.execute(stmt_links)
   links = result.scalars().all()
