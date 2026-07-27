@@ -82,10 +82,10 @@ class CompanyWithLists(CompanyRead):
     "from_attributes": True
   }
 
-class ReportImageTagCreate(BaseModel):
+class ImageTagCreate(BaseModel):
   name: str
   description: str
 
-class ReportImageTagUpdate(BaseModel):
+class ImageTagUpdate(BaseModel):
   name: str | None = None
   description: str | None = None

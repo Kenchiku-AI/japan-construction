@@ -45,39 +45,38 @@ async def get_project_members(
   return members
 
 async def handle_line_conversation_items(
-  text: str,
-  conversation_id: UUID,
-  sender_line_user_id: str,
-  company_id: UUID,
-  line_timestamp: datetime | None,
+  line_message_id: UUID,
 ):
   async with AsyncSessionLocal() as db:
-    conversation_result = await db.execute(
-      select(LineConversation)
+
+    current_message_result = await db.execute(
+      select(LineMessage)
       .options(
-        selectinload(LineConversation.project),
-        selectinload(LineConversation.item_type_links)
-          .selectinload(ConversationItemTypeLink.item_type),
+        selectinload(LineMessage.conversation)
+        .selectinload(LineConversation.project),
+
+        selectinload(LineMessage.conversation)
+        .selectinload(LineConversation.item_type_links)
+        .selectinload(
+          ConversationItemTypeLink.item_type
+        ),
       )
-      .where(LineConversation.id == conversation_id)
+      .where(LineMessage.id == line_message_id)
     )
 
-    conversation = conversation_result.scalar_one_or_none()
+    current_message = current_message_result.scalar_one_or_none()
+
+    if not current_message:
+      logger.warning(
+        "LINE message not found | id=%s",
+        line_message_id,
+      )
+      return
+
+    conversation = current_message.conversation
 
     if not conversation:
       return
-
-    current_message = LineMessage(
-      conversation_id=conversation.id,
-      company_id=company_id,
-      line_chat_id=conversation.line_chat_id,
-      text=text,
-      line_timestamp=line_timestamp,
-      sender_line_user_id=sender_line_user_id,
-    )
-
-    db.add(current_message)
-    await db.flush()
 
     if not conversation.project_id:
       await db.commit()
@@ -98,9 +97,11 @@ async def handle_line_conversation_items(
       .options(
         selectinload(
           LineMessage.conversation_item_links
-        ).selectinload(
+        )
+        .selectinload(
           LineMessageConversationItemLink.conversation_item
-        ).selectinload(
+        )
+        .selectinload(
           ConversationItem.item_type
         )
       )
@@ -115,7 +116,11 @@ async def handle_line_conversation_items(
       .limit(20)
     )
 
-    recent_messages = list(reversed(history_result.scalars().all()))
+    recent_messages = list(
+      reversed(
+        history_result.scalars().all()
+      )
+    )
 
     recent_items_result = await db.execute(
       select(ConversationItem)
@@ -148,7 +153,7 @@ async def handle_line_conversation_items(
     limited_items = limited_items[:30]
 
     extracted_items = await extract_conversation_items(
-      message_text=text,
+      message_text=current_message.text,
       conversation=conversation,
       recent_messages=recent_messages,
       item_types=item_types,
@@ -156,9 +161,11 @@ async def handle_line_conversation_items(
     )
 
     for extracted in extracted_items:
+
       action = extracted.get("action")
 
       if action == "create":
+
         item = ConversationItem(
           project_id=conversation.project_id,
           conversation_id=conversation.id,
@@ -168,11 +175,12 @@ async def handle_line_conversation_items(
           name=extracted["name"],
           description=extracted.get("description"),
           status=ConversationItemStatus.new,
-          source_message_text=text,
-          line_timestamp=line_timestamp,
+          source_message_text=current_message.text,
+          line_timestamp=current_message.line_timestamp,
         )
 
         db.add(item)
+
         await db.flush()
 
         db.add(
@@ -188,7 +196,9 @@ async def handle_line_conversation_items(
           item.name,
         )
 
+
       elif action == "update":
+
         item_result = await db.execute(
           select(ConversationItem).where(
             ConversationItem.id == extracted["conversation_item_id"],
@@ -199,12 +209,13 @@ async def handle_line_conversation_items(
         item = item_result.scalar_one_or_none()
 
         if item:
+
           if "name" in extracted:
             item.name = extracted["name"]
 
           if "description" in extracted:
             item.description = extracted["description"]
-          
+
           db.add(
             LineMessageConversationItemLink(
               line_message_id=current_message.id,

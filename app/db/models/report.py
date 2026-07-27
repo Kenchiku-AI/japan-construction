@@ -95,7 +95,7 @@ class Report(Base):
   )
 
   images = relationship(
-    "ReportImage",
+    "Image",
     back_populates="report",
     cascade="all, delete-orphan",
   )
@@ -166,97 +166,5 @@ class CompanyReportTemplate(Base):
       "company_id",
       "report_template_id",
       unique=True,
-    ),
-  )
-
-class ReportImageProcessingType(str, Enum):
-  report = "report"
-  status = "status"
-
-class ReportImage(Base):
-  __tablename__ = "report_images"
-
-  id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-  report_id = Column(UUID(as_uuid=True), ForeignKey("reports.id", ondelete="CASCADE"), nullable=False)
-  image_url = Column(String, nullable=False)
-  status = Column(String, nullable=False, default="pending")
-  width = Column(Integer, nullable=True)
-  height = Column(Integer, nullable=True)
-  description = Column(String, nullable=True)
-  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-  created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-
-  # Leaving as string instead of enum - no migrations required as enum values change
-  processing_type = Column(String, nullable=True)
-
-  report = relationship("Report", back_populates="images")
-  
-  tag_links = relationship(
-    "ReportImageTagLink",
-    back_populates="image",
-    cascade="all, delete-orphan",
-  )
-
-class ReportImageTag(Base):
-  __tablename__ = "report_image_tags"
-
-  id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-
-  company_id = Column(
-    UUID(as_uuid=True),
-    ForeignKey("companies.id", ondelete="CASCADE"),
-    nullable=False,
-    index=True,
-  )
-
-  name = Column(String, nullable=False)
-  description = Column(String, nullable=True)
-
-  company = relationship("Company", back_populates="image_tags")
-
-  created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-  tag_links = relationship(
-    "ReportImageTagLink",
-    back_populates="tag",
-    cascade="all, delete-orphan",
-  )
-
-  __table_args__ = (
-    UniqueConstraint("company_id", "name", name="uq_company_tag_name"),
-  )
-
-class ReportImageTagLink(Base):
-  __tablename__ = "report_image_tag_links"
-
-  id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-
-  report_image_id = Column(
-    UUID(as_uuid=True),
-    ForeignKey("report_images.id", ondelete="CASCADE"),
-    nullable=False,
-  )
-
-  tag_id = Column(
-    UUID(as_uuid=True),
-    ForeignKey("report_image_tags.id", ondelete="CASCADE"),
-    nullable=False,
-  )
-
-  image = relationship(
-    "ReportImage",
-    back_populates="tag_links"
-  )
-
-  tag = relationship(
-    "ReportImageTag",
-    back_populates="tag_links"
-  )
-
-  __table_args__ = (
-    UniqueConstraint(
-      "report_image_id",
-      "tag_id",
-      name="uq_report_image_tag"
     ),
   )
