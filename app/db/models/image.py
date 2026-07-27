@@ -23,6 +23,7 @@ class Image(Base):
   __tablename__ = "images"
 
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+  report_id = Column(UUID(as_uuid=True), ForeignKey("reports.id", ondelete="CASCADE"), nullable=False)
   image_url = Column(String, nullable=False)
   status = Column(String, nullable=False, default="pending")
   width = Column(Integer, nullable=True)
