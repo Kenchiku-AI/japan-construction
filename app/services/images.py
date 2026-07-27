@@ -6,15 +6,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
   Company,
-  ReportImage,
-  ReportImageTag,
-  ReportImageTagLink,
+  Image,
+  ImageTag,
+  ImageTagLink,
 )
 from app.services.openai import get_image_tags_and_description
 from app.services.reports import get_company_id
 
 async def process_image(
-  image: ReportImage,
+  image: Image,
   image_url: str,
   db: AsyncSession,
 ):
@@ -39,7 +39,7 @@ async def process_image(
   )
 
 async def process_report_image(
-  image: ReportImage,
+  image: Image,
   image_url: str,
   db: AsyncSession,
 ):
@@ -58,8 +58,8 @@ async def process_report_image(
   if not company:
     raise ValueError(f"Company not found: {company_id}")
 
-  stmt = select(ReportImageTag).where(
-    ReportImageTag.company_id == company_id
+  stmt = select(ImageTag).where(
+    ImageTag.company_id == company_id
   )
   result = await db.execute(stmt)
   tags_list = result.scalars().all()
@@ -105,7 +105,7 @@ async def process_report_image(
 
   if links:
     stmt = (
-      insert(ReportImageTagLink)
+      insert(ImageTagLink)
       .values(links)
       .on_conflict_do_nothing()
     )
@@ -116,7 +116,7 @@ async def process_report_image(
     image.description = description
 
 async def process_status_image(
-  image: ReportImage,
+  image: Image,
   image_url: str,
   db: AsyncSession,
 ):

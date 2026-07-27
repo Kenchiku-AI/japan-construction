@@ -20,9 +20,9 @@ from app.db.models import (
   ReportTemplateField,
   ReportParentType,
   ReportStatus,
-  ReportImage,
-  ReportImageTag,
-  ReportImageTagLink,
+  Image,
+  ImageTag,
+  ImageTagLink,
   CompanyReportTemplate,
   ProjectGuestLink,
   LineConversation,
@@ -930,15 +930,15 @@ async def list_report_images(
       require_company_manager(current_user, company_id)
 
   stmt_images = (
-    select(ReportImage)
-    .where(ReportImage.report_id == report_id)
+    select(Image)
+    .where(Image.report_id == report_id)
     .options(
-      selectinload(ReportImage.tag_links)
-      .selectinload(ReportImageTagLink.tag)
+      selectinload(Image.tag_links)
+      .selectinload(ImageTagLink.tag)
     )
   )
   result = await db.execute(stmt_images)
-  images: list[ReportImage] = result.scalars().all()
+  images: list[Image] = result.scalars().all()
 
   image_list = []
 
@@ -1025,7 +1025,7 @@ async def create_report_image(
     ExpiresIn=86400,
   )
 
-  report_image = ReportImage(
+  image = Image(
     id=image_id,
     report_id=report_id,
     created_by=current_user.id,
@@ -1036,7 +1036,7 @@ async def create_report_image(
     height=payload.height
   )
 
-  db.add(report_image)
+  db.add(image)
   await db.commit()
 
   return {
@@ -1045,7 +1045,7 @@ async def create_report_image(
     "status": "pending",
     "upload_url": upload_url,
     "download_url": download_url,
-    "created_at": report_image.created_at,
+    "created_at": image.created_at,
     "width": payload.width,
     "height": payload.height,
     "tags": []
@@ -1081,15 +1081,15 @@ async def get_report_image_status(
       require_company_manager(current_user, company_id)
 
   stmt = (
-    select(ReportImage)
+    select(Image)
     .where(
-      ReportImage.id == image_id,
-      ReportImage.report_id == report_id,
+      Image.id == image_id,
+      Image.report_id == report_id,
     )
   )
 
   result = await db.execute(stmt)
-  image: ReportImage | None = result.scalar_one_or_none()
+  image: Image | None = result.scalar_one_or_none()
 
   if not image:
     raise HTTPException(404, "Image not found")
@@ -1103,9 +1103,9 @@ async def get_report_image_status(
     }
 
   stmt_tags = (
-    select(ReportImageTagLink)
-    .where(ReportImageTagLink.report_image_id == image_id)
-    .options(selectinload(ReportImageTagLink.tag))
+    select(ImageTagLink)
+    .where(ImageTagLink.report_image_id == image_id)
+    .options(selectinload(ImageTagLink.tag))
   )
 
   result = await db.execute(stmt_tags)
@@ -1163,17 +1163,17 @@ async def update_report_image(
       require_company_manager(current_user, company_id)
 
   stmt = (
-    select(ReportImage)
+    select(Image)
     .where(
-      ReportImage.id == image_id,
-      ReportImage.report_id == report_id,
+      Image.id == image_id,
+      Image.report_id == report_id,
     )
     .options(
-      selectinload(ReportImage.tag_links).selectinload(ReportImageTagLink.tag)
+      selectinload(Image.tag_links).selectinload(ImageTagLink.tag)
     )
   )
   result = await db.execute(stmt)
-  image: ReportImage | None = result.scalar_one_or_none()
+  image: Image | None = result.scalar_one_or_none()
 
   if not image:
     raise HTTPException(404, "Image not found")
@@ -1239,9 +1239,9 @@ async def create_report_image_tag(
     else:
       require_company_manager(current_user, company_id)
 
-  stmt = select(ReportImage).where(
-    ReportImage.id == image_id,
-    ReportImage.report_id == report_id,
+  stmt = select(Image).where(
+    Image.id == image_id,
+    Image.report_id == report_id,
   )
   result = await db.execute(stmt)
   image = result.scalar_one_or_none()
@@ -1249,9 +1249,9 @@ async def create_report_image_tag(
   if not image:
     raise HTTPException(404, "Image not found")
 
-  stmt = select(ReportImageTag).where(
-    ReportImageTag.id == payload.tag_id,
-    ReportImageTag.company_id == company_id,
+  stmt = select(ImageTag).where(
+    ImageTag.id == payload.tag_id,
+    ImageTag.company_id == company_id,
   )
   result = await db.execute(stmt)
   tag = result.scalar_one_or_none()
@@ -1259,9 +1259,9 @@ async def create_report_image_tag(
   if not tag:
     raise HTTPException(404, "Tag not found")
 
-  stmt = select(ReportImageTagLink).where(
-    ReportImageTagLink.report_image_id == image_id,
-    ReportImageTagLink.tag_id == payload.tag_id,
+  stmt = select(ImageTagLink).where(
+    ImageTagLink.report_image_id == image_id,
+    ImageTagLink.tag_id == payload.tag_id,
   )
   result = await db.execute(stmt)
   existing = result.scalar_one_or_none()
@@ -1272,7 +1272,7 @@ async def create_report_image_tag(
       detail="Tag already attached to this image",
     )
 
-  link = ReportImageTagLink(
+  link = ImageTagLink(
     id=uuid4(),
     report_image_id=image_id,
     tag_id=payload.tag_id,
@@ -1323,9 +1323,9 @@ async def delete_report_image_tag(
     else:
       require_company_manager(current_user, company_id)
 
-  stmt = select(ReportImage).where(
-    ReportImage.id == image_id,
-    ReportImage.report_id == report_id,
+  stmt = select(Image).where(
+    Image.id == image_id,
+    Image.report_id == report_id,
   )
   result = await db.execute(stmt)
   image = result.scalar_one_or_none()
@@ -1333,9 +1333,9 @@ async def delete_report_image_tag(
   if not image:
     raise HTTPException(404, "Image not found")
 
-  stmt = select(ReportImageTagLink).where(
-    ReportImageTagLink.id == link_id,
-    ReportImageTagLink.report_image_id == image_id,
+  stmt = select(ImageTagLink).where(
+    ImageTagLink.id == link_id,
+    ImageTagLink.report_image_id == image_id,
   )
   result = await db.execute(stmt)
   link = result.scalar_one_or_none()
@@ -1627,12 +1627,12 @@ async def delete_report_image(
     else:
       require_company_manager(current_user, company_id)
 
-  stmt = select(ReportImage).where(
-    ReportImage.id == image_id,
-    ReportImage.report_id == report_id,
+  stmt = select(Image).where(
+    Image.id == image_id,
+    Image.report_id == report_id,
   )
   result = await db.execute(stmt)
-  image: ReportImage | None = result.scalar_one_or_none()
+  image: Image | None = result.scalar_one_or_none()
 
   if not image:
     raise HTTPException(404, "Image not found")
@@ -1644,8 +1644,8 @@ async def delete_report_image(
         detail="You can only delete images you uploaded",
       )
 
-  stmt_links = select(ReportImageTagLink).where(
-    ReportImageTagLink.report_image_id == image_id
+  stmt_links = select(ImageTagLink).where(
+    ImageTagLink.report_image_id == image_id
   )
   result = await db.execute(stmt_links)
   links = result.scalars().all()

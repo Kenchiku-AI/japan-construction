@@ -17,7 +17,7 @@ from app.db.models import (
   Report,
   ReportParentType,
   User,
-  ReportImageTag,
+  ImageTag,
   ProjectGuestLink,
   BillingPlan,
   ConversationItem
@@ -30,8 +30,8 @@ from app.schemas.company import (
   CompanyWithMetrics,
   CompanyUpdate,
   CompanyWithLists,
-  ReportImageTagCreate,
-  ReportImageTagUpdate
+  ImageTagCreate,
+  ImageTagUpdate
 )
 from app.schemas.conversation import (
   ConversationItemTypeCreate,
@@ -579,9 +579,9 @@ async def get_tags(
     )
 
   stmt = (
-    select(ReportImageTag)
-    .where(ReportImageTag.company_id == company_id)
-    .order_by(ReportImageTag.name.asc())
+    select(ImageTag)
+    .where(ImageTag.company_id == company_id)
+    .order_by(ImageTag.name.asc())
   )
 
   result = await db.execute(stmt)
@@ -592,14 +592,14 @@ async def get_tags(
 @router.post("/{company_id}/tags")
 async def create_tag(
   company_id: UUID,
-  payload: ReportImageTagCreate,
+  payload: ImageTagCreate,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
   if current_user.role != "admin":
     require_company_manager(current_user, company_id)
 
-  tag = ReportImageTag(
+  tag = ImageTag(
     company_id=company_id,
     name=payload.name,
     description=payload.description
@@ -615,7 +615,7 @@ async def create_tag(
 async def update_tag(
   company_id: UUID,
   tag_id: UUID,
-  payload: ReportImageTagUpdate,
+  payload: ImageTagUpdate,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
@@ -623,10 +623,10 @@ async def update_tag(
     require_company_manager(current_user, company_id)
 
   stmt = (
-    select(ReportImageTag)
+    select(ImageTag)
     .where(
-      ReportImageTag.id == tag_id,
-      ReportImageTag.company_id == company_id
+      ImageTag.id == tag_id,
+      ImageTag.company_id == company_id
     )
   )
 
@@ -661,10 +661,10 @@ async def delete_tag(
     require_company_manager(current_user, company_id)
 
   stmt = (
-    select(ReportImageTag)
+    select(ImageTag)
     .where(
-      ReportImageTag.id == tag_id,
-      ReportImageTag.company_id == company_id
+      ImageTag.id == tag_id,
+      ImageTag.company_id == company_id
     )
   )
 

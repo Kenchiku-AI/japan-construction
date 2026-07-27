@@ -8,7 +8,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.db.models import ReportImage
+from app.db.models import Image
 from app.db.session import AsyncSessionLocal
 from app.services.images import process_image
 from app.services.s3 import BUCKET_NAME, s3_client
@@ -53,9 +53,9 @@ async def process_message(message):
 
     async with AsyncSessionLocal() as db:
       stmt = (
-        select(ReportImage)
-        .options(selectinload(ReportImage.report))
-        .where(ReportImage.id == image_id)
+        select(Image)
+        .options(selectinload(Image.report))
+        .where(Image.id == image_id)
       )
 
       result = await db.execute(stmt)
@@ -101,8 +101,8 @@ async def process_message(message):
       try:
         async with AsyncSessionLocal() as db:
           stmt = (
-            select(ReportImage)
-            .where(ReportImage.id == image_id)
+            select(Image)
+            .where(Image.id == image_id)
           )
 
           result = await db.execute(stmt)

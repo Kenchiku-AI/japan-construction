@@ -6,7 +6,8 @@ import re
 import logging
 
 from app.core.config import settings
-from app.db.models.report import ReportField, ReportImageTag
+from app.db.models.report import ReportField 
+from app.db.models.image import ImageTag
 from app.db.models.line_conversation import LineConversation
 from app.db.models.line_message import LineMessage
 
@@ -100,7 +101,7 @@ async def transcribe_and_extract_json(
 
 async def get_image_tags_and_description(
   image_url: str,
-  tags: Iterable[ReportImageTag],
+  tags: Iterable[ImageTag],
   include_description: bool
 ) -> dict:
   tag_list = [
