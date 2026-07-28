@@ -1015,7 +1015,7 @@ async def create_report_image(
       require_company_manager(current_user, company_id)
 
   image_id = uuid4()
-  key = f"reports/{report_id}/{image_id}.jpg"
+  key = f"images/{image_id}.jpg"
 
   upload_url = s3_client.generate_presigned_url(
     "put_object",

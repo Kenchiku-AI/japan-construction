@@ -25,14 +25,13 @@ sqs = boto3.client("sqs", region_name=AWS_REGION)
 def parse_s3_key(key: str):
   parts = key.split("/")
 
-  if len(parts) < 3:
+  if len(parts) < 2:
     raise ValueError(f"Invalid S3 key format: {key}")
 
-  report_id = parts[1]
-  filename = parts[2]
+  filename = parts[1]
   image_id = filename.split(".")[0]
 
-  return report_id, uuid.UUID(image_id)
+  return uuid.UUID(image_id)
 
 
 async def process_message(message):
@@ -47,7 +46,7 @@ async def process_message(message):
     record = body["Records"][0]
     key = record["s3"]["object"]["key"]
 
-    _, image_id = parse_s3_key(key)
+    image_id = parse_s3_key(key)
 
     logger.info(f"Processing image {image_id}")
 
