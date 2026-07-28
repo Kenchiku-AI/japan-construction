@@ -20,6 +20,7 @@ from app.db.models import (
   ReportTemplateField,
   ReportParentType,
   ReportStatus,
+  ReportImageLink,
   Image,
   ImageTag,
   ImageTagLink,
@@ -550,7 +551,8 @@ async def export_reports_by_template(
     .where(Report.template_id == template_id)
     .options(
       selectinload(Report.fields),
-      selectinload(Report.images),
+      selectinload(Report.image_links)
+        .selectinload(ReportImageLink.image),
       joinedload(Report.creator),
     )
   )
@@ -630,7 +632,7 @@ async def export_reports_by_template(
       )
     )
 
-    row["画像数"] = len(report.images)
+    row["画像数"] = len(report.image_links)
 
     for field_name in sorted_field_names:
       row[field_name] = ""
@@ -681,7 +683,8 @@ async def get_report(
       .where(Report.id == report_id)
       .options(
         selectinload(Report.fields),
-        selectinload(Report.images),
+        selectinload(Report.image_links)
+          .selectinload(ReportImageLink.image),
       )
     )
 
@@ -711,7 +714,8 @@ async def get_report(
       .where(Report.id == report_id)
       .options(
         selectinload(Report.fields),
-        selectinload(Report.images),
+        selectinload(Report.image_links)
+          .selectinload(ReportImageLink.image),
       )
     )
 
@@ -740,7 +744,7 @@ async def get_report(
 
   report.company_id = company_id
   report.fields.sort(key=lambda f: f.order)
-  report.photo_count = len(report.images)
+  report.photo_count = len(report.image_links)
   report.disabled = False
 
   if report.parent_type == ReportParentType.project:
@@ -782,7 +786,8 @@ async def update_report(
     .where(Report.id == report_id)
     .options(
       selectinload(Report.fields),
-      selectinload(Report.images),
+      selectinload(Report.image_links)
+        .selectinload(ReportImageLink.image),
     )
   )
   result = await db.execute(stmt)
@@ -891,7 +896,8 @@ async def update_report(
     .where(Report.id == report.id)
     .options(
       selectinload(Report.fields),
-      selectinload(Report.images),
+      selectinload(Report.image_links)
+        .selectinload(ReportImageLink.image),
     )
   )
   result = await db.execute(stmt)
@@ -931,7 +937,10 @@ async def list_report_images(
 
   stmt_images = (
     select(Image)
-    .where(Image.report_id == report_id)
+    .join(ReportImageLink)
+    .where(
+      ReportImageLink.report_id == report_id,
+    )
     .options(
       selectinload(Image.tag_links)
       .selectinload(ImageTagLink.tag)
@@ -1006,7 +1015,7 @@ async def create_report_image(
       require_company_manager(current_user, company_id)
 
   image_id = uuid4()
-  key = f"reports/{report_id}/{image_id}.jpg"
+  key = f"images/{image_id}.jpg"
 
   upload_url = s3_client.generate_presigned_url(
     "put_object",
@@ -1027,21 +1036,29 @@ async def create_report_image(
 
   image = Image(
     id=image_id,
-    report_id=report_id,
     created_by=current_user.id,
     image_url=key,
     status="pending",
-    description="",
+    description=None,
     width=payload.width,
     height=payload.height
   )
 
   db.add(image)
+  await db.flush()
+
+  db.add(
+    ReportImageLink(
+      report_id=report.id,
+      image_id=image.id,
+    )
+  )
+
   await db.commit()
+  await db.refresh(image)
 
   return {
     "id": image_id,
-    "report_id": report_id,
     "status": "pending",
     "upload_url": upload_url,
     "download_url": download_url,
@@ -1082,9 +1099,10 @@ async def get_report_image_status(
 
   stmt = (
     select(Image)
+    .join(ReportImageLink)
     .where(
       Image.id == image_id,
-      Image.report_id == report_id,
+      ReportImageLink.report_id == report_id,
     )
   )
 
@@ -1164,9 +1182,10 @@ async def update_report_image(
 
   stmt = (
     select(Image)
+    .join(ReportImageLink)
     .where(
       Image.id == image_id,
-      Image.report_id == report_id,
+      ReportImageLink.report_id == report_id,
     )
     .options(
       selectinload(Image.tag_links).selectinload(ImageTagLink.tag)
@@ -1239,9 +1258,13 @@ async def create_report_image_tag(
     else:
       require_company_manager(current_user, company_id)
 
-  stmt = select(Image).where(
-    Image.id == image_id,
-    Image.report_id == report_id,
+  stmt = (
+    select(Image)
+    .join(ReportImageLink)
+    .where(
+      Image.id == image_id,
+      ReportImageLink.report_id == report_id,
+    )
   )
   result = await db.execute(stmt)
   image = result.scalar_one_or_none()
@@ -1323,9 +1346,13 @@ async def delete_report_image_tag(
     else:
       require_company_manager(current_user, company_id)
 
-  stmt = select(Image).where(
-    Image.id == image_id,
-    Image.report_id == report_id,
+  stmt = (
+    select(Image)
+    .join(ReportImageLink)
+    .where(
+      Image.id == image_id,
+      ReportImageLink.report_id == report_id,
+    )
   )
   result = await db.execute(stmt)
   image = result.scalar_one_or_none()
@@ -1592,21 +1619,22 @@ async def delete_report(
 
   return None
 
-@router.delete(
-  "/{report_id}/images/{image_id}",
-  status_code=status.HTTP_204_NO_CONTENT,
-)
+@router.delete("/{report_id}/images/{image_id}")
 async def delete_report_image(
   report_id: UUID,
   image_id: UUID,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  stmt = select(Report).where(Report.id == report_id)
-  result = await db.execute(stmt)
-  report: Report | None = result.scalar_one_or_none()
+  stmt = (
+    select(Report)
+    .where(Report.id == report_id)
+  )
 
-  if not report:
+  result = await db.execute(stmt)
+  report = result.scalar_one_or_none()
+
+  if report is None:
     raise HTTPException(404, "Report not found")
 
   company_id = await get_company_id(
@@ -1615,59 +1643,42 @@ async def delete_report_image(
     db=db,
   )
 
-  allowed, reason = await can_use_billed_features(company_id, db)
-  if not allowed and current_user.role != "admin":
-    raise HTTPException(status_code=402, detail=reason)
-
   require_report_open(report)
 
   if current_user.role != "admin":
     if report.parent_type == ReportParentType.project:
-      await require_project_access(current_user, report.parent_id, company_id, db)
+      await require_project_access(
+        current_user,
+        report.parent_id,
+        company_id,
+        db,
+      )
     else:
-      require_company_manager(current_user, company_id)
-
-  stmt = select(Image).where(
-    Image.id == image_id,
-    Image.report_id == report_id,
-  )
-  result = await db.execute(stmt)
-  image: Image | None = result.scalar_one_or_none()
-
-  if not image:
-    raise HTTPException(404, "Image not found")
-
-  if current_user.role != "admin" and current_user.role != "manager":
-    if image.created_by != current_user.id:
-      raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="You can only delete images you uploaded",
+      require_company_manager(
+        current_user,
+        company_id,
       )
 
-  stmt_links = select(ImageTagLink).where(
-    ImageTagLink.image_id == image_id
+  stmt = (
+    select(ReportImageLink)
+    .where(
+      ReportImageLink.report_id == report_id,
+      ReportImageLink.image_id == image_id,
+    )
   )
-  result = await db.execute(stmt_links)
-  links = result.scalars().all()
 
-  for link in links:
-    await db.delete(link)
+  result = await db.execute(stmt)
+  link = result.scalar_one_or_none()
 
-  try:
-    s3_client.delete_object(
-      Bucket=BUCKET_NAME,
-      Key=image.image_url,
-    )
-  except Exception as e:
-    raise HTTPException(
-      status_code=500,
-      detail=f"Failed to delete image from storage: {str(e)}"
-    )
+  if link is None:
+    raise HTTPException(404, "Image not found")
 
-  await db.delete(image)
+  await db.delete(link)
   await db.commit()
 
-  return None
+  # TODO: Delete image from S3 when no links to line messages are confirmed
+
+  return {"success": True}
 
 @router.get(
   "/templates/{report_template_id}",

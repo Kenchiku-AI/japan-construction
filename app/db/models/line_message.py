@@ -87,9 +87,7 @@ class LineMessageAttachment(Base):
   )
 
   s3_key = Column(String, nullable=False)
-
   mime_type = Column(String, nullable=True)
-
   file_size = Column(Integer, nullable=True)
 
   width = Column(Integer, nullable=True)

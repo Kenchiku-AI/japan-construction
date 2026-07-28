@@ -94,8 +94,8 @@ class Report(Base):
     cascade="all, delete-orphan",
   )
 
-  images = relationship(
-    "Image",
+  image_links = relationship(
+    "ReportImageLink",
     back_populates="report",
     cascade="all, delete-orphan",
   )
@@ -132,6 +132,57 @@ class ReportField(Base):
   )
 
   report = relationship("Report", back_populates="fields")
+
+class ReportImageLink(Base):
+  __tablename__ = "report_image_links"
+
+  id = Column(
+    UUID(as_uuid=True),
+    primary_key=True,
+    default=uuid.uuid4,
+  )
+
+  report_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("reports.id", ondelete="CASCADE"),
+    nullable=False,
+    index=True,
+  )
+
+  image_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("images.id", ondelete="CASCADE"),
+    nullable=False,
+    index=True,
+  )
+
+  created_at = Column(
+    DateTime(timezone=True),
+    default=lambda: datetime.now(timezone.utc),
+  )
+
+  report = relationship(
+    "Report",
+    back_populates="image_links",
+  )
+
+  image = relationship(
+    "Image",
+    back_populates="report_links",
+  )
+
+  __table_args__ = (
+    UniqueConstraint(
+      "report_id",
+      "image_id",
+      name="uq_report_image",
+    ),
+    Index(
+      "ix_report_image_links_report_image",
+      "report_id",
+      "image_id",
+    ),
+  )
 
 class CompanyReportTemplate(Base):
   __tablename__ = "company_report_templates"

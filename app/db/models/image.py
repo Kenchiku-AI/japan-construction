@@ -23,7 +23,6 @@ class Image(Base):
   __tablename__ = "images"
 
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-  report_id = Column(UUID(as_uuid=True), ForeignKey("reports.id", ondelete="CASCADE"), nullable=False)
   image_url = Column(String, nullable=False)
   status = Column(String, nullable=False, default="pending")
   width = Column(Integer, nullable=True)
@@ -32,10 +31,14 @@ class Image(Base):
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
   created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
-  report = relationship("Report", back_populates="images")
-
   # Leaving as string instead of enum - no migrations required as enum values change
   processing_type = Column(String, nullable=True)
+
+  report_links = relationship(
+    "ReportImageLink",
+    back_populates="image",
+    cascade="all, delete-orphan",
+  )
   
   tag_links = relationship(
     "ImageTagLink",
@@ -81,12 +84,14 @@ class ImageTagLink(Base):
     UUID(as_uuid=True),
     ForeignKey("images.id", ondelete="CASCADE"),
     nullable=False,
+    index=True,
   )
 
   tag_id = Column(
     UUID(as_uuid=True),
     ForeignKey("image_tags.id", ondelete="CASCADE"),
     nullable=False,
+    index=True,
   )
 
   image = relationship(
