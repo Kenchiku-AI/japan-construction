@@ -84,12 +84,14 @@ class ImageTagLink(Base):
     UUID(as_uuid=True),
     ForeignKey("images.id", ondelete="CASCADE"),
     nullable=False,
+    index=True,
   )
 
   tag_id = Column(
     UUID(as_uuid=True),
     ForeignKey("image_tags.id", ondelete="CASCADE"),
     nullable=False,
+    index=True,
   )
 
   image = relationship(
