@@ -632,7 +632,7 @@ async def export_reports_by_template(
       )
     )
 
-    row["画像数"] = len(report.images)
+    row["画像数"] = len(report.image_links)
 
     for field_name in sorted_field_names:
       row[field_name] = ""
@@ -744,7 +744,7 @@ async def get_report(
 
   report.company_id = company_id
   report.fields.sort(key=lambda f: f.order)
-  report.photo_count = len(report.images)
+  report.photo_count = len(report.image_links)
   report.disabled = False
 
   if report.parent_type == ReportParentType.project:
@@ -1039,7 +1039,7 @@ async def create_report_image(
     created_by=current_user.id,
     image_url=key,
     status="pending",
-    description="",
+    description=None,
     width=payload.width,
     height=payload.height
   )
@@ -1054,7 +1054,8 @@ async def create_report_image(
     )
   )
 
-  db.commit()
+  await db.commit()
+  await db.refresh(image)
 
   return {
     "id": image_id,
@@ -1674,6 +1675,8 @@ async def delete_report_image(
 
   await db.delete(link)
   await db.commit()
+
+  # TODO: Delete image from S3 when no links to line messages are confirmed
 
   return {"success": True}
 
