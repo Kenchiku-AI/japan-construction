@@ -1058,7 +1058,6 @@ async def create_report_image(
 
   return {
     "id": image_id,
-    "report_id": report_id,
     "status": "pending",
     "upload_url": upload_url,
     "download_url": download_url,
