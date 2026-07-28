@@ -99,7 +99,7 @@ async def process_report_image(
 
     links.append({
       "id": uuid.uuid4(),
-      "report_image_id": image.id,
+      "image_id": image.id,
       "tag_id": tag_id,
     })
 
