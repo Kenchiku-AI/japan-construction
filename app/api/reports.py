@@ -20,6 +20,7 @@ from app.db.models import (
   ReportTemplateField,
   ReportParentType,
   ReportStatus,
+  ReportImageLink,
   Image,
   ImageTag,
   ImageTagLink,
@@ -550,7 +551,8 @@ async def export_reports_by_template(
     .where(Report.template_id == template_id)
     .options(
       selectinload(Report.fields),
-      selectinload(Report.images),
+      selectinload(Report.image_links)
+        .selectinload(ReportImageLink.image),
       joinedload(Report.creator),
     )
   )
@@ -681,7 +683,8 @@ async def get_report(
       .where(Report.id == report_id)
       .options(
         selectinload(Report.fields),
-        selectinload(Report.images),
+        selectinload(Report.image_links)
+          .selectinload(ReportImageLink.image),
       )
     )
 
@@ -711,7 +714,8 @@ async def get_report(
       .where(Report.id == report_id)
       .options(
         selectinload(Report.fields),
-        selectinload(Report.images),
+        selectinload(Report.image_links)
+          .selectinload(ReportImageLink.image),
       )
     )
 
@@ -782,7 +786,8 @@ async def update_report(
     .where(Report.id == report_id)
     .options(
       selectinload(Report.fields),
-      selectinload(Report.images),
+      selectinload(Report.image_links)
+        .selectinload(ReportImageLink.image),
     )
   )
   result = await db.execute(stmt)
@@ -891,7 +896,8 @@ async def update_report(
     .where(Report.id == report.id)
     .options(
       selectinload(Report.fields),
-      selectinload(Report.images),
+      selectinload(Report.image_links)
+        .selectinload(ReportImageLink.image),
     )
   )
   result = await db.execute(stmt)
@@ -931,7 +937,10 @@ async def list_report_images(
 
   stmt_images = (
     select(Image)
-    .where(Image.report_id == report_id)
+    .join(ReportImageLink)
+    .where(
+      ReportImageLink.report_id == report_id,
+    )
     .options(
       selectinload(Image.tag_links)
       .selectinload(ImageTagLink.tag)
@@ -1027,7 +1036,6 @@ async def create_report_image(
 
   image = Image(
     id=image_id,
-    report_id=report_id,
     created_by=current_user.id,
     image_url=key,
     status="pending",
@@ -1037,7 +1045,16 @@ async def create_report_image(
   )
 
   db.add(image)
-  await db.commit()
+  await db.flush()
+
+  db.add(
+    ReportImageLink(
+      report_id=report.id,
+      image_id=image.id,
+    )
+  )
+
+  db.commit()
 
   return {
     "id": image_id,
@@ -1082,9 +1099,10 @@ async def get_report_image_status(
 
   stmt = (
     select(Image)
+    .join(ReportImageLink)
     .where(
       Image.id == image_id,
-      Image.report_id == report_id,
+      ReportImageLink.report_id == report_id,
     )
   )
 
@@ -1164,9 +1182,10 @@ async def update_report_image(
 
   stmt = (
     select(Image)
+    .join(ReportImageLink)
     .where(
       Image.id == image_id,
-      Image.report_id == report_id,
+      ReportImageLink.report_id == report_id,
     )
     .options(
       selectinload(Image.tag_links).selectinload(ImageTagLink.tag)
@@ -1239,9 +1258,13 @@ async def create_report_image_tag(
     else:
       require_company_manager(current_user, company_id)
 
-  stmt = select(Image).where(
-    Image.id == image_id,
-    Image.report_id == report_id,
+  stmt = (
+    select(Image)
+    .join(ReportImageLink)
+    .where(
+      Image.id == image_id,
+      ReportImageLink.report_id == report_id,
+    )
   )
   result = await db.execute(stmt)
   image = result.scalar_one_or_none()
@@ -1323,9 +1346,13 @@ async def delete_report_image_tag(
     else:
       require_company_manager(current_user, company_id)
 
-  stmt = select(Image).where(
-    Image.id == image_id,
-    Image.report_id == report_id,
+  stmt = (
+    select(Image)
+    .join(ReportImageLink)
+    .where(
+      Image.id == image_id,
+      ReportImageLink.report_id == report_id,
+    )
   )
   result = await db.execute(stmt)
   image = result.scalar_one_or_none()
@@ -1627,9 +1654,13 @@ async def delete_report_image(
     else:
       require_company_manager(current_user, company_id)
 
-  stmt = select(Image).where(
-    Image.id == image_id,
-    Image.report_id == report_id,
+  stmt = (
+    select(Image)
+    .join(ReportImageLink)
+    .where(
+      Image.id == image_id,
+      ReportImageLink.report_id == report_id,
+    )
   )
   result = await db.execute(stmt)
   image: Image | None = result.scalar_one_or_none()
