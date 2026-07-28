@@ -17,7 +17,8 @@ from app.db.models.report import (
   ReportTemplateField,
   Report,
   ReportField,
-  CompanyReportTemplate
+  CompanyReportTemplate,
+  ReportImageLink,
 )
 from app.db.models.image import (
   Image,
