@@ -59,6 +59,7 @@ class CompanyUpdate(BaseModel):
   name: str | None = None
   corporate_number: str | None = None
   line_channel_secret: str | None = None
+  line_channel_access_token: str | None = None
   billing_plan_id: Optional[UUID] = None
 
 class CompanyUserRead(BaseModel):

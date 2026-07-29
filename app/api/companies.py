@@ -438,6 +438,9 @@ async def update_company(
   if payload.line_channel_secret is not None:
     company.line_channel_secret = payload.line_channel_secret
 
+  if payload.line_channel_access_token is not None:
+    company.line_channel_access_token = payload.line_channel_access_token
+
   if "billing_plan_id" in payload.model_fields_set:
     if not company.stripe_customer_id:
         needs_customer = True
