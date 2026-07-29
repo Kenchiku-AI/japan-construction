@@ -11,7 +11,6 @@ from app.db.models import (
   ImageTagLink,
 )
 from app.services.openai import get_image_tags_and_description
-from app.services.reports import get_company_id
 
 async def process_image(
   image: Image,
@@ -19,7 +18,7 @@ async def process_image(
   db: AsyncSession,
 ):
   if image.processing_type is None:
-    await process_report_image(
+    await add_description_and_tags(
       image=image,
       image_url=image_url,
       db=db,
@@ -38,19 +37,13 @@ async def process_image(
     f"Unknown processing_type: {image.processing_type}"
   )
 
-async def process_report_image(
+async def add_description_and_tags(
   image: Image,
   image_url: str,
   db: AsyncSession,
 ):
-  company_id = await get_company_id(
-    image.report.parent_type,
-    image.report.parent_id,
-    db,
-  )
-
   stmt = select(Company).where(
-    Company.id == company_id
+    Company.id == image.company_id
   )
   result = await db.execute(stmt)
   company = result.scalar_one_or_none()

@@ -3,12 +3,12 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from sqlalchemy import (
-    Column,
-    String,
-    DateTime,
-    ForeignKey,
-    Integer,
-    UniqueConstraint,
+  Column,
+  String,
+  DateTime,
+  ForeignKey,
+  Integer,
+  UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -33,6 +33,18 @@ class Image(Base):
 
   # Leaving as string instead of enum - no migrations required as enum values change
   processing_type = Column(String, nullable=True)
+
+  company_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("companies.id"),
+    nullable=False,
+    index=True,
+  )
+
+  company = relationship(
+    "Company",
+    back_populates="images",
+  )
 
   report_links = relationship(
     "ReportImageLink",

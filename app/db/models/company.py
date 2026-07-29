@@ -26,6 +26,11 @@ class Company(Base):
     cascade="all, delete-orphan",
   )
 
+  images = relationship(
+    "Image",
+    back_populates="company",
+  )
+
   image_tags = relationship(
     "ImageTag",
     back_populates="company",
