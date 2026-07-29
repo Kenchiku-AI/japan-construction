@@ -1036,6 +1036,7 @@ async def create_report_image(
 
   image = Image(
     id=image_id,
+    company_id=company_id,
     created_by=current_user.id,
     image_url=key,
     status="pending",

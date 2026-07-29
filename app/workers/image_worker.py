@@ -51,11 +51,7 @@ async def process_message(message):
     logger.info(f"Processing image {image_id}")
 
     async with AsyncSessionLocal() as db:
-      stmt = (
-        select(Image)
-        .options(selectinload(Image.report))
-        .where(Image.id == image_id)
-      )
+      stmt = select(Image).where(Image.id == image_id)
 
       result = await db.execute(stmt)
       image = result.scalar_one_or_none()
