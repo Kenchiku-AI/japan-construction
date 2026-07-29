@@ -44,6 +44,12 @@ class LineMessage(Base):
     index=True,
   )
 
+  image_links = relationship(
+    "LineMessageImageLink",
+    back_populates="line_message",
+    cascade="all, delete-orphan",
+  )
+
   conversation_item_links: Mapped[list["LineMessageConversationItemLink"]] = relationship(
     back_populates="line_message",
     cascade="all, delete-orphan",
@@ -64,44 +70,6 @@ class LineMessageAttachmentType(enum.Enum):
   video = "video"
   audio = "audio"
   file = "file"
-
-class LineMessageAttachment(Base):
-  __tablename__ = "line_message_attachments"
-
-  id = Column(
-    UUID(as_uuid=True),
-    primary_key=True,
-    default=uuid4,
-  )
-
-  line_message_id = Column(
-    UUID(as_uuid=True),
-    ForeignKey("line_messages.id", ondelete="CASCADE"),
-    nullable=False,
-    index=True,
-  )
-
-  type = Column(
-    Enum(LineMessageAttachmentType),
-    nullable=False,
-  )
-
-  s3_key = Column(String, nullable=False)
-  mime_type = Column(String, nullable=True)
-  file_size = Column(Integer, nullable=True)
-
-  width = Column(Integer, nullable=True)
-  height = Column(Integer, nullable=True)
-
-  created_at = Column(
-    DateTime(timezone=True),
-    default=lambda: datetime.now(timezone.utc),
-  )
-
-  line_message = relationship(
-    "LineMessage",
-    back_populates="attachments",
-  )
 
 class LineMessageConversationItemLink(Base):
   __tablename__ = "line_message_conversation_item_links"
@@ -146,5 +114,51 @@ class LineMessageConversationItemLink(Base):
 
   conversation_item = relationship(
     "ConversationItem",
+    back_populates="line_message_links",
+  )
+
+class LineMessageImageLink(Base):
+  __tablename__ = "line_message_image_links"
+
+  __table_args__ = (
+    UniqueConstraint(
+      "line_message_id",
+      "image_id",
+      name="uq_line_message_image",
+    ),
+  )
+
+  id = Column(
+    UUID(as_uuid=True),
+    primary_key=True,
+    default=uuid4,
+  )
+
+  line_message_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("line_messages.id", ondelete="CASCADE"),
+    nullable=False,
+    index=True,
+  )
+
+  image_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("images.id", ondelete="CASCADE"),
+    nullable=False,
+    index=True,
+  )
+
+  created_at = Column(
+    DateTime(timezone=True),
+    default=lambda: datetime.now(timezone.utc),
+  )
+
+  line_message = relationship(
+    "LineMessage",
+    back_populates="image_links",
+  )
+
+  image = relationship(
+    "Image",
     back_populates="line_message_links",
   )

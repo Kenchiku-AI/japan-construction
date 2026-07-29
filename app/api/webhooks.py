@@ -21,8 +21,9 @@ from app.db.models.line_conversation import LineConversation
 from app.db.models.conversation_item_type import ConversationItemTypeLink
 from app.services.billing import get_company_by_stripe_customer_id, can_use_billed_features
 from app.services.email import send_line_group_linked_email
-from app.services.reports import handle_line_group_message
+from app.services.images import create_image_from_line_message
 from app.services.projects import handle_line_conversation_items
+from app.services.reports import handle_line_group_message
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,7 @@ async def line_webhook(
     if message_type not in [
       "text",
       "image",
-      "audio",
+      # "audio",
       # "video",
       # "file",
     ]:
@@ -284,14 +285,16 @@ async def line_webhook(
 
     if message_type == "image":
       background_tasks.add_task(
-        process_line_image,
+        create_image_from_line_message,
+        company_id=company.id,
         line_message_id=line_message.id,
+        line_platform_message_id=message["id"],
       )
-    elif message_type == "audio":
-      background_tasks.add_task(
-        process_line_audio,
-        line_message_id=line_message.id,
-      )
+    # elif message_type == "audio":
+    #   background_tasks.add_task(
+    #     process_line_audio,
+    #     line_message_id=line_message.id,
+    #   )
     # elif message_type == "video":
     #   background_tasks.add_task(
     #     process_line_video,
