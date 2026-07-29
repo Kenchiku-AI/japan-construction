@@ -93,4 +93,4 @@ class Company(Base):
   @property
   def line_channel_access_token_last5(self) -> str | None:
     token = self.line_channel_access_token  # decrypts via the existing property
-    return secret[-5:] if token else None
+    return token[-5:] if token else None
