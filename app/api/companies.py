@@ -388,6 +388,7 @@ async def get_company(
     free_trial_days_left=billing_status.free_trial_days_left,
     billing_plan_id=company.billing_plan_id,
     line_channel_secret_last4=company.line_channel_secret_last4,
+    line_channel_access_token_last5=company.line_channel_secret_last5,
     created_at=company.created_at,
     updated_at=company.updated_at,
     users=company.users,
