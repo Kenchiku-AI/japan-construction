@@ -26,6 +26,28 @@ def upgrade() -> None:
     op.create_foreign_key(None, 'images', 'companies', ['company_id'], ['id'])
 
     op.execute("""
+DELETE FROM image_tag_links
+WHERE image_id IN (
+    SELECT i.id
+    FROM images i
+    LEFT JOIN report_image_links ril
+      ON ril.image_id = i.id
+    WHERE ril.image_id IS NULL
+);
+""")
+
+    op.execute("""
+DELETE FROM images
+WHERE id IN (
+    SELECT i.id
+    FROM images i
+    LEFT JOIN report_image_links ril
+      ON ril.image_id = i.id
+    WHERE ril.image_id IS NULL
+);
+""")
+
+    op.execute("""
 UPDATE images i
 SET company_id = c.id
 FROM report_image_links ril
