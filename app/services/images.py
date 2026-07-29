@@ -52,7 +52,7 @@ async def add_description_and_tags(
     raise ValueError(f"Company not found: {company_id}")
 
   stmt = select(ImageTag).where(
-    ImageTag.company_id == company_id
+    ImageTag.company_id == company.id
   )
   result = await db.execute(stmt)
   tags_list = result.scalars().all()
