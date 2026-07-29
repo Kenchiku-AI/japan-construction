@@ -308,8 +308,6 @@ async def line_webhook(
     #     line_message_api_id=message["id"],
     #   )
 
-  await db.commit()  
-
   return {"status": "ok"}
 
 def verify_line_signature(body: bytes, signature: str, channel_secret: str) -> bool:
