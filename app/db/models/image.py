@@ -51,6 +51,12 @@ class Image(Base):
     back_populates="image",
     cascade="all, delete-orphan",
   )
+
+  line_message_links = relationship(
+    "LineMessageImageLink",
+    back_populates="image",
+    cascade="all, delete-orphan",
+  )
   
   tag_links = relationship(
     "ImageTagLink",
