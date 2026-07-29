@@ -267,7 +267,7 @@ async def line_webhook(
     )
 
     db.add(line_message)
-    await db.flush()
+    await db.commit()
 
     if message_type == "text":
       background_tasks.add_task(
@@ -286,9 +286,7 @@ async def line_webhook(
     if message_type == "image":
       background_tasks.add_task(
         create_image_from_line_message,
-        company_id=company.id,
         line_message_id=line_message.id,
-        line_platform_message_id=message["id"],
       )
     # elif message_type == "audio":
     #   background_tasks.add_task(

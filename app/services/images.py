@@ -15,6 +15,7 @@ from app.db.models import (
   LineMessage,
   LineMessageImageLink,
 )
+from app.db.session import AsyncSessionLocal
 from app.services.openai import get_image_tags_and_description
 from app.services.s3 import BUCKET_NAME, s3_client
 
@@ -124,85 +125,85 @@ async def process_status_image(
 async def create_image_from_line_message(
   *,
   line_message_id,
-  db: AsyncSession,
 ):
-  line_message = await _get_line_message(
-    line_message_id,
-    db,
-  )
+  async with AsyncSessionLocal() as db:
+    line_message = await _get_line_message(
+      line_message_id,
+      db,
+    )
 
-  if not line_message:
-    return None
+    if not line_message:
+      return None
 
-  existing = await _get_existing_image(
-    line_message.id,
-    db,
-  )
+    existing = await _get_existing_image(
+      line_message.id,
+      db,
+    )
 
-  if existing:
-    if existing.status != "completed":
-      existing.status = "processing"
-      await db.commit()
-
-      image_url = create_presigned_image_url(existing.image_url)
-
-      try:
-        await process_image(
-          image=existing,
-          image_url=image_url,
-          db=db,
-        )
-        existing.status = "completed"
-      except Exception:
-        existing.status = "failed"
-        raise
-      finally:
+    if existing:
+      if existing.status != "completed":
+        existing.status = "processing"
         await db.commit()
 
-    return existing
+        image_url = create_presigned_image_url(existing.image_url)
 
-  company = await db.get(
-    Company,
-    line_message.company_id,
-  )
+        try:
+          await process_image(
+            image=existing,
+            image_url=image_url,
+            db=db,
+          )
+          existing.status = "completed"
+        except Exception:
+          existing.status = "failed"
+          raise
+        finally:
+          await db.commit()
 
-  if not company:
-    raise ValueError("Company not found")
+      return existing
 
-  content = await download_line_message_content(
-    channel_access_token=company.line_channel_access_token,
-    message_id=line_message.line_platform_message_id,
-  )
-
-  image = await _create_image_from_bytes(
-    image_bytes=content,
-    company_id=company.id,
-    created_by=None,
-    db=db,
-  )
-
-  db.add(
-    LineMessageImageLink(
-      line_message_id=line_message.id,
-      image_id=image.id,
+    company = await db.get(
+      Company,
+      line_message.company_id,
     )
-  )
 
-  await db.commit()
+    if not company:
+      raise ValueError("Company not found")
 
-  image_url = create_presigned_image_url(
-    image.image_url,
-  )
+    content = await download_line_message_content(
+      channel_access_token=company.line_channel_access_token,
+      message_id=line_message.line_platform_message_id,
+    )
 
-  await process_image(
-    image=image,
-    image_url=image_url,
-    db=db,
-  )
-  image.status = "completed"
-  await db.commit()
+    image = await _create_image_from_bytes(
+      image_bytes=content,
+      company_id=company.id,
+      created_by=None,
+      db=db,
+    )
 
-  return image
+    db.add(
+      LineMessageImageLink(
+        line_message_id=line_message.id,
+        image_id=image.id,
+      )
+    )
+
+    await db.commit()
+
+    image_url = create_presigned_image_url(
+      image.image_url,
+    )
+
+    await process_image(
+      image=image,
+      image_url=image_url,
+      db=db,
+    )
+    image.status = "completed"
+    await db.commit()
+
+    return image
 
 async def _get_line_message(
   line_message_id,
