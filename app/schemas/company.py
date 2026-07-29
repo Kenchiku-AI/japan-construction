@@ -19,6 +19,7 @@ class CompanyRead(BaseModel):
   name: str
   corporate_number: Optional[str]
   line_channel_secret_last4: Optional[str]
+  line_channel_access_token_last5: Optional[str]
   billing_plan_id: Optional[UUID] = None
   created_at: datetime
   updated_at: datetime
