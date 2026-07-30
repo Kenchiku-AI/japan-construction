@@ -57,19 +57,7 @@ class LineMessage(Base):
 
   conversation = relationship("LineConversation", back_populates="messages")
 
-  attachments = relationship(
-    "LineMessageAttachment",
-    back_populates="line_message",
-    cascade="all, delete-orphan",
-  )
-
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-class LineMessageAttachmentType(enum.Enum):
-  image = "image"
-  video = "video"
-  audio = "audio"
-  file = "file"
 
 class LineMessageConversationItemLink(Base):
   __tablename__ = "line_message_conversation_item_links"
