@@ -1557,6 +1557,7 @@ async def report_line_conversations(
     await sync_report_line_images(
       report=report,
       conversation_segments=conversation_segments,
+      db=db,
     )
 
     changed_fields = await extract_report_fields_from_line_conversations(
@@ -1582,6 +1583,7 @@ async def sync_report_line_images(
   conversation_segments: list[
     tuple[LineConversation, list[LineMessage]]
   ],
+  db: AsyncSession,
 ):
   for _, messages in conversation_segments:
     for message in messages:
