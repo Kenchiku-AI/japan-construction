@@ -23,3 +23,5 @@ boto3
 botocore[crt]
 
 stripe
+
+Pillow
