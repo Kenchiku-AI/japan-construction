@@ -1570,11 +1570,12 @@ async def report_line_conversations(
       field_values=changed_fields,
     )
 
-  except Exception as e:
-    raise HTTPException(
-      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-      detail=f"Error extracting JSON: {str(e)}",
+  except Exception:
+    logger.exception(
+      "Error processing LINE conversations for report %s",
+      report.id,
     )
+    raise
 
 async def sync_report_line_images(
   *,
