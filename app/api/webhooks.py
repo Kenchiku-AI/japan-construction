@@ -18,6 +18,7 @@ from app.db.models.company import Company
 from app.db.models.user import User
 from app.db.models.project import Project
 from app.db.models.line_conversation import LineConversation
+from app.db.models.line_message import LineMessage
 from app.db.models.conversation_item_type import ConversationItemTypeLink
 from app.services.billing import get_company_by_stripe_customer_id, can_use_billed_features
 from app.services.email import send_line_group_linked_email
