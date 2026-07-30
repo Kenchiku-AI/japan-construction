@@ -28,6 +28,7 @@ from app.db.models import (
   ProjectGuestLink,
   LineConversation,
   LineMessage,
+  LineMessageType,
 )
 from app.schemas.report import (
   ReportCreate, 
