@@ -56,6 +56,7 @@ from app.services.openai import (
   transcribe_and_extract_json,
   extract_report_fields_from_line_conversations,
 )
+from app.services.images import create_image_from_line_message
 from app.services.billing import can_use_billed_features
 from app.services.s3 import s3_client, BUCKET_NAME
 
@@ -1552,6 +1553,12 @@ async def report_line_conversations(
     )
 
   try:
+    await sync_report_line_images(
+      report=report,
+      conversation_segments=conversation_segments,
+      db=db,
+    )
+
     changed_fields = await extract_report_fields_from_line_conversations(
       conversation_segments=conversation_segments,
       fields=report.fields,
@@ -1567,6 +1574,59 @@ async def report_line_conversations(
       status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
       detail=f"Error extracting JSON: {str(e)}",
     )
+
+async def sync_report_line_images(
+  *,
+  report: Report,
+  conversation_segments: list[
+    tuple[LineConversation, list[LineMessage]]
+  ],
+  db: AsyncSession,
+):
+  for _, messages in conversation_segments:
+    for message in messages:
+
+      if message.message_type != LineMessageType.image:
+        continue
+
+      image = await create_image_from_line_message(
+        line_message_id=message.id,
+        db=db,
+      )
+
+      if image is None:
+        continue
+
+      await _ensure_report_image_link(
+        report_id=report.id,
+        image_id=image.id,
+        db=db,
+      )
+
+async def _ensure_report_image_link(
+  *,
+  report_id: UUID,
+  image_id: UUID,
+  db: AsyncSession,
+):
+  existing = await db.execute(
+    select(ReportImageLink).where(
+      ReportImageLink.report_id == report_id,
+      ReportImageLink.image_id == image_id,
+    )
+  )
+
+  if existing.scalar_one_or_none():
+    return
+
+  db.add(
+    ReportImageLink(
+      report_id=report_id,
+      image_id=image_id,
+    )
+  )
+
+  await db.commit()
 
 @router.delete(
   "/{report_id}",
