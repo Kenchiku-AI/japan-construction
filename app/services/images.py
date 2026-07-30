@@ -1,6 +1,7 @@
 import asyncio
 import httpx
 import uuid
+import logging
 from io import BytesIO
 from PIL import Image as PILImage
 from sqlalchemy.dialects.postgresql import insert
@@ -18,6 +19,8 @@ from app.db.models import (
 from app.db.session import AsyncSessionLocal
 from app.services.openai import get_image_tags_and_description
 from app.services.s3 import BUCKET_NAME, s3_client
+
+logger = logging.getLogger(__name__)
 
 async def process_image(
   image: Image,
@@ -285,6 +288,14 @@ async def download_line_message_content(
   channel_access_token: str,
   message_id: str,
 ) -> bytes:
+  logger.info(
+    "Downloading LINE content: message_id=%s token_present=%s token_length=%d token_suffix=%s",
+    message_id,
+    bool(channel_access_token),
+    len(channel_access_token or ""),
+    (channel_access_token[-8:] if channel_access_token else None),
+  )
+
   async with httpx.AsyncClient() as client:
     response = await client.get(
       f"https://api-data.line.me/v2/bot/message/{message_id}/content",
