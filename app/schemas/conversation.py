@@ -25,7 +25,9 @@ class ConversationItemCreate(BaseModel):
   description: str | None = None
 
 class ConversationItemUpdate(BaseModel):
-  value: str | None = None
+  name: str | None = None
+  description: str | None = None
+  status: ConversationItemStatus | None = None
 
 class ConversationItemRead(BaseModel):
   id: UUID
