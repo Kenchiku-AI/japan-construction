@@ -7,7 +7,7 @@ from app.db.models.report import ReportParentType, ReportStatus
 
 class ReportCreate(BaseModel):
   name: str
-  parent_id: UUID
+  company_id: UUID
   template_id: UUID
 
 class ReportUpdate(BaseModel):
@@ -29,8 +29,6 @@ class ReportRead(BaseModel):
   id: UUID
   name: str
   template_id: UUID
-  parent_id: UUID
-  parent_type: ReportParentType
   status: ReportStatus
   created_at: datetime
   updated_at: datetime

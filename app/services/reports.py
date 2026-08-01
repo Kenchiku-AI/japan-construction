@@ -15,25 +15,6 @@ from app.services.openai import transcribe_and_extract_json
 
 logger = logging.getLogger(__name__)
 
-async def get_company_id(
-  parent_type: ReportParentType,
-  parent_id: UUID,
-  db: AsyncSession
-) -> UUID:
-  if parent_type == ReportParentType.company:
-    return parent_id
-  elif parent_type == ReportParentType.project:
-    stmt = select(Project).where(Project.id == parent_id)
-    result = await db.execute(stmt)
-    project = result.scalar_one_or_none()
-
-    if not project:
-      raise ValueError(f"Project with id {parent_id} not found")
-
-    return project.company_id
-  else:
-    raise ValueError(f"Unsupported parent_type: {parent_type}")
-
 async def handle_line_group_message(
   text: str,
   user: User,

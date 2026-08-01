@@ -18,10 +18,6 @@ from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
-class ReportParentType(str, Enum):
-  project = "project"
-  company = "company"
-
 class ReportStatus(str, Enum):
   open = "open"
   closed = "closed"
@@ -35,8 +31,6 @@ class ReportTemplate(Base):
   description = Column(String, nullable=True)
 
   is_global = Column(Boolean, nullable=False, default=False)
-  
-  parent_type = Column(SQLEnum(ReportParentType), nullable=False)
 
   fields = relationship(
     "ReportTemplateField",
@@ -83,9 +77,6 @@ class Report(Base):
     index=True,
   )
 
-  parent_type = Column(SQLEnum(ReportParentType), nullable=False)
-  parent_id = Column(UUID(as_uuid=True), nullable=False)
-
   status = Column(SQLEnum(ReportStatus), nullable=False, default=ReportStatus.open)
 
   fields = relationship(
@@ -109,10 +100,6 @@ class Report(Base):
   creator = relationship(
     "User",
     foreign_keys=[created_by],
-  )
-
-  __table_args__ = (
-    Index("ix_reports_parent", "parent_type", "parent_id"),
   )
 
 class ReportField(Base):
