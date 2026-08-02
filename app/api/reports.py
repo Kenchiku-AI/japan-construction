@@ -28,6 +28,7 @@ from app.db.models import (
   LineConversation,
   LineMessage,
   LineMessageType,
+  ReportProjectLink,
 )
 from app.schemas.report import (
   ReportCreate, 
@@ -48,6 +49,7 @@ from app.schemas.report import (
 )
 from app.core.dependencies import (
   get_current_user,
+  require_company_member,
   require_company_manager,
   require_project_access,
 )
@@ -77,164 +79,129 @@ async def list_reports(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  search = f"%{q.lower()}%" if q else None
-  company_alias = aliased(Company)
+  stmt = (
+    select(Report)
+    .options(
+      selectinload(Report.fields),
+      selectinload(Report.company),
+      selectinload(Report.project_links).selectinload(
+        ReportProjectLink.project
+      ),
+    )
+  )
 
-  if current_user.role == "admin":
-    stmt = (
-      select(
-        Report,
-        company_alias.name.label("company_name"),
-        Project.name.label("project_name"),
-      )
-      .outerjoin(
-        Project,
-        (Report.parent_type == ReportParentType.project)
-        & (Report.parent_id == Project.id),
-      )
-      .outerjoin(
-        company_alias,
-        or_(
-          (
-            (Report.parent_type == ReportParentType.company)
-            & (Report.parent_id == company_alias.id)
-          ),
-          (
-            (Report.parent_type == ReportParentType.project)
-            & (Project.company_id == company_alias.id)
-          ),
-        ),
-      )
+  if q:
+    search = f"%{q.lower()}%"
+
+    stmt = stmt.where(
+      func.lower(Report.name).like(search)
     )
 
-    if search:
-      stmt = stmt.where(
-        func.lower(Report.name).like(search)
-      )
-
-    if project_id:
-      stmt = stmt.where(
-        Report.parent_type == ReportParentType.project,
-        Report.parent_id == project_id,
-      )
-
-    stmt = (
-      stmt
-      .order_by(Report.updated_at.desc())
-      .limit(25)
-      .options(selectinload(Report.fields))
-    )
-
-    result = await db.execute(stmt)
-
-    rows = result.all()
-
-    reports = []
-
-    for report, company_name, project_name in rows:
-      report.company_name = company_name
-      report.project_name = project_name
-      reports.append(report)
-
-    return reports
-
-  if current_user.company_id:
-    company_stmt = (
-      select(Report, Project.name.label("project_name"))
-      .outerjoin(
-        Project,
-        (Report.parent_type == ReportParentType.project)
-        & (Report.parent_id == Project.id)
-      )
-      .where(
-        or_(
-          (Report.parent_type == ReportParentType.company)
-          & (Report.parent_id == current_user.company_id),
-          (Report.parent_type == ReportParentType.project)
-          & (Project.company_id == current_user.company_id),
+  if project_id:
+    stmt = stmt.where(
+      exists(
+        select(1)
+        .select_from(ReportProjectLink)
+        .where(
+          ReportProjectLink.report_id == Report.id,
+          ReportProjectLink.project_id == project_id,
         )
       )
     )
 
-    if project_id:
-      company_stmt = company_stmt.where(
-        Report.parent_type == ReportParentType.project,
-        Report.parent_id == project_id,
-      )
-
-    company_result = await db.execute(
-      company_stmt.options(selectinload(Report.fields))
+  if current_user.role == "admin":
+    pass
+  elif current_user.company_id:
+    company_report_access = (
+      Report.company_id == current_user.company_id
     )
 
-    guest_stmt = (
-      select(Report, Project.name.label("project_name"))
+    guest_project_access = exists(
+      select(1)
+      .select_from(ReportProjectLink)
       .join(
         Project,
-        (Report.parent_type == ReportParentType.project)
-        & (Report.parent_id == Project.id)
+        Project.id == ReportProjectLink.project_id,
       )
-      .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
+      .join(
+        ProjectGuestLink,
+        ProjectGuestLink.project_id == Project.id,
+      )
       .where(
+        ReportProjectLink.report_id == Report.id,
         ProjectGuestLink.user_id == current_user.id,
         Project.company_id != current_user.company_id,
       )
     )
 
-    if project_id:
-      guest_stmt = guest_stmt.where(
-        Report.parent_id == project_id
+    stmt = stmt.where(
+      or_(
+        company_report_access,
+        guest_project_access,
       )
-
-    guest_result = await db.execute(
-      guest_stmt.options(selectinload(Report.fields))
     )
-
-    seen = set()
-    all_rows = []
-    for row in list(company_result.all()) + list(guest_result.all()):
-      if row[0].id not in seen:
-        seen.add(row[0].id)
-        all_rows.append(row)
-
-    if search:
-      all_rows = [row for row in all_rows if search.strip("%").lower() in row[0].name.lower()]
-
-    all_rows = sorted(all_rows, key=lambda row: row[0].updated_at, reverse=True)[:25]
-
   else:
-    stmt = (
-      select(Report, Project.name.label("project_name"))
+    guest_project_access = exists(
+      select(1)
+      .select_from(ReportProjectLink)
       .join(
         Project,
-        (Report.parent_type == ReportParentType.project)
-        & (Report.parent_id == Project.id)
+        Project.id == ReportProjectLink.project_id,
       )
-      .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
-      .where(ProjectGuestLink.user_id == current_user.id)
+      .join(
+        ProjectGuestLink,
+        ProjectGuestLink.project_id == Project.id,
+      )
+      .where(
+        ReportProjectLink.report_id == Report.id,
+        ProjectGuestLink.user_id == current_user.id,
+      )
     )
 
-    if project_id:
-      stmt = stmt.where(
-        Report.parent_id == project_id
-      )
+    stmt = stmt.where(guest_project_access)
 
-    result = await db.execute(
-      stmt.options(selectinload(Report.fields))
+  stmt = (
+    stmt
+    .order_by(Report.updated_at.desc())
+    .limit(25)
+  )
+
+  result = await db.execute(stmt)
+
+  reports = result.scalars().unique().all()
+
+  for report in reports:
+    report.fields.sort(key=lambda f: f.order)
+
+    project_ids = [
+      link.project_id
+      for link in report.project_links
+    ]
+
+    project_names = [
+      link.project.name
+      for link in report.project_links
+      if link.project
+    ]
+
+    response.append(
+      ReportWithCompanyAndProjectName(
+        id=report.id,
+        name=report.name,
+        template_id=report.template_id,
+        status=report.status,
+        created_at=report.created_at,
+        updated_at=report.updated_at,
+        fields=report.fields,
+        company_id=report.company_id,
+        company_name=report.company.name if report.company else None,
+        project_ids=project_ids,
+        project_name=project_names[0] if project_names else None,
+        photo_count=0,
+      )
     )
 
-    all_rows = result.all()
-
-    if search:
-      all_rows = [row for row in all_rows if search.strip("%").lower() in row[0].name.lower()]
-
-    all_rows = sorted(all_rows, key=lambda row: row[0].updated_at, reverse=True)[:25]
-
-  reports = []
-  for report, project_name in all_rows:
-      report.project_name = project_name
-      reports.append(report)
-
-  return reports
+  return response
 
 @router.post("", response_model=ReportRead, status_code=status.HTTP_201_CREATED)
 async def create_report(
@@ -253,13 +220,24 @@ async def create_report(
   if not template:
     raise HTTPException(status_code=404, detail="Report template not found")
 
-  parent_type = template.parent_type if hasattr(template, "parent_type") else ReportParentType.project
+  company_id = payload.company_id
 
-  company_id = await get_company_id(
-    parent_type=parent_type,
-    parent_id=payload.parent_id,
-    db=db
-  )
+  project = None
+
+  if payload.project_id:
+    project = await db.get(Project, payload.project_id)
+
+    if not project:
+      raise HTTPException(
+        status_code=404,
+        detail="Project not found",
+      )
+
+    if project.company_id != company_id:
+      raise HTTPException(
+        status_code=400,
+        detail="Project does not belong to the specified company",
+      )
 
   allowed, reason = await can_use_billed_features(company_id, db)
   if not allowed and current_user.role != "admin":
@@ -280,51 +258,30 @@ async def create_report(
       detail="Template does not belong to this company",
     )
 
-  if parent_type == ReportParentType.project:
-    await require_project_access(current_user, payload.parent_id, company_id, db)
+  if project:
+    await require_project_access(
+      current_user,
+      project.id,
+      company_id,
+      db,
+    )
   else:
-    require_company_manager(current_user, company_id)
+    require_company_member(
+      current_user,
+      company_id,
+    )
 
-  if current_user.role != "admin":
-    if parent_type == ReportParentType.project:
-      project = await db.get(Project, payload.parent_id)
-
-      if not project:
-        raise HTTPException(
-          status_code=404,
-          detail="Project not found",
-        )
-
-      if project.status != ProjectStatus.active:
-        raise HTTPException(
-          status_code=403,
-          detail="Reports can only be created for active projects",
-        )
-
-    elif parent_type == ReportParentType.company:
-      active_project_stmt = (
-        select(Project.id)
-        .where(
-          Project.company_id == company_id,
-          Project.status == ProjectStatus.active,
-        )
-        .limit(1)
+  if project and current_user.role != "admin":
+    if project.status != ProjectStatus.active:
+      raise HTTPException(
+        status_code=403,
+        detail="Reports can only be created for active projects",
       )
-
-      active_project_result = await db.execute(active_project_stmt)
-      active_project = active_project_result.first()
-
-      if not active_project:
-        raise HTTPException(
-          status_code=403,
-          detail="Company must have at least one active project before creating reports",
-        )
 
   report = Report(
     name=payload.name,
+    company_id=company_id,
     template_id=template.id,
-    parent_id=payload.parent_id,
-    parent_type=parent_type,
     created_at=datetime.now(timezone.utc),
     updated_at=datetime.now(timezone.utc),
     created_by=current_user.id,
@@ -332,6 +289,14 @@ async def create_report(
 
   db.add(report)
   await db.flush()
+
+  if project:
+    report_project_link = ReportProjectLink(
+      report_id=report.id,
+      project_id=project.id,
+    )
+
+    db.add(report_project_link)
 
   for template_field in template.fields:
     report_field = ReportField(
@@ -348,16 +313,32 @@ async def create_report(
   stmt = (
     select(Report)
     .where(Report.id == report.id)
-    .options(selectinload(Report.fields))
+    .options(
+      selectinload(Report.fields),
+      selectinload(Report.project_links),
+    )
   )
   result = await db.execute(stmt)
   report = result.scalar_one()
-
-  report.company_id = company_id
   report.fields.sort(key=lambda f: f.order)
-  report.photo_count = 0
 
-  return report
+  report_read = ReportRead(
+    id=report.id,
+    name=report.name,
+    template_id=report.template_id,
+    status=report.status,
+    created_at=report.created_at,
+    updated_at=report.updated_at,
+    fields=report.fields,
+    company_id=report.company_id,
+    project_ids=[
+      link.project_id
+      for link in report.project_links
+    ],
+    photo_count=0,
+  )
+
+  return report_read
 
 @router.get(
   "/templates",

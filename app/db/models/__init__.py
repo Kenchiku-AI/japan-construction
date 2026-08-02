@@ -18,6 +18,7 @@ from app.db.models.report import (
   ReportField,
   CompanyReportTemplate,
   ReportImageLink,
+  ReportProjectLink,
 )
 from app.db.models.image import (
   Image,

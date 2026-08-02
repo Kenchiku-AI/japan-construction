@@ -1,13 +1,14 @@
 from typing import Dict, List, Optional
 from uuid import UUID
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.db.models.report import ReportStatus
 
 class ReportCreate(BaseModel):
   name: str
   company_id: UUID
+  project_id: UUID | None = None
   template_id: UUID
 
 class ReportUpdate(BaseModel):
@@ -34,6 +35,7 @@ class ReportRead(BaseModel):
   updated_at: datetime
   fields: List[ReportFieldRead]
   company_id: Optional[UUID] = None
+  project_ids: List[UUID] = Field(default_factory=list)
   photo_count: int = 0
 
   model_config = {

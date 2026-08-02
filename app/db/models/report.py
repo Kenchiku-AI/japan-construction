@@ -98,11 +98,19 @@ class Report(Base):
     cascade="all, delete-orphan",
   )
 
+  project_links = relationship(
+    "ReportProjectLink",
+    back_populates="report",
+    cascade="all, delete-orphan",
+  )
+
   template = relationship("ReportTemplate")
 
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
   updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
   created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+  company = relationship("Company")
 
   creator = relationship(
     "User",
@@ -211,5 +219,53 @@ class CompanyReportTemplate(Base):
       "company_id",
       "report_template_id",
       unique=True,
+    ),
+  )
+
+class ReportProjectLink(Base):
+  __tablename__ = "report_project_links"
+
+  id = Column(
+    UUID(as_uuid=True),
+    primary_key=True,
+    default=uuid.uuid4,
+    index=True,
+  )
+
+  report_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("reports.id", ondelete="CASCADE"),
+    nullable=False,
+    index=True,
+  )
+
+  project_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("projects.id", ondelete="CASCADE"),
+    nullable=False,
+    index=True,
+  )
+
+  created_at = Column(
+    DateTime(timezone=True),
+    default=lambda: datetime.now(timezone.utc),
+    nullable=False,
+  )
+
+  report = relationship(
+    "Report",
+    back_populates="project_links",
+  )
+
+  project = relationship(
+    "Project",
+    back_populates="report_links",
+  )
+
+  __table_args__ = (
+    UniqueConstraint(
+      "report_id",
+      "project_id",
+      name="uq_report_project_link",
     ),
   )
