@@ -11,7 +11,6 @@ from app.db.models.line_conversation import LineConversation
 from app.db.models.conversation_item import ConversationItem
 from app.db.models.conversation_item_type import ConversationItemType, ConversationItemTypeLink
 from app.db.models.report import (
-  ReportParentType,
   ReportStatus,
   ReportTemplate,
   ReportTemplateField,

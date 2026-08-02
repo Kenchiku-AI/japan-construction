@@ -8,7 +8,7 @@ from sqlalchemy.orm import relationship, foreign
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.base import Base
-from app.db.models.report import Report, ReportParentType
+from app.db.models.report import Report
 from app.db.models.line_conversation import LineConversation
 from app.db.models.conversation_item import ConversationItem
 

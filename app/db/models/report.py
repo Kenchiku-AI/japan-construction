@@ -70,6 +70,13 @@ class Report(Base):
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
   name = Column(String, nullable=False)
 
+  company_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("companies.id", ondelete="CASCADE"),
+    nullable=False,
+    index=True,
+  )
+
   template_id = Column(
     UUID(as_uuid=True),
     ForeignKey("report_templates.id", ondelete="RESTRICT"),

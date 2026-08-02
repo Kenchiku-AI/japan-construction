@@ -18,7 +18,6 @@ from app.db.models import (
   ReportField,
   ReportTemplate,
   ReportTemplateField,
-  ReportParentType,
   ReportStatus,
   ReportImageLink,
   Image,
@@ -1869,9 +1868,6 @@ async def update_report_template(
 
   if payload.description is not None:
     template.description = payload.description
-
-  if payload.parent_type is not None:
-    template.parent_type = payload.parent_type
 
   if payload.fields is not None:
     for f in template.fields:

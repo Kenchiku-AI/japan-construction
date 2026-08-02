@@ -3,7 +3,7 @@ from uuid import UUID
 from datetime import datetime
 from pydantic import BaseModel
 
-from app.db.models.report import ReportParentType, ReportStatus
+from app.db.models.report import ReportStatus
 
 class ReportCreate(BaseModel):
   name: str
@@ -55,7 +55,6 @@ class ReportTemplateFieldCreate(BaseModel):
 class ReportTemplateCreate(BaseModel):
   name: str
   description: Optional[str] = None
-  parent_type: ReportParentType
   fields: List[ReportTemplateFieldCreate]
 
 class ReportTemplateFieldRead(BaseModel):
@@ -68,7 +67,6 @@ class ReportTemplateRead(BaseModel):
   id: UUID
   name: str
   description: Optional[str] = None
-  parent_type: ReportParentType
   is_global: bool
   fields: List[ReportTemplateFieldRead]
 
@@ -80,7 +78,6 @@ class ReportTemplateFieldUpdate(BaseModel):
 class ReportTemplateUpdate(BaseModel):
   name: str | None = None
   description: str | None = None
-  parent_type: str | None = None
   fields: list[ReportTemplateFieldUpdate] | None = None
 
 class ShareReportTemplateRequest(BaseModel):

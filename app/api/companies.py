@@ -15,7 +15,6 @@ from app.db.models import (
   Project,
   ProjectStatus,
   Report,
-  ReportParentType,
   User,
   ImageTag,
   ProjectGuestLink,
@@ -443,7 +442,7 @@ async def update_company(
 
   if "billing_plan_id" in payload.model_fields_set:
     if not company.stripe_customer_id:
-        needs_customer = True
+      needs_customer = True
     else:
       try:
         stripe.Customer.retrieve(company.stripe_customer_id)
