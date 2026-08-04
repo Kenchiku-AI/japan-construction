@@ -91,10 +91,14 @@ async def list_companies(
 
   # NOTE: no dedicated `completed_at` column exists on Project, so this
   # treats "finished in the last 30 days" as status == completed AND the
-  # row was last touched in the last 30 days. This will over-count if a
-  # completed project is edited later without a real re-completion.
-  # Consider adding a `completed_at` column set only on the active -> completed
-  # transition if this needs to be exact.
+  # row was last touched in the last 30 days.
+  #
+  # This can over-count if a completed project is edited later without
+  # actually being re-completed.
+  #
+  # If this needs to be exact in the future, consider adding a
+  # `completed_at` column that is only set when the project transitions
+  # from active -> completed.
   finished_projects_count = (
     select(func.count(Project.id))
     .where(
@@ -106,24 +110,23 @@ async def list_companies(
     .scalar_subquery()
   )
 
-  # Reports are polymorphic (parent_type/parent_id), so count reports
-  # attached directly to the company OR to any of the company's projects.
+  # NEW:
+  # Report now has a direct company_id, so we no longer need to inspect
+  # Report.parent_type / Report.parent_id or traverse through projects.
+  #
+  # This counts ALL reports belonging to the company, regardless of whether
+  # they are:
+  #   - company-level reports
+  #   - project-level reports via ReportProjectLink
+  #   - future reports associated with other entities such as orders
+  #
+  # The important design point is that Report.company_id represents the
+  # owning company independently from its other relationships.
   recent_reports_count = (
     select(func.count(Report.id))
     .where(
+      Report.company_id == Company.id,
       Report.created_at >= thirty_days_ago,
-      or_(
-        and_(
-          Report.parent_type == ReportParentType.company,
-          Report.parent_id == Company.id,
-        ),
-        and_(
-          Report.parent_type == ReportParentType.project,
-          Report.parent_id.in_(
-            select(Project.id).where(Project.company_id == Company.id)
-          ),
-        ),
-      ),
     )
     .correlate(Company)
     .scalar_subquery()
@@ -132,7 +135,10 @@ async def list_companies(
   active_project_guests_count = (
     select(func.count(func.distinct(ProjectGuestLink.user_id)))
     .select_from(ProjectGuestLink)
-    .join(Project, Project.id == ProjectGuestLink.project_id)
+    .join(
+      Project,
+      Project.id == ProjectGuestLink.project_id,
+    )
     .where(
       Project.company_id == Company.id,
       Project.status == ProjectStatus.active,
@@ -143,7 +149,9 @@ async def list_companies(
 
   employees_count = (
     select(func.count(User.id))
-    .where(User.company_id == Company.id)
+    .where(
+      User.company_id == Company.id,
+    )
     .correlate(Company)
     .scalar_subquery()
   )
@@ -158,7 +166,10 @@ async def list_companies(
       active_project_guests_count.label("active_project_guests_count"),
       employees_count.label("employees_count"),
     )
-    .outerjoin(Project, Project.company_id == Company.id)
+    .outerjoin(
+      Project,
+      Project.company_id == Company.id,
+    )
     .group_by(Company.id)
     .order_by(desc(func.max(Project.created_at)))
     .limit(25)
@@ -168,8 +179,10 @@ async def list_companies(
   rows = result.all()
 
   companies = []
+
   for row in rows:
     company = row.Company
+
     companies.append(
       CompanyWithMetrics(
         id=company.id,
