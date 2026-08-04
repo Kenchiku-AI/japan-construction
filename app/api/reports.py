@@ -150,13 +150,14 @@ async def list_reports(
     .limit(25)
     .options(
       selectinload(Report.fields),
+      selectinload(Report.project_links),
     )
   )
 
   result = await db.execute(stmt)
 
-  # A Report can eventually have multiple project links,
-  # so the SQL query can produce duplicate Report rows.
+  # A Report can have multiple project links, so the SQL query
+  # can return multiple rows for the same Report.
   seen = set()
   reports = []
 
@@ -167,7 +168,16 @@ async def list_reports(
     seen.add(report.id)
 
     report.company_name = company_name
+
+    # Convenience field for existing frontend usage.
+    # This should NOT be treated as the authoritative
+    # representation of the report's project relationships.
     report.project_name = project_name
+
+    report.project_ids = [
+      link.project_id
+      for link in report.project_links
+    ]
 
     report.fields.sort(key=lambda f: f.order)
 
@@ -192,8 +202,13 @@ async def create_report(
   # company. Otherwise company_id must be supplied directly.
   # ---------------------------------------------------------
 
+  project = None
+
   if payload.project_id:
-    project = await db.get(Project, payload.project_id)
+    project = await db.get(
+      Project,
+      payload.project_id,
+    )
 
     if not project:
       raise HTTPException(
@@ -203,7 +218,11 @@ async def create_report(
 
     company_id = project.company_id
 
-    # Project reports require project access.
+    # -------------------------------------------------------
+    # Project reports require the user to have access to the
+    # specific project.
+    # -------------------------------------------------------
+
     if current_user.role != "admin":
       await require_project_access(
         current_user,
@@ -221,7 +240,10 @@ async def create_report(
 
     company_id = payload.company_id
 
-    # Company reports only require company membership.
+    # -------------------------------------------------------
+    # Company-only reports only require company membership.
+    # -------------------------------------------------------
+
     if current_user.role != "admin":
       require_company_member(
         current_user,
@@ -244,7 +266,7 @@ async def create_report(
     )
 
   # ---------------------------------------------------------
-  # Load the template.
+  # Load the report template.
   # ---------------------------------------------------------
 
   stmt = (
@@ -269,7 +291,9 @@ async def create_report(
 
   # ---------------------------------------------------------
   # Make sure the template is available to this company.
+  #
   # Global templates can be used by any company.
+  # Company-specific templates require a link to this company.
   # ---------------------------------------------------------
 
   template_company_link = (
@@ -290,20 +314,12 @@ async def create_report(
   # ---------------------------------------------------------
   # Non-admin users can only create reports for active projects.
   #
-  # For company reports, retain the existing requirement that
-  # the company must have at least one active project.
+  # Company-only reports retain the existing requirement that
+  # the company has at least one active project.
   # ---------------------------------------------------------
 
   if current_user.role != "admin":
-    if payload.project_id:
-      project = await db.get(Project, payload.project_id)
-
-      if not project:
-        raise HTTPException(
-          status_code=404,
-          detail="Project not found",
-        )
-
+    if project:
       if project.status != ProjectStatus.active:
         raise HTTPException(
           status_code=403,
@@ -327,12 +343,17 @@ async def create_report(
       if not active_project_result.first():
         raise HTTPException(
           status_code=403,
-          detail="Company must have at least one active project before creating reports",
+          detail=(
+            "Company must have at least one active project "
+            "before creating reports"
+          ),
         )
 
   # ---------------------------------------------------------
   # Create the Report.
-  # company_id is directly stored on Report.
+  #
+  # company_id is directly stored on Report because every
+  # report belongs to exactly one company.
   # ---------------------------------------------------------
 
   report = Report(
@@ -350,6 +371,14 @@ async def create_report(
 
   # ---------------------------------------------------------
   # Create the optional project relationship separately.
+  #
+  # This keeps Report extensible. Future relationships can
+  # follow the same pattern:
+  #
+  #   ReportOrderLink
+  #   ReportCustomerLink
+  #   ReportSiteLink
+  #   etc.
   # ---------------------------------------------------------
 
   if payload.project_id:
@@ -378,14 +407,23 @@ async def create_report(
   await db.commit()
 
   # ---------------------------------------------------------
-  # Reload the report.
+  # Reload the report with all relationships required by the
+  # response.
+  #
+  # IMPORTANT: project_links must be loaded here. Otherwise
+  # project_ids will be empty even though the link was created.
   # ---------------------------------------------------------
 
   stmt = (
     select(Report)
-    .where(Report.id == report.id)
+    .where(
+      Report.id == report.id,
+    )
     .options(
       selectinload(Report.fields),
+      selectinload(Report.image_links)
+        .selectinload(ReportImageLink.image),
+      selectinload(Report.project_links),
     )
   )
 
@@ -394,7 +432,18 @@ async def create_report(
   report = result.scalar_one()
 
   report.fields.sort(key=lambda f: f.order)
-  report.photo_count = 0
+
+  report.photo_count = len(report.image_links)
+
+  # ---------------------------------------------------------
+  # Convert the link-table relationship into the API-friendly
+  # project_ids representation.
+  # ---------------------------------------------------------
+
+  report.project_ids = [
+    link.project_id
+    for link in report.project_links
+  ]
 
   return report
 
@@ -837,7 +886,6 @@ async def get_report(
       detail="Report not found",
     )
 
-  # CHANGED:
   # All Report authorization now goes through this helper.
   await require_report_access(
     current_user,
@@ -848,6 +896,11 @@ async def get_report(
   report.fields.sort(key=lambda f: f.order)
 
   report.photo_count = len(report.image_links)
+
+  report.project_ids = [
+    link.project_id
+    for link in report.project_links
+  ]
 
   report.disabled = False
 
@@ -967,6 +1020,10 @@ async def update_report(
       detail="Report not found",
     )
 
+  # ---------------------------------------------------------
+  # Billing check is now based directly on Report.company_id.
+  # ---------------------------------------------------------
+
   allowed, reason = await can_use_billed_features(
     report.company_id,
     db,
@@ -980,6 +1037,12 @@ async def update_report(
 
   # ---------------------------------------------------------
   # Centralized report authorization.
+  #
+  # This handles:
+  # - company membership
+  # - project access
+  # - project guest access
+  # - future report relationships
   # ---------------------------------------------------------
 
   await require_report_access(
@@ -987,6 +1050,11 @@ async def update_report(
     report,
     db,
   )
+
+  # ---------------------------------------------------------
+  # Closed reports can only have their status changed by
+  # managers/admins.
+  # ---------------------------------------------------------
 
   if report.status != ReportStatus.open:
     if current_user.role not in {"admin", "manager"}:
@@ -1007,11 +1075,11 @@ async def update_report(
       )
 
   # ---------------------------------------------------------
-  # Project reports can only be edited while at least one
-  # linked project is active.
+  # A report associated with projects can only be edited if
+  # at least one linked project is active.
   #
-  # Company-only reports have require at least one
-  # active project in the company.
+  # A company-only report can only be edited if the company
+  # has at least one active project.
   # ---------------------------------------------------------
 
   if current_user.role != "admin":
@@ -1060,6 +1128,10 @@ async def update_report(
           detail="Company must have at least one active project to update reports",
         )
 
+  # ---------------------------------------------------------
+  # Apply requested changes.
+  # ---------------------------------------------------------
+
   if payload.name is not None:
     report.name = payload.name
 
@@ -1100,6 +1172,11 @@ async def update_report(
 
   await db.commit()
 
+  # ---------------------------------------------------------
+  # Re-fetch so the response contains the current persisted
+  # state, including all project links.
+  # ---------------------------------------------------------
+
   stmt = (
     select(Report)
     .where(
@@ -1118,7 +1195,21 @@ async def update_report(
   report = result.scalar_one()
 
   report.fields.sort(key=lambda f: f.order)
+
   report.photo_count = len(report.image_links)
+
+  # ---------------------------------------------------------
+  # Populate relationship IDs for the API response.
+  #
+  # This is important because project_links is an ORM
+  # relationship, while project_ids is the API representation
+  # of that relationship.
+  # ---------------------------------------------------------
+
+  report.project_ids = [
+    link.project_id
+    for link in report.project_links
+  ]
 
   return report
 
