@@ -837,7 +837,6 @@ async def get_report(
       detail="Report not found",
     )
 
-  # CHANGED:
   # All Report authorization now goes through this helper.
   await require_report_access(
     current_user,
@@ -848,6 +847,11 @@ async def get_report(
   report.fields.sort(key=lambda f: f.order)
 
   report.photo_count = len(report.image_links)
+
+  report.project_ids = [
+    link.project_id
+    for link in report.project_links
+  ]
 
   report.disabled = False
 
@@ -967,6 +971,10 @@ async def update_report(
       detail="Report not found",
     )
 
+  # ---------------------------------------------------------
+  # Billing check is now based directly on Report.company_id.
+  # ---------------------------------------------------------
+
   allowed, reason = await can_use_billed_features(
     report.company_id,
     db,
@@ -980,6 +988,12 @@ async def update_report(
 
   # ---------------------------------------------------------
   # Centralized report authorization.
+  #
+  # This handles:
+  # - company membership
+  # - project access
+  # - project guest access
+  # - future report relationships
   # ---------------------------------------------------------
 
   await require_report_access(
@@ -987,6 +1001,11 @@ async def update_report(
     report,
     db,
   )
+
+  # ---------------------------------------------------------
+  # Closed reports can only have their status changed by
+  # managers/admins.
+  # ---------------------------------------------------------
 
   if report.status != ReportStatus.open:
     if current_user.role not in {"admin", "manager"}:
@@ -1007,11 +1026,18 @@ async def update_report(
       )
 
   # ---------------------------------------------------------
-  # Project reports can only be edited while at least one
-  # linked project is active.
+  # A report associated with projects can only be edited if
+  # at least one linked project is active.
   #
-  # Company-only reports have require at least one
-  # active project in the company.
+  # A company-only report can only be edited if the company
+  # has at least one active project.
+  #
+  # NOTE:
+  # This is separate from require_report_access().
+  # require_report_access() answers "is this user allowed
+  # to access this report?"
+  #
+  # This check answers "is this report currently enabled?"
   # ---------------------------------------------------------
 
   if current_user.role != "admin":
@@ -1060,6 +1086,10 @@ async def update_report(
           detail="Company must have at least one active project to update reports",
         )
 
+  # ---------------------------------------------------------
+  # Apply requested changes.
+  # ---------------------------------------------------------
+
   if payload.name is not None:
     report.name = payload.name
 
@@ -1100,6 +1130,11 @@ async def update_report(
 
   await db.commit()
 
+  # ---------------------------------------------------------
+  # Re-fetch so the response contains the current persisted
+  # state, including all project links.
+  # ---------------------------------------------------------
+
   stmt = (
     select(Report)
     .where(
@@ -1118,7 +1153,21 @@ async def update_report(
   report = result.scalar_one()
 
   report.fields.sort(key=lambda f: f.order)
+
   report.photo_count = len(report.image_links)
+
+  # ---------------------------------------------------------
+  # Populate relationship IDs for the API response.
+  #
+  # This is important because project_links is an ORM
+  # relationship, while project_ids is the API representation
+  # of that relationship.
+  # ---------------------------------------------------------
+
+  report.project_ids = [
+    link.project_id
+    for link in report.project_links
+  ]
 
   return report
 
