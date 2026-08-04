@@ -150,9 +150,6 @@ async def list_reports(
     .limit(25)
     .options(
       selectinload(Report.fields),
-
-      # NEW: Load all project relationships so we can
-      # populate project_ids in the response.
       selectinload(Report.project_links),
     )
   )
@@ -177,7 +174,6 @@ async def list_reports(
     # representation of the report's project relationships.
     report.project_name = project_name
 
-    # NEW: Expose all project relationships through the API.
     report.project_ids = [
       link.project_id
       for link in report.project_links
@@ -246,8 +242,6 @@ async def create_report(
 
     # -------------------------------------------------------
     # Company-only reports only require company membership.
-    #
-    # We intentionally do NOT require the user to be a manager.
     # -------------------------------------------------------
 
     if current_user.role != "admin":
@@ -1086,13 +1080,6 @@ async def update_report(
   #
   # A company-only report can only be edited if the company
   # has at least one active project.
-  #
-  # NOTE:
-  # This is separate from require_report_access().
-  # require_report_access() answers "is this user allowed
-  # to access this report?"
-  #
-  # This check answers "is this report currently enabled?"
   # ---------------------------------------------------------
 
   if current_user.role != "admin":
