@@ -53,7 +53,6 @@ from app.core.dependencies import (
   require_company_manager,
   require_project_access,
 )
-from app.services.reports import get_company_id
 from app.services.openai import (
   transcribe_and_extract_json,
   extract_report_fields_from_line_conversations,

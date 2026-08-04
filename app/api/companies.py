@@ -110,10 +110,6 @@ async def list_companies(
     .scalar_subquery()
   )
 
-  # NEW:
-  # Report now has a direct company_id, so we no longer need to inspect
-  # Report.parent_type / Report.parent_id or traverse through projects.
-  #
   # This counts ALL reports belonging to the company, regardless of whether
   # they are:
   #   - company-level reports
