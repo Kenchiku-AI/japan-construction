@@ -136,12 +136,12 @@ async def patch_user(
           detail="Managers can only update the role of other users",
         )
 
-      if "role" in update_data:
-        if user.role == "manager":
-          raise HTTPException(
-            status_code=403,
-            detail="Managers cannot change another manager's role",
-          )
+      # if "role" in update_data:
+      #   if user.role == "manager":
+      #     raise HTTPException(
+      #       status_code=403,
+      #       detail="Managers cannot change another manager's role",
+      #     )
 
   elif current_user.role == "user":
     if not is_own_account:
