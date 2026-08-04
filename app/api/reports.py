@@ -150,13 +150,17 @@ async def list_reports(
     .limit(25)
     .options(
       selectinload(Report.fields),
+
+      # NEW: Load all project relationships so we can
+      # populate project_ids in the response.
+      selectinload(Report.project_links),
     )
   )
 
   result = await db.execute(stmt)
 
-  # A Report can eventually have multiple project links,
-  # so the SQL query can produce duplicate Report rows.
+  # A Report can have multiple project links, so the SQL query
+  # can return multiple rows for the same Report.
   seen = set()
   reports = []
 
@@ -167,7 +171,17 @@ async def list_reports(
     seen.add(report.id)
 
     report.company_name = company_name
+
+    # Convenience field for existing frontend usage.
+    # This should NOT be treated as the authoritative
+    # representation of the report's project relationships.
     report.project_name = project_name
+
+    # NEW: Expose all project relationships through the API.
+    report.project_ids = [
+      link.project_id
+      for link in report.project_links
+    ]
 
     report.fields.sort(key=lambda f: f.order)
 
