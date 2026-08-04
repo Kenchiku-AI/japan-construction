@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models.report import Report, ReportParentType, ReportStatus
+from app.db.models.report import Report, ReportProjectLink, ReportStatus
 from app.db.models.project import Project
 from app.db.models.user import User
 from app.db.models.project_guest_link import ProjectGuestLink
@@ -14,25 +14,6 @@ from app.db.session import AsyncSessionLocal
 from app.services.openai import transcribe_and_extract_json
 
 logger = logging.getLogger(__name__)
-
-async def get_company_id(
-  parent_type: ReportParentType,
-  parent_id: UUID,
-  db: AsyncSession
-) -> UUID:
-  if parent_type == ReportParentType.company:
-    return parent_id
-  elif parent_type == ReportParentType.project:
-    stmt = select(Project).where(Project.id == parent_id)
-    result = await db.execute(stmt)
-    project = result.scalar_one_or_none()
-
-    if not project:
-      raise ValueError(f"Project with id {parent_id} not found")
-
-    return project.company_id
-  else:
-    raise ValueError(f"Unsupported parent_type: {parent_type}")
 
 async def handle_line_group_message(
   text: str,
@@ -42,22 +23,31 @@ async def handle_line_group_message(
   async with AsyncSessionLocal() as db:
     stmt = (
       select(Report)
+      .join(
+        ReportProjectLink,
+        ReportProjectLink.report_id == Report.id,
+      )
       .where(
-        Report.parent_id == project_id,
-        Report.parent_type == ReportParentType.project,
+        ReportProjectLink.project_id == project_id,
         Report.status == ReportStatus.open,
       )
-      .options(selectinload(Report.fields))
-      .order_by(Report.created_at.desc())
+      .options(
+        selectinload(Report.fields),
+      )
+      .order_by(
+        Report.created_at.desc(),
+      )
       .limit(1)
     )
+
     result = await db.execute(stmt)
     report = result.scalars().first()
 
     if report is None:
       logger.info(
         "LINE group message: no open report for project | project_id=%s user_id=%s",
-        project_id, user.id,
+        project_id,
+        user.id,
       )
       return
 
@@ -70,19 +60,27 @@ async def handle_line_group_message(
     if not changed_fields:
       logger.info(
         "LINE group message: no fields matched | report_id=%s user_id=%s",
-        report.id, user.id,
+        report.id,
+        user.id,
       )
       return
 
-    field_map = {str(f.id): f for f in report.fields}
+    field_map = {
+      str(field.id): field
+      for field in report.fields
+    }
+
     for field_id, value in changed_fields.items():
       if field_id in field_map:
         field_map[field_id].value = value
 
     report.updated_at = datetime.now(timezone.utc)
+
     await db.commit()
 
     logger.info(
       "LINE group message: updated %d field(s) on report_id=%s | user_id=%s",
-      len(changed_fields), report.id, user.id,
+      len(changed_fields),
+      report.id,
+      user.id,
     )

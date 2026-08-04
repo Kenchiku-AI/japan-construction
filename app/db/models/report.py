@@ -18,10 +18,6 @@ from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
-class ReportParentType(str, Enum):
-  project = "project"
-  company = "company"
-
 class ReportStatus(str, Enum):
   open = "open"
   closed = "closed"
@@ -35,8 +31,6 @@ class ReportTemplate(Base):
   description = Column(String, nullable=True)
 
   is_global = Column(Boolean, nullable=False, default=False)
-  
-  parent_type = Column(SQLEnum(ReportParentType), nullable=False)
 
   fields = relationship(
     "ReportTemplateField",
@@ -76,15 +70,19 @@ class Report(Base):
   id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
   name = Column(String, nullable=False)
 
+  company_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("companies.id", ondelete="CASCADE"),
+    nullable=False,
+    index=True,
+  )
+
   template_id = Column(
     UUID(as_uuid=True),
     ForeignKey("report_templates.id", ondelete="RESTRICT"),
     nullable=False,
     index=True,
   )
-
-  parent_type = Column(SQLEnum(ReportParentType), nullable=False)
-  parent_id = Column(UUID(as_uuid=True), nullable=False)
 
   status = Column(SQLEnum(ReportStatus), nullable=False, default=ReportStatus.open)
 
@@ -100,19 +98,23 @@ class Report(Base):
     cascade="all, delete-orphan",
   )
 
+  project_links = relationship(
+    "ReportProjectLink",
+    back_populates="report",
+    cascade="all, delete-orphan",
+  )
+
   template = relationship("ReportTemplate")
 
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
   updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
   created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
+  company = relationship("Company")
+
   creator = relationship(
     "User",
     foreign_keys=[created_by],
-  )
-
-  __table_args__ = (
-    Index("ix_reports_parent", "parent_type", "parent_id"),
   )
 
 class ReportField(Base):
@@ -217,5 +219,53 @@ class CompanyReportTemplate(Base):
       "company_id",
       "report_template_id",
       unique=True,
+    ),
+  )
+
+class ReportProjectLink(Base):
+  __tablename__ = "report_project_links"
+
+  id = Column(
+    UUID(as_uuid=True),
+    primary_key=True,
+    default=uuid.uuid4,
+    index=True,
+  )
+
+  report_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("reports.id", ondelete="CASCADE"),
+    nullable=False,
+    index=True,
+  )
+
+  project_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("projects.id", ondelete="CASCADE"),
+    nullable=False,
+    index=True,
+  )
+
+  created_at = Column(
+    DateTime(timezone=True),
+    default=lambda: datetime.now(timezone.utc),
+    nullable=False,
+  )
+
+  report = relationship(
+    "Report",
+    back_populates="project_links",
+  )
+
+  project = relationship(
+    "Project",
+    back_populates="report_links",
+  )
+
+  __table_args__ = (
+    UniqueConstraint(
+      "report_id",
+      "project_id",
+      name="uq_report_project_link",
     ),
   )

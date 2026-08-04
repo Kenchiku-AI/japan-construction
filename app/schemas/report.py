@@ -1,13 +1,14 @@
 from typing import Dict, List, Optional
 from uuid import UUID
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.db.models.report import ReportParentType, ReportStatus
+from app.db.models.report import ReportStatus
 
 class ReportCreate(BaseModel):
   name: str
-  parent_id: UUID
+  company_id: UUID
+  project_id: UUID | None = None
   template_id: UUID
 
 class ReportUpdate(BaseModel):
@@ -29,13 +30,12 @@ class ReportRead(BaseModel):
   id: UUID
   name: str
   template_id: UUID
-  parent_id: UUID
-  parent_type: ReportParentType
   status: ReportStatus
   created_at: datetime
   updated_at: datetime
   fields: List[ReportFieldRead]
   company_id: Optional[UUID] = None
+  project_ids: List[UUID] = Field(default_factory=list)
   photo_count: int = 0
 
   model_config = {
@@ -57,7 +57,6 @@ class ReportTemplateFieldCreate(BaseModel):
 class ReportTemplateCreate(BaseModel):
   name: str
   description: Optional[str] = None
-  parent_type: ReportParentType
   fields: List[ReportTemplateFieldCreate]
 
 class ReportTemplateFieldRead(BaseModel):
@@ -70,7 +69,6 @@ class ReportTemplateRead(BaseModel):
   id: UUID
   name: str
   description: Optional[str] = None
-  parent_type: ReportParentType
   is_global: bool
   fields: List[ReportTemplateFieldRead]
 
@@ -82,7 +80,6 @@ class ReportTemplateFieldUpdate(BaseModel):
 class ReportTemplateUpdate(BaseModel):
   name: str | None = None
   description: str | None = None
-  parent_type: str | None = None
   fields: list[ReportTemplateFieldUpdate] | None = None
 
 class ShareReportTemplateRequest(BaseModel):

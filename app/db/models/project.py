@@ -8,7 +8,7 @@ from sqlalchemy.orm import relationship, foreign
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.base import Base
-from app.db.models.report import Report, ReportParentType
+from app.db.models.report import Report, ReportProjectLink
 from app.db.models.line_conversation import LineConversation
 from app.db.models.conversation_item import ConversationItem
 
@@ -35,11 +35,16 @@ class Project(Base):
 
   reports = relationship(
     "Report",
-    primaryjoin=and_(
-      foreign(Report.parent_id) == id,
-      Report.parent_type == ReportParentType.project
-    ),
-    viewonly=True
+    secondary="report_project_links",
+    primaryjoin="Project.id == ReportProjectLink.project_id",
+    secondaryjoin="Report.id == ReportProjectLink.report_id",
+    viewonly=True,
+  )
+
+  report_links = relationship(
+    "ReportProjectLink",
+    back_populates="project",
+    cascade="all, delete-orphan",
   )
 
   guest_links = relationship(
