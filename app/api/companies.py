@@ -588,11 +588,27 @@ async def get_company_users(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  if current_user.role != "admin" and current_user.company_id != company_id:
-    raise HTTPException(
-      status_code=403,
-      detail="Not authorized",
-    )
+  if current_user.role != "admin":
+    has_company_access = current_user.company_id == company_id
+
+    if not has_company_access:
+      guest_access_result = await db.execute(
+        select(ProjectGuestLink.id)
+        .join(Project, Project.id == ProjectGuestLink.project_id)
+        .where(
+          ProjectGuestLink.user_id == current_user.id,
+          Project.company_id == company_id,
+        )
+        .limit(1)
+      )
+
+      has_company_access = guest_access_result.scalar_one_or_none() is not None
+
+    if not has_company_access:
+      raise HTTPException(
+        status_code=403,
+        detail="Not authorized",
+      )
 
   result = await db.execute(
     select(User)
