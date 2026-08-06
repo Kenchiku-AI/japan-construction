@@ -323,22 +323,73 @@ def send_company_created_email(email: str, company_name: str, invite_token: str)
 
   signup_link = f"{settings.WEB_CLIENT_URL}/signup?{params}"
 
-  subject = f"{company_name}へようこそ"
+  subject = "Kenchiku AIへようこそ"
 
   message = f"""
-{company_name} が作成されました。<br/>
-以下のボタンをクリックして、アカウント登録を完了してください。
+Kenchiku AIの無料トライアルにお申し込みいただきありがとうございます。<br/>
+{company_name}のアカウントへの登録を完了するには、以下のボタンをクリックしてください。
 """
 
   html_body = _build_email_template(
-    title="アカウント登録を完了してください",
+    title="Kenchiku AIへようこそ",
     message=message,
     button_text="アカウント登録を完了する",
     button_url=signup_link,
   )
 
   text_body = f"""
-{company_name} が作成されました。
+Kenchiku AIの無料トライアルにお申し込みいただきありがとうございます。
+
+{company_name}のアカウントへの登録を完了するには、以下のリンクをクリックしてください。
+{signup_link}
+"""
+
+  try:
+    ses.send_email(
+      Source=settings.NO_REPLY_EMAIL,
+      Destination={"ToAddresses": [email]},
+      ReplyToAddresses=[settings.SUPPORT_EMAIL],
+      Message={
+        "Subject": {"Data": subject},
+        "Body": {
+          "Text": {"Data": text_body},
+          "Html": {"Data": html_body},
+        },
+      },
+    )
+    logger.info(f"Sent Kenchiku AI welcome email to {email}")
+  except Exception:
+    logger.exception("Error sending email to %s", email)
+    raise
+
+def send_company_invitation_email(
+  email: str,
+  company_name: str,
+  invite_token: str,
+) -> None:
+  params = urlencode({
+    "invitationToken": invite_token,
+    "email": email,
+  })
+
+  signup_link = f"{settings.WEB_CLIENT_URL}/signup?{params}"
+
+  subject = f"{company_name}からKenchiku AIへの招待"
+
+  message = f"""
+{company_name}のメンバーからKenchiku AIへの招待が届いています。<br/>
+以下のボタンをクリックして、アカウント登録を完了してください。
+"""
+
+  html_body = _build_email_template(
+    title="Kenchiku AIへの招待が届いています",
+    message=message,
+    button_text="アカウント登録を完了する",
+    button_url=signup_link,
+  )
+
+  text_body = f"""
+{company_name}のメンバーからKenchiku AIへの招待が届いています。
 
 以下のリンクからアカウント登録を完了してください。
 {signup_link}
@@ -357,7 +408,7 @@ def send_company_created_email(email: str, company_name: str, invite_token: str)
         },
       },
     )
-    logger.info(f"Sent company created email to {email}")
+    logger.info(f"Sent company invitation email to {email}")
   except Exception:
     logger.exception("Error sending email to %s", email)
     raise
