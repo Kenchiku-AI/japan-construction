@@ -15,6 +15,7 @@ from app.schemas.invitation import CompanyInvitationCreate, ProjectGuestInvitati
 from app.services.email import (
   send_company_created_email,
   send_existing_user_invitation_email,
+  send_company_invitation_email,
   send_guest_invitation_email,
   send_project_guest_access_email,
 )
@@ -59,13 +60,23 @@ async def create_company_invitation(
   await db.refresh(invitation)
 
   if user:
+    # Existing guest user is being invited to join this company
     background_tasks.add_task(
       send_existing_user_invitation_email,
       payload.email,
       company.name,
       token,
     )
+  elif current_user is not None:
+    # New user is being invited to an existing company
+    background_tasks.add_task(
+      send_company_invitation_email,
+      payload.email,
+      company.name,
+      token,
+    )
   else:
+    # Invitation is being created as part of creating a new company
     background_tasks.add_task(
       send_company_created_email,
       payload.email,
