@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import UUID
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.db.models.conversation_item import ConversationItemStatus
 
@@ -23,17 +23,27 @@ class ConversationItemCreate(BaseModel):
   conversation_item_type_id: UUID
   name: str
   description: str | None = None
+  assignee_id: UUID | None = None
 
 class ConversationItemUpdate(BaseModel):
   name: str | None = None
   description: str | None = None
   status: ConversationItemStatus | None = None
+  assignee_id: UUID | None = None
+
+class ConversationItemAssigneeRead(BaseModel):
+  id: UUID
+  first_name: str | None
+  last_name: str | None
+
+  model_config = ConfigDict(from_attributes=True)
 
 class ConversationItemRead(BaseModel):
   id: UUID
   conversation_id: UUID | None = None
   conversation_item_type_id: UUID
   name: str
+  assignee: ConversationItemAssigneeRead | None
   description: str
   source_message_text: str | None = None
   status: ConversationItemStatus
