@@ -79,6 +79,7 @@ async def get_conversation_items(
     )
     .options(
       selectinload(ConversationItem.item_type),
+      selectinload(ConversationItem.assignee),
     )
     .order_by(
       ConversationItem.updated_at.desc(),
@@ -114,11 +115,28 @@ async def create_conversation_item(
   if current_user.role != "admin":
     await require_project_access(current_user, payload.project_id, project.company_id, db)
 
+  if payload.assignee_id is not None:
+    assignee = await db.get(User, payload.assignee_id)
+
+    if not assignee:
+      raise HTTPException(
+        status_code=404,
+        detail="Assignee not found",
+      )
+
+    await require_project_access(
+      assignee,
+      payload.project_id,
+      project.company_id,
+      db,
+    )
+
   conversation_item = ConversationItem(
     conversation_item_type_id=payload.conversation_item_type_id,
     project_id=payload.project_id,
     name=payload.name,
     description=payload.description,
+    assignee_id=payload.assignee_id,
     status=ConversationItemStatus.new,
   )
 
@@ -139,7 +157,11 @@ async def update_conversation_item(
   current_user: User = Depends(get_current_user),
 ):
   result = await db.execute(
-    select(ConversationItem).where(ConversationItem.id == conversation_item_id)
+    select(ConversationItem)
+    .where(ConversationItem.id == conversation_item_id)
+    .options(
+      selectinload(ConversationItem.assignee),
+    )
   )
   conversation_item = result.scalar_one_or_none()
 
@@ -157,7 +179,25 @@ async def update_conversation_item(
   if current_user.role != "admin":
     await require_project_access(current_user, conversation_item.project_id, project.company_id, db)
 
-  for field, value in payload.model_dump(exclude_unset=True).items():
+  update_data = payload.model_dump(exclude_unset=True)
+
+  if "assignee_id" in update_data and update_data["assignee_id"] is not None:
+    assignee = await db.get(User, update_data["assignee_id"])
+
+    if not assignee:
+      raise HTTPException(
+        status_code=404,
+        detail="Assignee not found",
+      )
+
+    await require_project_access(
+      assignee,
+      conversation_item.project_id,
+      project.company_id,
+      db,
+    )
+
+  for field, value in update_data.items():
     setattr(conversation_item, field, value)
 
   await db.commit()

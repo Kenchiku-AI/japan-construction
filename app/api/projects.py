@@ -101,6 +101,7 @@ async def get_project_conversation_items(
     )
     .options(
       selectinload(ConversationItem.item_type),
+      selectinload(ConversationItem.assignee),
     )
     .order_by(
       ConversationItemType.name,

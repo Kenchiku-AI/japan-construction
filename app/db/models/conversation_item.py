@@ -55,6 +55,13 @@ class ConversationItem(Base):
     default=ConversationItemStatus.new,
   )
 
+  assignee_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey("users.id", ondelete="SET NULL"),
+    nullable=True,
+    index=True,
+  )
+
   project = relationship(
     "Project",
     back_populates="conversation_items",
@@ -68,6 +75,11 @@ class ConversationItem(Base):
   item_type = relationship(
     "ConversationItemType",
     back_populates="conversation_items",
+  )
+
+  assignee = relationship(
+    "User",
+    foreign_keys=[assignee_id],
   )
 
   created_at = Column(
