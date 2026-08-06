@@ -26,6 +26,7 @@ from app.schemas.company import (
   CompanyCreate,
   CompanyCreateResponse,
   CompanyRead,
+  CompanyUserRead,
   CompanyWithMetrics,
   CompanyUpdate,
   CompanyWithLists,
@@ -577,6 +578,45 @@ async def update_company(
   await db.refresh(company)
 
   return company
+
+@router.get(
+  "/{company_id}/users",
+  response_model=list[CompanyUserRead],
+)
+async def get_company_users(
+  company_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin":
+    has_company_access = current_user.company_id == company_id
+
+    if not has_company_access:
+      guest_access_result = await db.execute(
+        select(ProjectGuestLink.id)
+        .join(Project, Project.id == ProjectGuestLink.project_id)
+        .where(
+          ProjectGuestLink.user_id == current_user.id,
+          Project.company_id == company_id,
+        )
+        .limit(1)
+      )
+
+      has_company_access = guest_access_result.scalar_one_or_none() is not None
+
+    if not has_company_access:
+      raise HTTPException(
+        status_code=403,
+        detail="Not authorized",
+      )
+
+  result = await db.execute(
+    select(User)
+    .where(User.company_id == company_id)
+    .order_by(User.first_name.asc(), User.last_name.asc())
+  )
+
+  return result.scalars().all()
 
 @router.get("/{company_id}/tags")
 async def get_tags(
