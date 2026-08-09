@@ -1917,7 +1917,6 @@ async def report_line_conversations(
 
   require_report_open(report)
 
-  # CHANGED:
   await require_report_access(
     current_user,
     report,
@@ -1933,10 +1932,8 @@ async def report_line_conversations(
         selectinload(LineConversation.project),
       )
       .where(
-        LineConversation.id
-        == conversation_range.conversation_id,
-        LineConversation.company_id
-        == report.company_id,
+        LineConversation.id == conversation_range.conversation_id,
+        LineConversation.company_id == report.company_id,
       )
     )
 
