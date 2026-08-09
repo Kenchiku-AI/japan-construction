@@ -52,6 +52,12 @@ class Company(Base):
     nullable=True,
   )
 
+  paid_features_force_disabled = Column(
+    Boolean,
+    default=False,
+    nullable=False,
+  )
+
   conversations = relationship(
     "LineConversation",
     back_populates="company",

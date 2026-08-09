@@ -22,6 +22,7 @@ class CompanyRead(BaseModel):
   line_channel_access_token_last5: Optional[str]
   line_channel_access_token_invalid: bool
   billing_plan_id: Optional[UUID] = None
+  paid_features_force_disabled: bool
   created_at: datetime
   updated_at: datetime
 
@@ -62,6 +63,7 @@ class CompanyUpdate(BaseModel):
   line_channel_secret: str | None = None
   line_channel_access_token: str | None = None
   billing_plan_id: Optional[UUID] = None
+  paid_features_force_disabled: bool | None = None
 
 class CompanyUserRead(BaseModel):
   id: UUID

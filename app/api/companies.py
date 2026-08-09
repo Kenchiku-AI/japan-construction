@@ -396,8 +396,10 @@ async def get_company(
     is_payment_method_valid=billing_status.is_payment_method_valid,
     free_trial_days_left=billing_status.free_trial_days_left,
     billing_plan_id=company.billing_plan_id,
+    paid_features_force_disabled=company.paid_features_force_disabled,
     line_channel_secret_last4=company.line_channel_secret_last4,
     line_channel_access_token_last5=company.line_channel_access_token_last5,
+    line_channel_access_token_invalid=company.line_channel_access_token_invalid,
     created_at=company.created_at,
     updated_at=company.updated_at,
     users=company.users,
@@ -416,6 +418,15 @@ async def update_company(
 ):
   if current_user.role != "admin":
     require_company_manager(current_user, company_id)
+
+  if (
+    payload.paid_features_force_disabled is not None
+    and current_user.role != "admin"
+  ):
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Only admins can change the paid features force-disable setting",
+    )
 
   result = await db.execute(
     select(Company).where(Company.id == company_id)
@@ -450,6 +461,9 @@ async def update_company(
   if payload.line_channel_access_token is not None:
     company.line_channel_access_token = payload.line_channel_access_token
     company.line_channel_access_token_invalid = False
+
+  if payload.paid_features_force_disabled is not None:
+    company.paid_features_force_disabled = payload.paid_features_force_disabled
 
   if "billing_plan_id" in payload.model_fields_set:
     if not company.stripe_customer_id:
