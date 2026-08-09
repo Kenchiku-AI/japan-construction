@@ -173,10 +173,28 @@ async def create_image_from_line_message(
     if not company:
       raise ValueError("Company not found")
 
-    content = await download_line_message_content(
-      channel_access_token=company.line_channel_access_token,
-      message_id=line_message.line_platform_message_id,
-    )
+    try:
+      content = await download_line_message_content(
+        channel_access_token=company.line_channel_access_token,
+        message_id=line_message.line_platform_message_id,
+      )
+
+    except httpx.HTTPStatusError as e:
+      # LINE returns 401 when the channel access token is invalid,
+      # expired, revoked, or otherwise rejected.
+      #
+      # Record this on the Company so the UI can tell the user that
+      # their LINE access token needs to be updated.
+      if e.response.status_code == 401:
+        company.line_channel_access_token_invalid = True
+        await db.commit()
+
+        logger.warning(
+          "LINE channel access token returned 401 for company %s",
+          company.id,
+        )
+
+      raise
 
     image = await _create_image_from_bytes(
       image_bytes=content,

@@ -52,6 +52,12 @@ class Company(Base):
     nullable=True,
   )
 
+  paid_features_force_disabled = Column(
+    Boolean,
+    default=False,
+    nullable=False,
+  )
+
   conversations = relationship(
     "LineConversation",
     back_populates="company",
@@ -65,6 +71,7 @@ class Company(Base):
 
   _line_channel_secret = Column("line_channel_secret", String, nullable=True)
   _line_channel_access_token = Column("line_channel_access_token", String, nullable=True)
+  line_channel_access_token_invalid = Column(Boolean, default=False, nullable=False)
 
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
   updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
