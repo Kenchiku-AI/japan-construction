@@ -92,6 +92,7 @@ class ReportSpeechRequest(BaseModel):
 
 class ReportSpeechResponse(BaseModel):
   field_values: dict
+  image_sync_failed: bool = False
 
 class ReportImageCreate(BaseModel):
   width: int
