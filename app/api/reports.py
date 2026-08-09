@@ -2000,7 +2000,7 @@ async def report_line_conversations(
     )
 
   try:
-    await sync_report_line_images(
+    image_sync_failed = await sync_report_line_images(
       report=report,
       conversation_segments=conversation_segments,
       db=db,
@@ -2016,6 +2016,7 @@ async def report_line_conversations(
 
     return ReportSpeechResponse(
       field_values=changed_fields,
+      image_sync_failed=image_sync_failed,
     )
 
   except Exception:
@@ -2034,24 +2035,41 @@ async def sync_report_line_images(
   ],
   db: AsyncSession,
 ):
+  image_sync_failed = False
+
   for _, messages in conversation_segments:
     for message in messages:
 
       if message.message_type != LineMessageType.image:
         continue
 
-      image = await create_image_from_line_message(
-        line_message_id=message.id,
-      )
+      try:
+        image = await create_image_from_line_message(
+          line_message_id=message.id,
+        )
 
-      if image is None:
+        if image is None:
+          continue
+
+        await _ensure_report_image_link(
+          report_id=report.id,
+          image_id=image.id,
+          db=db,
+        )
+
+      except Exception:
+        image_sync_failed = True
+
+        logger.exception(
+          "Failed to sync LINE image for message %s "
+          "while processing report %s",
+          message.id,
+          report.id,
+        )
+
         continue
 
-      await _ensure_report_image_link(
-        report_id=report.id,
-        image_id=image.id,
-        db=db,
-      )
+  return image_sync_failed
 
 async def _ensure_report_image_link(
   *,
