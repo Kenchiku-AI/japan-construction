@@ -237,7 +237,7 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
     subscription = stripe.Subscription.create(**subscription_args)
     company.stripe_subscription_id = subscription.id
     await db.commit()
-  except stripe.error.StripeError:
+  except stripe.error.StripeError as e:
     logger.exception(
       "Failed to create Stripe subscription for company %s: %s",
       company.id,
