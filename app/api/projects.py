@@ -380,16 +380,10 @@ async def update_project(
   if current_user.role != "admin":
     require_company_manager(current_user, project.company_id)
 
-  previous_status = project.status
-
   for field, value in payload.model_dump(exclude_unset=True).items():
     setattr(project, field, value)
 
   await db.commit()
-
-  status_changed = (
-    payload.status is not None and payload.status != previous_status
-  )
 
   stmt = (
     select(Project)

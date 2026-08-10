@@ -560,7 +560,6 @@ async def update_company(
 
               company.stripe_subscription_id = None
               await db.commit()
-
               await create_subscription(company, db)
 
             else:
