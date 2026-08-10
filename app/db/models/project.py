@@ -16,6 +16,7 @@ class ProjectStatus(str, enum.Enum):
   active = "active"
   completed = "completed"
   requested = "requested"
+  archived = "archived"
 
 class Project(Base):
   __tablename__ = "projects"
