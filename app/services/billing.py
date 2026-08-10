@@ -220,7 +220,6 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
   subscription_args: dict[str, Any] = {
     "customer": company.stripe_customer_id,
     "items": [{"price": plan.stripe_price_id, "quantity": 1}],
-    "payment_behavior": "default_incomplete",
     "trial_settings": {
       "end_behavior": {
         "missing_payment_method": "pause",
