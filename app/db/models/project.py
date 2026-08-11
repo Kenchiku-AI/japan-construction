@@ -58,6 +58,7 @@ class Project(Base):
     "LineConversation",
     back_populates="project",
     order_by="desc(LineConversation.updated_at)",
+    cascade="all, delete-orphan",
   )
 
   conversation_items = relationship(
