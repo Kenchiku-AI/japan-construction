@@ -447,3 +447,31 @@ async def remove_project_guest(
   await db.commit()
 
   return None
+
+@router.delete(
+  "/{project_id}",
+  status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_project(
+  project_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin":
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Only admins can delete projects",
+    )
+
+  project = await db.get(Project, project_id)
+
+  if not project:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Project not found",
+    )
+
+  await db.delete(project)
+  await db.commit()
+
+  return None
