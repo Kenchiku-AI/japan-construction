@@ -4,12 +4,15 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from app.db.models.custom_field_definition import CustomFieldDataType
+
 
 class CustomFieldDefinitionCreate(BaseModel):
   company_id: UUID
   key: str
   name: str
   description: Optional[str] = None
+  data_type: CustomFieldDataType = CustomFieldDataType.text
 
 
 class CustomFieldDefinitionUpdate(BaseModel):
@@ -24,6 +27,7 @@ class CustomFieldDefinitionRead(BaseModel):
   key: str
   name: str
   description: Optional[str] = None
+  data_type: CustomFieldDataType
   created_at: datetime
   updated_at: datetime
 

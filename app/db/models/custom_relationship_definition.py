@@ -1,7 +1,7 @@
 import enum
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum, Text, UniqueConstraint
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Enum, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
@@ -35,9 +35,26 @@ class CustomRelationshipDefinition(Base):
   name = Column(String, nullable=False)
   description = Column(Text, nullable=True)
 
+  sort_order = Column(Integer, default=0)
+
   source_entity_type = Column(
     Enum(CustomRelationshipEntityType, name="custom_relationship_entity_type"),
     nullable=False,
+  )
+
+  source_custom_object_definition_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey(
+      "custom_object_definitions.id",
+      ondelete="CASCADE",
+    ),
+    nullable=True,
+    index=True,
+  )
+
+  source_custom_object_definition = relationship(
+    "CustomObjectDefinition",
+    foreign_keys=[source_custom_object_definition_id],
   )
 
   target_entity_type = Column(
@@ -45,16 +62,22 @@ class CustomRelationshipDefinition(Base):
     nullable=False,
   )
 
-  source_cardinality = Column(
-    Enum(
-      CustomRelationshipCardinality,
-      name="custom_relationship_cardinality",
+  target_custom_object_definition_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey(
+      "custom_object_definitions.id",
+      ondelete="CASCADE",
     ),
-    nullable=False,
-    default=CustomRelationshipCardinality.one,
+    nullable=True,
+    index=True,
   )
 
-  target_cardinality = Column(
+  target_custom_object_definition = relationship(
+    "CustomObjectDefinition",
+    foreign_keys=[target_custom_object_definition_id],
+  )
+
+  cardinality = Column(
     Enum(
       CustomRelationshipCardinality,
       name="custom_relationship_cardinality",

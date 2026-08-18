@@ -1,9 +1,14 @@
+import enum
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, Enum, String, DateTime, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
+
+class CustomFieldDataType(str, enum.Enum):
+  text = "text"
+  boolean = "boolean"
 
 class CustomFieldDefinition(Base):
   __tablename__ = "custom_field_definitions"
@@ -20,6 +25,14 @@ class CustomFieldDefinition(Base):
   key = Column(String, nullable=False)
   name = Column(String, nullable=False)
   description = Column(Text, nullable=True)
+
+  data_type = Column(
+    String,
+    nullable=False,
+    default=CustomFieldDataType.text.value,
+  )
+
+  sort_order = Column(Integer, default=0)
 
   fields = relationship(
     "CustomField",

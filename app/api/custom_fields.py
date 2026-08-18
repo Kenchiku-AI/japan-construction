@@ -193,6 +193,7 @@ async def create_custom_field_definition(
     key=payload.key,
     name=payload.name,
     description=payload.description,
+    data_type=payload.data_type,
   )
 
   db.add(definition)

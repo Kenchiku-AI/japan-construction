@@ -34,11 +34,29 @@ class CustomRelationship(Base):
     nullable=False,
     index=True,
   )
+  source_custom_object_definition_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey(
+      "custom_object_definitions.id",
+      ondelete="CASCADE",
+    ),
+    nullable=True,
+    index=True,
+  )
 
   target_entity_type = Column(String, nullable=False)
   target_entity_id = Column(
     UUID(as_uuid=True),
     nullable=False,
+    index=True,
+  )
+  target_custom_object_definition_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey(
+      "custom_object_definitions.id",
+      ondelete="CASCADE",
+    ),
+    nullable=True,
     index=True,
   )
 

@@ -449,21 +449,13 @@ async def get_custom_relationships_for_entity(
           )
           else relationship.definition.target_entity_type
         ),
-        "source_cardinality": (
-          relationship.definition.source_cardinality.value
+        "cardinality": (
+          relationship.definition.cardinality.value
           if hasattr(
-            relationship.definition.source_cardinality,
+            relationship.definition.cardinality,
             "value",
           )
-          else relationship.definition.source_cardinality
-        ),
-        "target_cardinality": (
-          relationship.definition.target_cardinality.value
-          if hasattr(
-            relationship.definition.target_cardinality,
-            "value",
-          )
-          else relationship.definition.target_cardinality
+          else relationship.definition.cardinality
         ),
       },
       "source": {
