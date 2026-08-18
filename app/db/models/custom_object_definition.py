@@ -33,6 +33,12 @@ class CustomObjectDefinition(Base):
     cascade="all, delete-orphan",
   )
 
+  custom_field_definitions = relationship(
+    "CustomFieldDefinition",
+    back_populates="custom_object_definition",
+    cascade="all, delete-orphan",
+  )
+
   created_at = Column(
     DateTime(timezone=True),
     default=lambda: datetime.now(timezone.utc),

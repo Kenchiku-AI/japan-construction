@@ -6,6 +6,12 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
 
+class CustomFieldEntityType(str, enum.Enum):
+  company = "company"
+  user = "user"
+  project = "project"
+  custom_object = "custom_object"
+
 class CustomFieldDataType(str, enum.Enum):
   text = "text"
   boolean = "boolean"
@@ -26,6 +32,11 @@ class CustomFieldDefinition(Base):
   name = Column(String, nullable=False)
   description = Column(Text, nullable=True)
 
+  entity_type = Column(
+    String,
+    nullable=False,
+  )
+
   data_type = Column(
     String,
     nullable=False,
@@ -33,6 +44,21 @@ class CustomFieldDefinition(Base):
   )
 
   sort_order = Column(Integer, default=0)
+
+  custom_object_definition_id = Column(
+    UUID(as_uuid=True),
+    ForeignKey(
+      "custom_object_definitions.id",
+      ondelete="CASCADE",
+    ),
+    nullable=True,
+    index=True,
+  )
+
+  custom_object_definition = relationship(
+    "CustomObjectDefinition",
+    back_populates="custom_field_definitions",
+  )
 
   fields = relationship(
     "CustomField",

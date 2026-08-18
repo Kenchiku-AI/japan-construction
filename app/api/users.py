@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.security import hash_token
 
 from app.db.models.custom_field import CustomField, CustomFieldUserLink
+from app.db.models.custom_field_definition import CustomFieldDefinition
 from app.db.models.user import User
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.project import Project
@@ -18,7 +19,7 @@ from app.db.models.project_guest_link import ProjectGuestLink
 from app.db.session import get_db
 
 from app.schemas.user import UserWithCompanyAndProjects, UserBase, UserUpdate, UserWithCompanyIdAndRole
-from app.services.users import build_user_with_company_and_projects
+from app.services.users import build_user_with_company_and_projects, get_user_custom_fields
 from app.services.email import send_password_reset_email
 
 router = APIRouter(
@@ -33,7 +34,10 @@ async def read_current_user(
 ):
   return await build_user_with_company_and_projects(current_user, db)
 
-@router.get("/{user_id}", response_model=UserWithCompanyIdAndRole)
+@router.get(
+  "/{user_id}",
+  response_model=UserWithCompanyIdAndRole,
+)
 async def get_user(
   user_id: UUID,
   current_user: User = Depends(get_current_user),
@@ -41,7 +45,10 @@ async def get_user(
 ):
   if current_user.role != "admin" and current_user.id != user_id:
     target_company_id = (
-      await db.execute(select(User.company_id).where(User.id == user_id))
+      await db.execute(
+        select(User.company_id)
+        .where(User.id == user_id)
+      )
     ).scalar_one_or_none()
 
     is_same_company = (
@@ -53,7 +60,10 @@ async def get_user(
       shared_project = (
         await db.execute(
           select(Project.id)
-          .join(ProjectGuestLink, ProjectGuestLink.project_id == Project.id)
+          .join(
+            ProjectGuestLink,
+            ProjectGuestLink.project_id == Project.id,
+          )
           .where(
             or_(
               and_(
@@ -64,7 +74,9 @@ async def get_user(
                 ProjectGuestLink.user_id == user_id,
                 Project.id.in_(
                   select(ProjectGuestLink.project_id)
-                  .where(ProjectGuestLink.user_id == current_user.id)
+                  .where(
+                    ProjectGuestLink.user_id == current_user.id
+                  )
                 ),
               ),
               and_(
@@ -85,11 +97,48 @@ async def get_user(
 
   result = await db.execute(
     select(User)
+    .where(User.id == user_id)
     .options(
       selectinload(User.custom_field_links)
         .selectinload(CustomFieldUserLink.custom_field)
         .selectinload(CustomField.definition),
     )
+  )
+
+  user = result.scalar_one_or_none()
+
+  if not user:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="User not found",
+    )
+
+  custom_fields = await get_user_custom_fields(
+    user,
+    db,
+  )
+
+  return UserWithCompanyIdAndRole(
+    email=user.email,
+    first_name=user.first_name,
+    last_name=user.last_name,
+    company_id=user.company_id,
+    role=user.role,
+    custom_fields=custom_fields,
+  )
+
+@router.patch(
+  "/{user_id}",
+  response_model=UserWithCompanyIdAndRole,
+)
+async def patch_user(
+  user_id: UUID,
+  payload: UserUpdate,
+  current_user: User = Depends(get_current_user),
+  db: AsyncSession = Depends(get_db),
+):
+  result = await db.execute(
+    select(User)
     .where(User.id == user_id)
   )
 
@@ -101,26 +150,21 @@ async def get_user(
       detail="User not found",
     )
 
-  return user
+  update_data = payload.model_dump(
+    exclude_unset=True,
+    exclude_none=True,
+  )
 
-@router.patch("/{user_id}", response_model=UserWithCompanyIdAndRole)
-async def patch_user(
-  user_id: UUID,
-  payload: UserUpdate,
-  current_user: User = Depends(get_current_user),
-  db: AsyncSession = Depends(get_db),
-):
-  result = await db.execute(select(User).where(User.id == user_id))
-  user = result.scalar_one_or_none()
+  custom_field_updates = update_data.pop(
+    "custom_fields",
+    [],
+  )
 
-  if not user:
-    raise HTTPException(
-      status_code=status.HTTP_404_NOT_FOUND,
-      detail="User not found",
-    )
-
-  update_data = payload.model_dump(exclude_unset=True, exclude_none=True)
   is_own_account = current_user.id == user_id
+
+  # -------------------------------------------------------------------------
+  # Authorization
+  # -------------------------------------------------------------------------
 
   if user.role == "admin" and current_user.role != "admin":
     raise HTTPException(
@@ -131,12 +175,13 @@ async def patch_user(
   if current_user.role == "manager":
     if update_data.get("role") == "admin":
       raise HTTPException(
-        status_code=403,
+        status_code=status.HTTP_403_FORBIDDEN,
         detail="Cannot assign admin role",
       )
 
     if is_own_account:
       pass
+
     else:
       if current_user.company_id != user.company_id:
         raise HTTPException(
@@ -144,19 +189,17 @@ async def patch_user(
           detail="Managers can only manage users in their company",
         )
 
-      non_role_fields = {k: v for k, v in update_data.items() if k != "role"}
-      if non_role_fields:
+      non_role_fields = {
+        key: value
+        for key, value in update_data.items()
+        if key != "role"
+      }
+
+      if non_role_fields or custom_field_updates:
         raise HTTPException(
           status_code=status.HTTP_403_FORBIDDEN,
           detail="Managers can only update the role of other users",
         )
-
-      # if "role" in update_data:
-      #   if user.role == "manager":
-      #     raise HTTPException(
-      #       status_code=403,
-      #       detail="Managers cannot change another manager's role",
-      #     )
 
   elif current_user.role == "user":
     if not is_own_account:
@@ -164,40 +207,156 @@ async def patch_user(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Not authorized to update this user",
       )
+
     if "role" in update_data:
       raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Users cannot change their own role",
       )
 
-  if "email" in update_data and update_data["email"] != user.email:
+  # -------------------------------------------------------------------------
+  # Email uniqueness
+  # -------------------------------------------------------------------------
+
+  if (
+    "email" in update_data
+    and update_data["email"] != user.email
+  ):
     existing = await db.execute(
-      select(User).where(User.email == update_data["email"])
+      select(User)
+      .where(User.email == update_data["email"])
     )
+
     if existing.scalar_one_or_none():
       raise HTTPException(
-        status_code=400,
+        status_code=status.HTTP_400_BAD_REQUEST,
         detail="Email already in use",
       )
+
+  # -------------------------------------------------------------------------
+  # Standard user fields
+  # -------------------------------------------------------------------------
 
   for field, value in update_data.items():
     setattr(user, field, value)
 
+  # -------------------------------------------------------------------------
+  # Custom fields
+  # -------------------------------------------------------------------------
+
+  if custom_field_updates:
+    if user.company_id is None:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="User does not belong to a company",
+      )
+
+    for custom_field_update in custom_field_updates:
+      definition_id = custom_field_update.custom_field_definition_id
+      value = custom_field_update.value
+
+      # Make sure the definition exists.
+      definition = await db.get(
+        CustomFieldDefinition,
+        definition_id,
+      )
+
+      if not definition:
+        raise HTTPException(
+          status_code=status.HTTP_404_NOT_FOUND,
+          detail="Custom field definition not found",
+        )
+
+      # Make sure the definition belongs to the user's company.
+      if definition.company_id != user.company_id:
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail="Custom field definition belongs to a different company",
+        )
+
+      if definition.entity_type != "user":
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail="Custom field definition is not for users",
+        )
+
+      # Look for an existing field associated with this user.
+      existing_field_result = await db.execute(
+        select(CustomField)
+        .join(
+          CustomFieldUserLink,
+          CustomFieldUserLink.custom_field_id == CustomField.id,
+        )
+        .where(
+          CustomFieldUserLink.user_id == user.id,
+          CustomField.custom_field_definition_id == definition_id,
+        )
+      )
+
+      custom_field = existing_field_result.scalar_one_or_none()
+
+      if custom_field:
+        # Existing field → update its value.
+        custom_field.value = value
+
+      else:
+        # No field yet → create the field.
+        custom_field = CustomField(
+          company_id=user.company_id,
+          custom_field_definition_id=definition_id,
+          value=value,
+        )
+
+        db.add(custom_field)
+        await db.flush()
+
+        # Associate it with the user.
+        link = CustomFieldUserLink(
+          custom_field_id=custom_field.id,
+          user_id=user.id,
+        )
+
+        db.add(link)
+
+  # -------------------------------------------------------------------------
+  # Save everything in one transaction
+  # -------------------------------------------------------------------------
+
   await db.commit()
+
+  # -------------------------------------------------------------------------
+  # Reload the user
+  # -------------------------------------------------------------------------
 
   result = await db.execute(
     select(User)
+    .where(User.id == user_id)
     .options(
       selectinload(User.custom_field_links)
         .selectinload(CustomFieldUserLink.custom_field)
         .selectinload(CustomField.definition),
     )
-    .where(User.id == user_id)
   )
 
   user = result.scalar_one()
 
-  return user
+  # -------------------------------------------------------------------------
+  # Return all custom field definitions, including fields without values
+  # -------------------------------------------------------------------------
+
+  custom_fields = await get_user_custom_fields(
+    user,
+    db,
+  )
+
+  return UserWithCompanyIdAndRole(
+    email=user.email,
+    first_name=user.first_name,
+    last_name=user.last_name,
+    company_id=user.company_id,
+    role=user.role,
+    custom_fields=custom_fields,
+  )
 
 @router.post("/create-admin")
 async def create_admin(

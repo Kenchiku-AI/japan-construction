@@ -22,6 +22,8 @@ from app.db.models import (
   CustomFieldUserLink,
   CustomFieldCustomObjectLink,
   CustomObject,
+  CustomObjectDefinition,
+  CustomFieldEntityType,
 )
 from app.schemas.custom_field import (
   CustomFieldDefinitionCreate,
@@ -31,6 +33,7 @@ from app.schemas.custom_field import (
   CustomFieldCreate,
   CustomFieldUpdate,
   CustomFieldRead,
+  CustomObjectDefinitionWithFieldsRead,
 )
 
 
@@ -66,89 +69,49 @@ async def list_custom_field_definitions(
 
   definitions = definitions_result.scalars().all()
 
-  definition_by_id = {
-    definition.id: definition
-    for definition in definitions
-  }
-
-  # Get all fields belonging to this company
-  fields_result = await db.execute(
-    select(CustomField)
-    .where(
-      CustomField.company_id == company_id,
-    )
-  )
-
-  fields = fields_result.scalars().all()
-
-  # Determine which definitions are used for which target types
-  project_definition_ids = set()
-  user_definition_ids = set()
-  company_definition_ids = set()
-  custom_object_definition_ids = set()
-
-  for field in fields:
-    definition_id = field.custom_field_definition_id
-
-    if field.project_links:
-      project_definition_ids.add(definition_id)
-
-    if field.user_links:
-      user_definition_ids.add(definition_id)
-
-    if field.company_links:
-      company_definition_ids.add(definition_id)
-
-    if field.custom_object_links:
-      custom_object_definition_ids.add(definition_id)
-
   project_fields = [
-    definition_by_id[id]
-    for id in project_definition_ids
-    if id in definition_by_id
+    definition
+    for definition in definitions
+    if definition.entity_type == "project"
   ]
 
   user_fields = [
-    definition_by_id[id]
-    for id in user_definition_ids
-    if id in definition_by_id
+    definition
+    for definition in definitions
+    if definition.entity_type == "user"
   ]
 
   company_fields = [
-    definition_by_id[id]
-    for id in company_definition_ids
-    if id in definition_by_id
+    definition
+    for definition in definitions
+    if definition.entity_type == "company"
   ]
 
-  # Get custom objects
-  objects_result = await db.execute(
-    select(CustomObject)
+  custom_object_definitions_result = await db.execute(
+    select(CustomObjectDefinition)
     .where(
-      CustomObject.company_id == company_id,
+      CustomObjectDefinition.company_id == company_id,
     )
-    .order_by(CustomObject.name)
+    .order_by(CustomObjectDefinition.name)
+    .options(
+      selectinload(
+        CustomObjectDefinition.custom_field_definitions
+      ),
+    )
   )
 
-  custom_objects = objects_result.scalars().all()
-
-  # Build object -> field definitions
-  object_fields: dict[UUID, list[CustomFieldDefinition]] = {}
-
-  for field in fields:
-    for link in field.custom_object_links:
-      object_fields.setdefault(
-        link.custom_object_id,
-        [],
-      ).append(field.definition)
+  custom_object_definitions = (
+    custom_object_definitions_result.scalars().all()
+  )
 
   custom_objects_response = [
-    CustomObjectWithFieldsRead(
-      id=obj.id,
-      name=obj.name,
-      description=obj.description,
-      fields=object_fields.get(obj.id, []),
+    CustomObjectDefinitionWithFieldsRead(
+      id=object_definition.id,
+      name=object_definition.name,
+      description=object_definition.description,
+      fields=object_definition.custom_field_definitions,
     )
-    for obj in custom_objects
+    for object_definition in custom_object_definitions
   ]
 
   return CustomFieldDefinitionsResponse(
@@ -188,12 +151,38 @@ async def create_custom_field_definition(
       detail="A custom field definition with this key already exists",
     )
 
+  custom_object_definition = None
+
+  if payload.entity_type == CustomFieldEntityType.custom_object:
+    custom_object_definition = await db.get(
+      CustomObjectDefinition,
+      payload.custom_object_definition_id,
+    )
+
+    if not custom_object_definition:
+      raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Custom object definition not found",
+      )
+
+    if custom_object_definition.company_id != payload.company_id:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Custom object definition belongs to a different company",
+      )
+
   definition = CustomFieldDefinition(
     company_id=payload.company_id,
     key=payload.key,
     name=payload.name,
     description=payload.description,
     data_type=payload.data_type,
+    entity_type=payload.entity_type,
+    custom_object_definition_id=(
+      custom_object_definition.id
+      if custom_object_definition
+      else None
+    ),
   )
 
   db.add(definition)
@@ -790,6 +779,42 @@ async def _create_field(
       status_code=status.HTTP_400_BAD_REQUEST,
       detail="Custom field definition belongs to a different company",
     )
+
+  if definition.entity_type != entity_type:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail=(
+        f"This field definition is for '{definition.entity_type}' "
+        f"and cannot be used for '{entity_type}'"
+      ),
+    )
+
+  if entity_type == "custom_object":
+    custom_object = await db.get(
+      CustomObject,
+      entity_id,
+    )
+
+    if not custom_object:
+      raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Custom object not found",
+      )
+
+    if custom_object.company_id != company_id:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Custom object belongs to a different company",
+      )
+
+    if custom_object.custom_object_definition_id != definition.custom_object_definition_id:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+          "This field definition belongs to a different "
+          "custom object type"
+        ),
+      )
 
   field = CustomField(
     company_id=company_id,
