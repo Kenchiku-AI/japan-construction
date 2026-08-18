@@ -27,11 +27,6 @@ class CustomField(Base):
 
   value = Column(String, nullable=True)
 
-  company = relationship(
-    "Company",
-    back_populates="custom_fields",
-  )
-
   definition = relationship(
     "CustomFieldDefinition",
     back_populates="fields",

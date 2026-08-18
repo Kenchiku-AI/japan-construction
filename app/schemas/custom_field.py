@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -53,3 +53,15 @@ class CustomFieldRead(BaseModel):
   model_config = {
     "from_attributes": True
   }
+
+class CustomObjectWithFieldsRead(BaseModel):
+  id: UUID
+  name: str
+  description: str | None
+  fields: list[CustomFieldDefinitionRead]
+
+class CustomFieldDefinitionsResponse(BaseModel):
+  project_fields: List[CustomFieldDefinitionRead]
+  user_fields: List[CustomFieldDefinitionRead]
+  company_fields: List[CustomFieldDefinitionRead]
+  custom_objects: List[CustomObjectWithFieldsRead]

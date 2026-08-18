@@ -48,6 +48,7 @@ from app.services.billing import (
 from app.services.invitations import create_company_invitation
 from app.services.email import send_company_created_admin_email
 from app.db.models.conversation_item_type import ConversationItemType, ConversationItemTypeLink
+from app.db.models.custom_field import CustomField, CustomFieldCompanyLink
 from app.schemas.conversation import ConversationItemTypeCreate, ConversationItemTypeUpdate
 
 import stripe
@@ -371,9 +372,17 @@ async def get_company(
     .options(
       selectinload(Company.users),
       selectinload(Company.projects),
+      selectinload(
+        Company.custom_field_links
+      ).selectinload(
+        CustomFieldCompanyLink.custom_field
+      ).selectinload(
+        CustomField.definition
+      ),
     )
     .where(Company.id == company_id)
   )
+
   company = result.scalar_one_or_none()
 
   if not company:
@@ -384,6 +393,12 @@ async def get_company(
     key=lambda p: p.updated_at,
     reverse=True,
   )[:25]
+
+  custom_fields = [
+    link.custom_field
+    for link in company.custom_field_links
+    if link.custom_field is not None
+  ]
 
   payment_method_name = await get_payment_method_display(company)
   billing_status = get_billing_status(company)
@@ -404,6 +419,7 @@ async def get_company(
     updated_at=company.updated_at,
     users=company.users,
     projects=projects,
+    custom_fields=custom_fields,
   )
 
 @router.patch(

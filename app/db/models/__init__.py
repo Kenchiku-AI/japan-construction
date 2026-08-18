@@ -20,7 +20,13 @@ from app.db.models.report import (
   ReportImageLink,
   ReportProjectLink,
 )
-from app.db.models.custom_field import CustomField, CustomFieldUserLink, CustomFieldCompanyLink, CustomFieldProjectLink
+from app.db.models.custom_field import (
+  CustomField, 
+  CustomFieldUserLink, 
+  CustomFieldCompanyLink, 
+  CustomFieldProjectLink,
+  CustomFieldCustomObjectLink
+)
 from app.db.models.custom_field_definition import CustomFieldDefinition
 from app.db.models.custom_object import CustomObject
 from app.db.models.custom_object_definition import CustomObjectDefinition

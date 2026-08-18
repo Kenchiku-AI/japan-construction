@@ -47,7 +47,7 @@ class Project(Base):
     back_populates="project",
     cascade="all, delete-orphan",
   )
-  
+
   users = relationship(
     "User",
     secondary="project_user_links",

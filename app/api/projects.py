@@ -21,6 +21,8 @@ from app.db.models import (
   ConversationItemType,
   ConversationItemTypeLink,
   ProjectUserLink,
+  CustomField,
+  CustomFieldProjectLink,
 )
 from app.schemas.project import (
   ProjectCreate, 
@@ -191,6 +193,11 @@ async def build_project_response(
     )
     conversations.append(conversation)
 
+  custom_fields = [
+    link.custom_field
+    for link in project.custom_field_links
+  ]
+
   return ProjectWithLists(
     id=project.id,
     name=project.name,
@@ -201,6 +208,7 @@ async def build_project_response(
     reports=project.reports,
     conversations=conversations,
     conversation_items=conversation_items,
+    custom_fields=custom_fields,
     users=project.users,
   )
 
@@ -294,9 +302,13 @@ async def get_project(
       .where(Project.id == project_id)
       .options(
         selectinload(Project.reports),
+        selectinload(Project.users),
         selectinload(Project.conversations)
           .selectinload(LineConversation.item_type_links)
           .selectinload(ConversationItemTypeLink.item_type), 
+        selectinload(Project.custom_field_links)
+          .selectinload(CustomFieldProjectLink.custom_field)
+          .selectinload(CustomField.definition),
       )
     )
 
@@ -316,9 +328,13 @@ async def get_project(
       .where(Project.id == project_id)
       .options(
         selectinload(Project.reports),
+        selectinload(Project.users),
         selectinload(Project.conversations)
           .selectinload(LineConversation.item_type_links)
           .selectinload(ConversationItemTypeLink.item_type),
+        selectinload(Project.custom_field_links)
+          .selectinload(CustomFieldProjectLink.custom_field)
+          .selectinload(CustomField.definition),
       )
     )
 
@@ -333,7 +349,7 @@ async def get_project(
   return await build_project_response(
     db,
     project,
-  ) 
+  )
 
 @router.post(
   "",
@@ -370,6 +386,7 @@ async def create_project(
     conversations=[],
     conversation_items=[],
     users=[],
+    custom_fields=[],
   )
 
 @router.patch("/{project_id}", response_model=ProjectWithLists)
@@ -396,9 +413,13 @@ async def update_project(
     .where(Project.id == project_id)
     .options(
       selectinload(Project.reports),
+      selectinload(Project.users),
       selectinload(Project.conversations)
         .selectinload(LineConversation.item_type_links)
         .selectinload(ConversationItemTypeLink.item_type),
+      selectinload(Project.custom_field_links)
+        .selectinload(CustomFieldProjectLink.custom_field)
+        .selectinload(CustomField.definition),
     )
   )
 

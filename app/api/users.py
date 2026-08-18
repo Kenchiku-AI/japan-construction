@@ -10,7 +10,7 @@ from app.core.dependencies import get_current_user
 from app.core.config import settings
 from app.core.security import hash_token
 
-from app.db.models.custom_field import CustomField
+from app.db.models.custom_field import CustomField, CustomFieldUserLink
 from app.db.models.user import User
 from app.db.models.password_reset_token import PasswordResetToken
 from app.db.models.project import Project
@@ -86,7 +86,8 @@ async def get_user(
   result = await db.execute(
     select(User)
     .options(
-      selectinload(User.custom_fields)
+      selectinload(User.custom_field_links)
+        .selectinload(CustomFieldUserLink.custom_field)
         .selectinload(CustomField.definition),
     )
     .where(User.id == user_id)
@@ -187,7 +188,8 @@ async def patch_user(
   result = await db.execute(
     select(User)
     .options(
-      selectinload(User.custom_fields)
+      selectinload(User.custom_field_links)
+        .selectinload(CustomFieldUserLink.custom_field)
         .selectinload(CustomField.definition),
     )
     .where(User.id == user_id)

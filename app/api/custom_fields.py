@@ -27,6 +27,7 @@ from app.schemas.custom_field import (
   CustomFieldDefinitionCreate,
   CustomFieldDefinitionUpdate,
   CustomFieldDefinitionRead,
+  CustomFieldDefinitionsResponse,
   CustomFieldCreate,
   CustomFieldUpdate,
   CustomFieldRead,
@@ -45,26 +46,117 @@ router = APIRouter(
 
 @router.get(
   "/definitions",
-  response_model=List[CustomFieldDefinitionRead],
+  response_model=CustomFieldDefinitionsResponse,
 )
 async def list_custom_field_definitions(
+  company_id: UUID,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  if not current_user.company_id:
-    return []
+  require_company_manager(current_user, company_id)
 
-  result = await db.execute(
+  # Get all field definitions for the company
+  definitions_result = await db.execute(
     select(CustomFieldDefinition)
     .where(
-      CustomFieldDefinition.company_id == current_user.company_id,
+      CustomFieldDefinition.company_id == company_id,
     )
-    .order_by(
-      CustomFieldDefinition.name,
+    .order_by(CustomFieldDefinition.name)
+  )
+
+  definitions = definitions_result.scalars().all()
+
+  definition_by_id = {
+    definition.id: definition
+    for definition in definitions
+  }
+
+  # Get all fields belonging to this company
+  fields_result = await db.execute(
+    select(CustomField)
+    .where(
+      CustomField.company_id == company_id,
     )
   )
 
-  return result.scalars().all()
+  fields = fields_result.scalars().all()
+
+  # Determine which definitions are used for which target types
+  project_definition_ids = set()
+  user_definition_ids = set()
+  company_definition_ids = set()
+  custom_object_definition_ids = set()
+
+  for field in fields:
+    definition_id = field.custom_field_definition_id
+
+    if field.project_links:
+      project_definition_ids.add(definition_id)
+
+    if field.user_links:
+      user_definition_ids.add(definition_id)
+
+    if field.company_links:
+      company_definition_ids.add(definition_id)
+
+    if field.custom_object_links:
+      custom_object_definition_ids.add(definition_id)
+
+  project_fields = [
+    definition_by_id[id]
+    for id in project_definition_ids
+    if id in definition_by_id
+  ]
+
+  user_fields = [
+    definition_by_id[id]
+    for id in user_definition_ids
+    if id in definition_by_id
+  ]
+
+  company_fields = [
+    definition_by_id[id]
+    for id in company_definition_ids
+    if id in definition_by_id
+  ]
+
+  # Get custom objects
+  objects_result = await db.execute(
+    select(CustomObject)
+    .where(
+      CustomObject.company_id == company_id,
+    )
+    .order_by(CustomObject.name)
+  )
+
+  custom_objects = objects_result.scalars().all()
+
+  # Build object -> field definitions
+  object_fields: dict[UUID, list[CustomFieldDefinition]] = {}
+
+  for field in fields:
+    for link in field.custom_object_links:
+      object_fields.setdefault(
+        link.custom_object_id,
+        [],
+      ).append(field.definition)
+
+  custom_objects_response = [
+    CustomObjectWithFieldsRead(
+      id=obj.id,
+      name=obj.name,
+      description=obj.description,
+      fields=object_fields.get(obj.id, []),
+    )
+    for obj in custom_objects
+  ]
+
+  return CustomFieldDefinitionsResponse(
+    project_fields=project_fields,
+    user_fields=user_fields,
+    company_fields=company_fields,
+    custom_objects=custom_objects_response,
+  )
 
 
 @router.post(

@@ -69,20 +69,8 @@ class Company(Base):
     cascade="all, delete-orphan",
   )
 
-  custom_fields = relationship(
-    "CustomField",
-    back_populates="company",
-    cascade="all, delete-orphan",
-  )
-
   custom_field_links = relationship(
     "CustomFieldCompanyLink",
-    back_populates="company",
-    cascade="all, delete-orphan",
-  )
-
-  custom_field_definitions = relationship(
-    "CustomFieldDefinition",
     back_populates="company",
     cascade="all, delete-orphan",
   )

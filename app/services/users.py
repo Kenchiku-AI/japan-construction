@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.user import UserCompanyRead, UserProjectRead, UserWithCompanyAndProjects
-from app.db.models.custom_field import CustomField
+from app.db.models.custom_field import CustomField, CustomFieldUserLink
 from app.db.models.user import User
 from app.db.models.project import Project
 from app.db.models.project_guest_link import ProjectGuestLink
@@ -20,7 +20,8 @@ async def build_user_with_company_and_projects(
     select(User)
     .options(
       selectinload(User.company),
-      selectinload(User.custom_fields)
+      selectinload(User.custom_field_links)
+        .selectinload(CustomFieldUserLink.custom_field)
         .selectinload(CustomField.definition),
     )
     .where(User.id == user.id)
@@ -78,6 +79,11 @@ async def build_user_with_company_and_projects(
         status=project.status,
       ))
 
+  custom_fields = [
+    link.custom_field
+    for link in user.custom_field_links
+  ]
+
   return UserWithCompanyAndProjects(
     id=user.id,
     first_name=user.first_name,
@@ -96,5 +102,5 @@ async def build_user_with_company_and_projects(
       else None
     ),
     projects=projects_data,
-    custom_fields=user.custom_fields,
+    custom_fields=custom_fields,
   )

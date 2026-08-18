@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr
 
 from app.schemas.user import UserRole
 from app.schemas.conversation import ConversationItemTypeRead
+from app.schemas.custom_field import CustomFieldRead
 
 class CompanyCreate(BaseModel):
   name: str
@@ -82,6 +83,7 @@ class CompanyWithLists(CompanyRead):
   free_trial_days_left: int | None = None
   projects: List[CompanyProjectRead]
   users: List[CompanyUserRead]
+  custom_fields: List[CustomFieldRead] = []
 
   model_config = {
     "from_attributes": True
