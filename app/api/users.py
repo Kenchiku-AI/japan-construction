@@ -1,16 +1,22 @@
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, status, APIRouter, Depends, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
+from sqlalchemy import select, and_, or_
+from sqlalchemy.orm import selectinload
 from uuid import uuid4, UUID
 import secrets
 
 from app.core.dependencies import get_current_user
 from app.core.config import settings
 from app.core.security import hash_token
+
+from app.db.models.custom_field import CustomField
 from app.db.models.user import User
 from app.db.models.password_reset_token import PasswordResetToken
+from app.db.models.project import Project
+from app.db.models.project_guest_link import ProjectGuestLink
 from app.db.session import get_db
+
 from app.schemas.user import UserWithCompanyAndProjects, UserBase, UserUpdate, UserWithCompanyIdAndRole
 from app.services.users import build_user_with_company_and_projects
 from app.services.email import send_password_reset_email
@@ -77,7 +83,15 @@ async def get_user(
           detail="Not authorized to access this user",
         )
 
-  result = await db.execute(select(User).where(User.id == user_id))
+  result = await db.execute(
+    select(User)
+    .options(
+      selectinload(User.custom_fields)
+        .selectinload(CustomField.definition),
+    )
+    .where(User.id == user_id)
+  )
+
   user = result.scalar_one_or_none()
 
   if not user:
@@ -169,7 +183,17 @@ async def patch_user(
     setattr(user, field, value)
 
   await db.commit()
-  await db.refresh(user)
+
+  result = await db.execute(
+    select(User)
+    .options(
+      selectinload(User.custom_fields)
+        .selectinload(CustomField.definition),
+    )
+    .where(User.id == user_id)
+  )
+
+  user = result.scalar_one()
 
   return user
 

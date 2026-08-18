@@ -69,6 +69,48 @@ class Company(Base):
     cascade="all, delete-orphan",
   )
 
+  custom_fields = relationship(
+    "CustomField",
+    back_populates="company",
+    cascade="all, delete-orphan",
+  )
+
+  custom_field_links = relationship(
+    "CustomFieldCompanyLink",
+    back_populates="company",
+    cascade="all, delete-orphan",
+  )
+
+  custom_field_definitions = relationship(
+    "CustomFieldDefinition",
+    back_populates="company",
+    cascade="all, delete-orphan",
+  )
+
+  custom_objects = relationship(
+    "CustomObject",
+    back_populates="company",
+    cascade="all, delete-orphan",
+  )
+
+  custom_object_definitions = relationship(
+    "CustomObjectDefinition",
+    back_populates="company",
+    cascade="all, delete-orphan",
+  )
+
+  custom_relationships = relationship(
+    "CustomRelationship",
+    back_populates="company",
+    cascade="all, delete-orphan",
+  )
+
+  custom_relationship_definitions = relationship(
+    "CustomRelationshipDefinition",
+    back_populates="company",
+    cascade="all, delete-orphan",
+  )
+
   _line_channel_secret = Column("line_channel_secret", String, nullable=True)
   _line_channel_access_token = Column("line_channel_access_token", String, nullable=True)
   line_channel_access_token_invalid = Column(Boolean, default=False, nullable=False)

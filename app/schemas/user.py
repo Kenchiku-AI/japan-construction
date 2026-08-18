@@ -10,6 +10,25 @@ class UserRole(str, Enum):
   manager = "manager"
   user = "user"
 
+class CustomFieldDefinitionRead(BaseModel):
+  id: UUID
+  key: str
+  name: str
+  description: Optional[str] = None
+
+  model_config = {
+    "from_attributes": True
+  }
+
+class CustomFieldRead(BaseModel):
+  id: UUID
+  value: Optional[str] = None
+  definition: CustomFieldDefinitionRead
+
+  model_config = {
+    "from_attributes": True
+  }
+
 class UserBase(BaseModel):
   email: EmailStr
   first_name: Optional[str] = None
@@ -22,6 +41,7 @@ class UserCreate(UserBase):
 class UserWithCompanyIdAndRole(UserBase):
   company_id: Optional[UUID] = None
   role: UserRole
+  custom_fields: List[CustomFieldRead] = []
 
   model_config = {
     "from_attributes": True
@@ -35,6 +55,7 @@ class UserUpdate(BaseModel):
 
 class UserRead(UserBase):
   id: UUID
+  custom_fields: List[CustomFieldRead] = []
   created_at: datetime
   updated_at: datetime
 
@@ -71,6 +92,7 @@ class UserWithCompanyAndProjects(BaseModel):
   role: UserRole
   company: Optional[UserCompanyRead] = None
   projects: List[UserProjectRead]
+  custom_fields: List[CustomFieldRead] = []
 
   model_config = {
     "from_attributes": True

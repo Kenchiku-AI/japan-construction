@@ -47,6 +47,20 @@ class Project(Base):
     back_populates="project",
     cascade="all, delete-orphan",
   )
+  
+  users = relationship(
+    "User",
+    secondary="project_user_links",
+    primaryjoin="Project.id == ProjectUserLink.project_id",
+    secondaryjoin="User.id == ProjectUserLink.user_id",
+    viewonly=True,
+  )
+
+  user_links = relationship(
+    "ProjectUserLink",
+    back_populates="project",
+    cascade="all, delete-orphan",
+  )
 
   guest_links = relationship(
     "ProjectGuestLink",
@@ -63,6 +77,12 @@ class Project(Base):
 
   conversation_items = relationship(
     "ConversationItem",
+    back_populates="project",
+    cascade="all, delete-orphan",
+  )
+
+  custom_field_links = relationship(
+    "CustomFieldProjectLink",
     back_populates="project",
     cascade="all, delete-orphan",
   )
