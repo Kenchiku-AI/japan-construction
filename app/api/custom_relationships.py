@@ -25,6 +25,7 @@ from app.schemas.custom_relationship import (
   CustomRelationshipDefinitionCreate,
   CustomRelationshipDefinitionUpdate,
   CustomRelationshipDefinitionRead,
+  CustomRelationshipDefinitionSortOrderUpdate,
   CustomRelationshipCreate,
   CustomRelationshipUpdate,
   CustomRelationshipRead,
@@ -190,6 +191,82 @@ async def get_custom_relationship_definition(
     )
 
   return definition
+
+
+@router.patch(
+  "/definitions/sort-order",
+  response_model=List[CustomRelationshipDefinitionRead],
+)
+async def update_custom_relationship_definition_sort_order(
+  payload: List[CustomRelationshipDefinitionSortOrderUpdate],
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  definition_ids = [
+    definition.id
+    for definition in payload
+  ]
+
+  if len(definition_ids) != len(set(definition_ids)):
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="Duplicate custom relationship definition IDs are not allowed",
+    )
+
+  if not definition_ids:
+    return []
+
+  result = await db.execute(
+    select(CustomRelationshipDefinition)
+    .where(
+      CustomRelationshipDefinition.id.in_(definition_ids),
+    )
+  )
+
+  definitions = result.scalars().all()
+
+  if len(definitions) != len(definition_ids):
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="One or more custom relationship definitions were not found",
+    )
+
+  company_ids = {
+    definition.company_id
+    for definition in definitions
+  }
+
+  if len(company_ids) != 1:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="All custom relationship definitions must belong to the same company",
+    )
+
+  company_id = next(iter(company_ids))
+
+  require_company_manager(
+    current_user,
+    company_id,
+  )
+
+  definitions_by_id = {
+    definition.id: definition
+    for definition in definitions
+  }
+
+  for definition_update in payload:
+    definition = definitions_by_id[definition_update.id]
+    definition.sort_order = definition_update.sort_order
+
+  await db.commit()
+
+  for definition in definitions:
+    await db.refresh(definition)
+
+  return sorted(
+    definitions,
+    key=lambda definition: definition.sort_order,
+  )
 
 
 @router.patch(

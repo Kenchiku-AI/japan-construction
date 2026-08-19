@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -58,6 +58,11 @@ class CustomRelationshipCreate(BaseModel):
 class CustomRelationshipUpdate(BaseModel):
   source_entity_id: Optional[UUID] = None
   target_entity_id: Optional[UUID] = None
+
+
+class CustomRelationshipDefinitionSortOrderUpdate(BaseModel):
+  id: UUID
+  sort_order: int
 
 
 class CustomRelationshipRead(BaseModel):

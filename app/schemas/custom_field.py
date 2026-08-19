@@ -40,6 +40,9 @@ class CustomFieldDefinitionUpdate(BaseModel):
   description: Optional[str] = None
   data_type: Optional[CustomFieldDataType] = None
 
+class CustomFieldDefinitionSortOrderUpdate(BaseModel):
+  id: UUID
+  sort_order: int
 
 class CustomFieldDefinitionRead(BaseModel):
   id: UUID
@@ -85,3 +88,9 @@ class CustomFieldDefinitionsResponse(BaseModel):
   company_fields: List[CustomFieldDefinitionRead]
   company_relationships: List[CustomRelationshipDefinitionRead]
   custom_objects: List[CustomObjectDefinitionRead]
+
+
+class CustomFieldDefinitionUpdate(BaseModel):
+  name: Optional[str] = None
+  description: Optional[str] = None
+  data_type: Optional[CustomFieldDataType] = None
