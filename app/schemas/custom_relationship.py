@@ -11,20 +11,16 @@ from app.db.models.custom_relationship_definition import (
 
 class CustomRelationshipDefinitionCreate(BaseModel):
   company_id: UUID
-  key: str
   name: str
   description: Optional[str] = None
   source_entity_type: CustomRelationshipEntityType
   source_custom_object_definition_id: Optional[UUID] = None
   target_entity_type: CustomRelationshipEntityType
   target_custom_object_definition_id: Optional[UUID] = None
-  cardinality: CustomRelationshipCardinality = (
-    CustomRelationshipCardinality.many
-  )
+  cardinality: CustomRelationshipCardinality = CustomRelationshipCardinality.one
 
 
 class CustomRelationshipDefinitionUpdate(BaseModel):
-  key: Optional[str] = None
   name: Optional[str] = None
   description: Optional[str] = None
   source_entity_type: Optional[CustomRelationshipEntityType] = None
@@ -37,7 +33,6 @@ class CustomRelationshipDefinitionUpdate(BaseModel):
 class CustomRelationshipDefinitionRead(BaseModel):
   id: UUID
   company_id: UUID
-  key: str
   name: str
   description: Optional[str] = None
   source_entity_type: CustomRelationshipEntityType

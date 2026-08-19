@@ -31,7 +31,6 @@ class CustomRelationshipDefinition(Base):
     index=True,
   )
 
-  key = Column(String, nullable=False)
   name = Column(String, nullable=False)
   description = Column(Text, nullable=True)
 
@@ -106,12 +105,4 @@ class CustomRelationshipDefinition(Base):
     DateTime(timezone=True),
     default=lambda: datetime.now(timezone.utc),
     onupdate=lambda: datetime.now(timezone.utc),
-  )
-
-  __table_args__ = (
-    UniqueConstraint(
-      "company_id",
-      "key",
-      name="uq_custom_relationship_definition_company_key",
-    ),
   )

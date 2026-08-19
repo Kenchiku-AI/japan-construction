@@ -81,20 +81,6 @@ async def create_custom_relationship_definition(
     payload.company_id,
   )
 
-  existing_result = await db.execute(
-    select(CustomRelationshipDefinition)
-    .where(
-      CustomRelationshipDefinition.company_id == payload.company_id,
-      CustomRelationshipDefinition.key == payload.key,
-    )
-  )
-
-  if existing_result.scalar_one_or_none():
-    raise HTTPException(
-      status_code=status.HTTP_409_CONFLICT,
-      detail="A custom relationship definition with this key already exists",
-    )
-
   await _validate_relationship_definition_entities(
     db=db,
     company_id=payload.company_id,
@@ -119,7 +105,6 @@ async def create_custom_relationship_definition(
 
   definition = CustomRelationshipDefinition(
     company_id=payload.company_id,
-    key=payload.key,
     name=payload.name,
     description=payload.description,
     source_entity_type=payload.source_entity_type,
@@ -257,22 +242,6 @@ async def update_custom_relationship_definition(
     "target_custom_object_definition_id",
     definition.target_custom_object_definition_id,
   )
-
-  if "key" in updates:
-    existing_result = await db.execute(
-      select(CustomRelationshipDefinition)
-      .where(
-        CustomRelationshipDefinition.company_id == definition.company_id,
-        CustomRelationshipDefinition.key == updates["key"],
-        CustomRelationshipDefinition.id != definition.id,
-      )
-    )
-
-    if existing_result.scalar_one_or_none():
-      raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail="A custom relationship definition with this key already exists",
-      )
 
   await _validate_relationship_definition_entities(
     db=db,
