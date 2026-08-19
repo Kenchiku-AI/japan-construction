@@ -2,7 +2,7 @@ from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -24,6 +24,8 @@ from app.db.models import (
   CustomObject,
   CustomObjectDefinition,
   CustomFieldEntityType,
+  CustomRelationshipDefinition,
+  CustomRelationshipEntityType,
 )
 from app.schemas.custom_field import (
   CustomFieldDefinitionCreate,
@@ -64,7 +66,7 @@ async def list_custom_field_definitions(
     .where(
       CustomFieldDefinition.company_id == company_id,
     )
-    .order_by(CustomFieldDefinition.name)
+    .order_by(CustomFieldDefinition.sort_order)
   )
 
   definitions = definitions_result.scalars().all()
@@ -87,37 +89,56 @@ async def list_custom_field_definitions(
     if definition.entity_type == "company"
   ]
 
+  relationships_result = await db.execute(
+    select(CustomRelationshipDefinition)
+    .where(
+      CustomRelationshipDefinition.company_id == company_id,
+    )
+    .order_by(CustomRelationshipDefinition.sort_order)
+  )
+
+  relationships = relationships_result.scalars().all()
+
+  project_relationships = [
+    definition
+    for definition in relationships
+    if definition.source_entity_type
+    == CustomRelationshipEntityType.project
+  ]
+
+  user_relationships = [
+    definition
+    for definition in relationships
+    if definition.source_entity_type
+    == CustomRelationshipEntityType.user
+  ]
+
+  company_relationships = [
+    definition
+    for definition in relationships
+    if definition.source_entity_type
+    == CustomRelationshipEntityType.company
+  ]
+
   custom_object_definitions_result = await db.execute(
     select(CustomObjectDefinition)
     .where(
       CustomObjectDefinition.company_id == company_id,
     )
     .order_by(CustomObjectDefinition.name)
-    .options(
-      selectinload(
-        CustomObjectDefinition.custom_field_definitions
-      ),
-    )
   )
 
-  custom_object_definitions = (
+  custom_objects_response = (
     custom_object_definitions_result.scalars().all()
   )
 
-  custom_objects_response = [
-    CustomObjectDefinitionWithFieldsRead(
-      id=object_definition.id,
-      name=object_definition.name,
-      description=object_definition.description,
-      fields=object_definition.custom_field_definitions,
-    )
-    for object_definition in custom_object_definitions
-  ]
-
   return CustomFieldDefinitionsResponse(
     project_fields=project_fields,
+    project_relationships=project_relationships,
     user_fields=user_fields,
+    user_relationships=user_relationships,
     company_fields=company_fields,
+    company_relationships=company_relationships,
     custom_objects=custom_objects_response,
   )
 
@@ -157,6 +178,17 @@ async def create_custom_field_definition(
         detail="Custom object definition belongs to a different company",
       )
 
+  sort_order = await _get_next_definition_sort_order(
+    db=db,
+    company_id=payload.company_id,
+    entity_type=payload.entity_type,
+    custom_object_definition_id=(
+      custom_object_definition.id
+      if custom_object_definition
+      else None
+    ),
+  )
+
   definition = CustomFieldDefinition(
     company_id=payload.company_id,
     name=payload.name,
@@ -168,6 +200,7 @@ async def create_custom_field_definition(
       if custom_object_definition
       else None
     ),
+    sort_order=sort_order,
   )
 
   db.add(definition)
@@ -175,6 +208,43 @@ async def create_custom_field_definition(
   await db.refresh(definition)
 
   return definition
+
+
+async def _get_next_definition_sort_order(
+  db: AsyncSession,
+  company_id: UUID,
+  entity_type: CustomFieldEntityType,
+  custom_object_definition_id: UUID | None = None,
+) -> int:
+  field_query = select(
+    func.count(CustomFieldDefinition.id)
+  ).where(
+    CustomFieldDefinition.company_id == company_id,
+    CustomFieldDefinition.entity_type == entity_type.value,
+  )
+
+  relationship_query = select(
+    func.count(CustomRelationshipDefinition.id)
+  ).where(
+    CustomRelationshipDefinition.company_id == company_id,
+    CustomRelationshipDefinition.source_entity_type == entity_type.value,
+  )
+
+  if entity_type == CustomFieldEntityType.custom_object:
+    field_query = field_query.where(
+      CustomFieldDefinition.custom_object_definition_id
+      == custom_object_definition_id
+    )
+
+    relationship_query = relationship_query.where(
+      CustomRelationshipDefinition.source_custom_object_definition_id
+      == custom_object_definition_id
+    )
+
+  field_count = (await db.execute(field_query)).scalar_one()
+  relationship_count = (await db.execute(relationship_query)).scalar_one()
+
+  return field_count + relationship_count
 
 
 @router.get(

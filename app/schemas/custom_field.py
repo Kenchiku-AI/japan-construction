@@ -8,6 +8,8 @@ from app.db.models.custom_field_definition import (
   CustomFieldDataType,
   CustomFieldEntityType,
 )
+from app.schemas.custom_object import CustomObjectDefinitionRead
+from app.schemas.custom_relationship import CustomRelationshipDefinitionRead
 
 
 class CustomFieldDefinitionCreate(BaseModel):
@@ -47,6 +49,7 @@ class CustomFieldDefinitionRead(BaseModel):
   data_type: CustomFieldDataType
   entity_type: CustomFieldEntityType
   custom_object_definition_id: Optional[UUID] = None
+  sort_order: int
   created_at: datetime
   updated_at: datetime
 
@@ -74,15 +77,11 @@ class CustomFieldRead(BaseModel):
   }
 
 
-class CustomObjectDefinitionWithFieldsRead(BaseModel):
-  id: UUID
-  name: str
-  description: str | None
-  fields: list[CustomFieldDefinitionRead]
-
-
 class CustomFieldDefinitionsResponse(BaseModel):
   project_fields: List[CustomFieldDefinitionRead]
+  project_relationships: List[CustomRelationshipDefinitionRead]
   user_fields: List[CustomFieldDefinitionRead]
+  user_relationships: List[CustomRelationshipDefinitionRead]
   company_fields: List[CustomFieldDefinitionRead]
-  custom_objects: List[CustomObjectDefinitionWithFieldsRead]
+  company_relationships: List[CustomRelationshipDefinitionRead]
+  custom_objects: List[CustomObjectDefinitionRead]

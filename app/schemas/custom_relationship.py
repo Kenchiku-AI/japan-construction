@@ -14,13 +14,10 @@ class CustomRelationshipDefinitionCreate(BaseModel):
   key: str
   name: str
   description: Optional[str] = None
-
   source_entity_type: CustomRelationshipEntityType
   source_custom_object_definition_id: Optional[UUID] = None
-
   target_entity_type: CustomRelationshipEntityType
   target_custom_object_definition_id: Optional[UUID] = None
-
   cardinality: CustomRelationshipCardinality = (
     CustomRelationshipCardinality.many
   )
@@ -30,13 +27,10 @@ class CustomRelationshipDefinitionUpdate(BaseModel):
   key: Optional[str] = None
   name: Optional[str] = None
   description: Optional[str] = None
-
   source_entity_type: Optional[CustomRelationshipEntityType] = None
   source_custom_object_definition_id: Optional[UUID] = None
-
   target_entity_type: Optional[CustomRelationshipEntityType] = None
   target_custom_object_definition_id: Optional[UUID] = None
-
   cardinality: Optional[CustomRelationshipCardinality] = None
 
 
@@ -46,15 +40,12 @@ class CustomRelationshipDefinitionRead(BaseModel):
   key: str
   name: str
   description: Optional[str] = None
-
   source_entity_type: CustomRelationshipEntityType
   source_custom_object_definition_id: Optional[UUID] = None
-
   target_entity_type: CustomRelationshipEntityType
   target_custom_object_definition_id: Optional[UUID] = None
-
   cardinality: CustomRelationshipCardinality
-
+  sort_order: int
   created_at: datetime
   updated_at: datetime
 

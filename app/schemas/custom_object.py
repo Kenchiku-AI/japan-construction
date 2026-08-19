@@ -20,9 +20,7 @@ class CustomObjectDefinitionUpdate(BaseModel):
 
 class CustomObjectDefinitionRead(BaseModel):
   id: UUID
-  company_id: UUID
   name: str
-  key: str
   description: Optional[str] = None
   created_at: datetime
   updated_at: datetime
