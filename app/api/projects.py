@@ -22,6 +22,7 @@ from app.db.models import (
   ConversationItemTypeLink,
   ProjectUserLink,
   CustomField,
+  CustomFieldDefinition,
   CustomFieldProjectLink,
 )
 from app.schemas.project import (
@@ -31,6 +32,7 @@ from app.schemas.project import (
   ProjectWithLists,
   ProjectSetUsers,
 )
+from app.schemas.custom_field import CustomFieldRead
 from app.schemas.user import UserRead
 from app.services.billing import can_use_billed_features
 
@@ -166,6 +168,42 @@ async def get_conversation_last_messages(
 
   return dict(result.all())
 
+async def get_project_custom_fields(
+  project: Project,
+  db: AsyncSession,
+) -> list[CustomFieldRead]:
+  definitions_result = await db.execute(
+    select(CustomFieldDefinition)
+    .where(
+      CustomFieldDefinition.company_id == project.company_id,
+      CustomFieldDefinition.entity_type == "project",
+    )
+    .order_by(
+      CustomFieldDefinition.sort_order,
+      CustomFieldDefinition.name,
+    )
+  )
+
+  definitions = definitions_result.scalars().all()
+
+  existing_fields = {
+    link.custom_field.custom_field_definition_id: link.custom_field
+    for link in project.custom_field_links
+  }
+
+  return [
+    CustomFieldRead(
+      id=existing_fields[definition.id].id
+        if definition.id in existing_fields
+        else None,
+      value=existing_fields[definition.id].value
+        if definition.id in existing_fields
+        else None,
+      definition=definition,
+    )
+    for definition in definitions
+  ]
+
 async def build_project_response(
   db: AsyncSession,
   project: Project,
@@ -193,10 +231,10 @@ async def build_project_response(
     )
     conversations.append(conversation)
 
-  custom_fields = [
-    link.custom_field
-    for link in project.custom_field_links
-  ]
+  custom_fields = await get_project_custom_fields(
+    project,
+    db,
+  )
 
   return ProjectWithLists(
     id=project.id,
@@ -374,20 +412,30 @@ async def create_project(
 
   db.add(project)
   await db.commit()
-  await db.refresh(project)
 
-  return ProjectWithLists(
-    id=project.id,
-    name=project.name,
-    description=project.description,
-    status=project.status,
-    company_id=project.company_id,
-    reports=[],
-    conversations=[],
-    conversation_items=[],
-    users=[],
-    custom_fields=[],
+  stmt = (
+    select(Project)
+    .where(Project.id == project.id)
+    .options(
+      selectinload(Project.reports),
+      selectinload(Project.users),
+      selectinload(Project.conversations)
+        .selectinload(LineConversation.item_type_links)
+        .selectinload(ConversationItemTypeLink.item_type),
+      selectinload(Project.custom_field_links)
+        .selectinload(CustomFieldProjectLink.custom_field)
+        .selectinload(CustomField.definition),
+    )
   )
+
+  result = await db.execute(stmt)
+  project = result.scalar_one()
+
+  return await build_project_response(
+    db,
+    project,
+  )
+
 
 @router.patch("/{project_id}", response_model=ProjectWithLists)
 async def update_project(
@@ -397,16 +445,117 @@ async def update_project(
   current_user: User = Depends(get_current_user),
 ):
   project = await db.get(Project, project_id)
+
   if not project:
-    raise HTTPException(status_code=404, detail="Project not found")
+    raise HTTPException(
+      status_code=404,
+      detail="Project not found",
+    )
 
   if current_user.role != "admin":
-    require_company_manager(current_user, project.company_id)
+    require_company_manager(
+      current_user,
+      project.company_id,
+    )
 
-  for field, value in payload.model_dump(exclude_unset=True).items():
+  update_data = payload.model_dump(
+    exclude_unset=True,
+    exclude_none=True,
+  )
+
+  custom_field_updates = update_data.pop(
+    "custom_fields",
+    [],
+  )
+
+  # -------------------------------------------------------------------------
+  # Standard project fields
+  # -------------------------------------------------------------------------
+
+  for field, value in update_data.items():
     setattr(project, field, value)
 
+  # -------------------------------------------------------------------------
+  # Custom fields
+  # -------------------------------------------------------------------------
+
+  for custom_field_update in custom_field_updates:
+    definition_id = custom_field_update["custom_field_definition_id"]
+    value = custom_field_update.get("value")
+
+    # Make sure the definition exists.
+    definition = await db.get(
+      CustomFieldDefinition,
+      definition_id,
+    )
+
+    if not definition:
+      raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Custom field definition not found",
+      )
+
+    # Make sure the definition belongs to the project's company.
+    if definition.company_id != project.company_id:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Custom field definition belongs to a different company",
+      )
+
+    # Make sure this definition is for projects.
+    if definition.entity_type != "project":
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Custom field definition is not for projects",
+      )
+
+    # Look for an existing field associated with this project.
+    existing_field_result = await db.execute(
+      select(CustomField)
+      .join(
+        CustomFieldProjectLink,
+        CustomFieldProjectLink.custom_field_id == CustomField.id,
+      )
+      .where(
+        CustomFieldProjectLink.project_id == project.id,
+        CustomField.custom_field_definition_id == definition_id,
+      )
+    )
+
+    custom_field = existing_field_result.scalar_one_or_none()
+
+    if custom_field:
+      # Existing field → update its value.
+      custom_field.value = value
+
+    else:
+      # No field yet → create the field.
+      custom_field = CustomField(
+        company_id=project.company_id,
+        custom_field_definition_id=definition_id,
+        value=value,
+      )
+
+      db.add(custom_field)
+      await db.flush()
+
+      # Associate it with the project.
+      link = CustomFieldProjectLink(
+        custom_field_id=custom_field.id,
+        project_id=project.id,
+      )
+
+      db.add(link)
+
+  # -------------------------------------------------------------------------
+  # Save everything in one transaction
+  # -------------------------------------------------------------------------
+
   await db.commit()
+
+  # -------------------------------------------------------------------------
+  # Reload the project
+  # -------------------------------------------------------------------------
 
   stmt = (
     select(Project)
@@ -425,8 +574,12 @@ async def update_project(
 
   result = await db.execute(stmt)
   project = result.scalars().first()
+
   if not project:
-    raise HTTPException(status_code=404, detail="Project not found")
+    raise HTTPException(
+      status_code=404,
+      detail="Project not found",
+    )
 
   return await build_project_response(
     db,

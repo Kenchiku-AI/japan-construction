@@ -5,29 +5,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
+from app.schemas.custom_field import CustomFieldRead
+
 class UserRole(str, Enum):
   admin = "admin"
   manager = "manager"
   user = "user"
-
-class CustomFieldDefinitionRead(BaseModel):
-  id: UUID
-  key: str
-  name: str
-  description: Optional[str] = None
-
-  model_config = {
-    "from_attributes": True
-  }
-
-class CustomFieldRead(BaseModel):
-  id: Optional[UUID] = None
-  value: Optional[str] = None
-  definition: CustomFieldDefinitionRead
-
-  model_config = {
-    "from_attributes": True
-  }
 
 class UserBase(BaseModel):
   email: EmailStr

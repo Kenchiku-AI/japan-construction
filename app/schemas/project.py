@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from uuid import UUID
 
@@ -17,10 +17,15 @@ class ProjectBase(BaseModel):
 class ProjectCreate(ProjectBase):
   company_id: UUID
 
+class ProjectCustomFieldUpdate(BaseModel):
+  custom_field_definition_id: UUID
+  value: Optional[str] = None
+
 class ProjectUpdate(ProjectBase):
   name: str | None = None
   description: str | None = None
   status: str | None = None
+  custom_fields: List[ProjectCustomFieldUpdate] = Field(default_factory=list)
 
 class ProjectRead(ProjectBase):
   id: UUID
@@ -67,11 +72,11 @@ class ConversationItemsGroupedRead(BaseModel):
   }
   
 class ProjectWithLists(ProjectWithCompanyName):
-  users: List[UserRead] = []
-  reports: List[ProjectReportRead] = []
-  conversations: List[ProjectConversationRead] = []
-  conversation_items: List[ConversationItemsGroupedRead] = []
-  custom_fields: List[CustomFieldRead] = []
+  users: List[UserRead] = Field(default_factory=list)
+  reports: List[ProjectReportRead] = Field(default_factory=list)
+  conversations: List[ProjectConversationRead] = Field(default_factory=list)
+  conversation_items: List[ConversationItemsGroupedRead] = Field(default_factory=list)
+  custom_fields: List[CustomFieldRead] = Field(default_factory=list)
 
 class ProjectSetUsers(BaseModel):
   user_ids: list[UUID]

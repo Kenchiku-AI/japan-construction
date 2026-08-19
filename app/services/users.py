@@ -4,11 +4,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.custom_field import CustomFieldRead
 from app.schemas.user import (
   UserCompanyRead, 
   UserProjectRead, 
   UserWithCompanyAndProjects,
-  CustomFieldRead
 )
 from app.db.models.custom_field import CustomField, CustomFieldUserLink
 from app.db.models.custom_field_definition import CustomFieldDefinition

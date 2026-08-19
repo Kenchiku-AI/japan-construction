@@ -68,13 +68,9 @@ class CustomFieldUpdate(BaseModel):
 
 
 class CustomFieldRead(BaseModel):
-  id: UUID
-  company_id: UUID
-  custom_field_definition_id: UUID
+  id: UUID | None = None
   value: Optional[str] = None
   definition: CustomFieldDefinitionRead
-  created_at: datetime
-  updated_at: datetime
 
   model_config = {
     "from_attributes": True,
