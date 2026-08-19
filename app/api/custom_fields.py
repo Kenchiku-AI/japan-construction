@@ -35,7 +35,6 @@ from app.schemas.custom_field import (
   CustomFieldCreate,
   CustomFieldUpdate,
   CustomFieldRead,
-  CustomObjectDefinitionWithFieldsRead,
 )
 
 
