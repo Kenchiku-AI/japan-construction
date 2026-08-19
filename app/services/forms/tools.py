@@ -186,7 +186,6 @@ async def get_company_custom_fields(
   return [
     {
       "id": str(field.id),
-      "key": field.definition.key,
       "name": field.definition.name,
       "description": field.definition.description,
       "value": field.value,
@@ -224,7 +223,6 @@ async def get_project_custom_fields(
   return [
     {
       "id": str(field.id),
-      "key": field.definition.key,
       "name": field.definition.name,
       "description": field.definition.description,
       "value": field.value,
@@ -262,7 +260,6 @@ async def get_user_custom_fields(
   return [
     {
       "id": str(field.id),
-      "key": field.definition.key,
       "name": field.definition.name,
       "description": field.definition.description,
       "value": field.value,
@@ -299,7 +296,6 @@ async def get_custom_object(
     "company_id": str(obj.company_id),
     "definition": {
       "id": str(obj.definition.id),
-      "key": obj.definition.key,
       "name": obj.definition.name,
       "description": obj.definition.description,
     },
@@ -333,7 +329,6 @@ async def get_company_custom_objects(
       "description": obj.description,
       "definition": {
         "id": str(obj.definition.id),
-        "key": obj.definition.key,
         "name": obj.definition.name,
         "description": obj.definition.description,
       },
@@ -369,7 +364,6 @@ async def get_custom_object_fields(
   return [
     {
       "id": str(field.id),
-      "key": field.definition.key,
       "name": field.definition.name,
       "description": field.definition.description,
       "value": field.value,
@@ -430,7 +424,6 @@ async def get_custom_relationships_for_entity(
       "id": str(relationship.id),
       "definition": {
         "id": str(relationship.definition.id),
-        "key": relationship.definition.key,
         "name": relationship.definition.name,
         "description": relationship.definition.description,
         "source_entity_type": (

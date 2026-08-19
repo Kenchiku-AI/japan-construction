@@ -137,20 +137,6 @@ async def create_custom_field_definition(
     payload.company_id,
   )
 
-  existing_result = await db.execute(
-    select(CustomFieldDefinition)
-    .where(
-      CustomFieldDefinition.company_id == payload.company_id,
-      CustomFieldDefinition.key == payload.key,
-    )
-  )
-
-  if existing_result.scalar_one_or_none():
-    raise HTTPException(
-      status_code=status.HTTP_409_CONFLICT,
-      detail="A custom field definition with this key already exists",
-    )
-
   custom_object_definition = None
 
   if payload.entity_type == CustomFieldEntityType.custom_object:
@@ -173,7 +159,6 @@ async def create_custom_field_definition(
 
   definition = CustomFieldDefinition(
     company_id=payload.company_id,
-    key=payload.key,
     name=payload.name,
     description=payload.description,
     data_type=payload.data_type,
@@ -255,22 +240,6 @@ async def update_custom_field_definition(
   updates = payload.model_dump(
     exclude_unset=True,
   )
-
-  if "key" in updates:
-    existing_result = await db.execute(
-      select(CustomFieldDefinition)
-      .where(
-        CustomFieldDefinition.company_id == definition.company_id,
-        CustomFieldDefinition.key == updates["key"],
-        CustomFieldDefinition.id != definition.id,
-      )
-    )
-
-    if existing_result.scalar_one_or_none():
-      raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail="A custom field definition with this key already exists",
-      )
 
   for field, value in updates.items():
     setattr(definition, field, value)

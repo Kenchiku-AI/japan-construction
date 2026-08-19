@@ -12,7 +12,6 @@ from app.db.models.custom_field_definition import (
 
 class CustomFieldDefinitionCreate(BaseModel):
   company_id: UUID
-  key: str
   name: str
   description: Optional[str] = None
   data_type: CustomFieldDataType = CustomFieldDataType.text
@@ -35,7 +34,6 @@ class CustomFieldDefinitionCreate(BaseModel):
 
 
 class CustomFieldDefinitionUpdate(BaseModel):
-  key: Optional[str] = None
   name: Optional[str] = None
   description: Optional[str] = None
   data_type: Optional[CustomFieldDataType] = None
@@ -44,7 +42,6 @@ class CustomFieldDefinitionUpdate(BaseModel):
 class CustomFieldDefinitionRead(BaseModel):
   id: UUID
   company_id: UUID
-  key: str
   name: str
   description: Optional[str] = None
   data_type: CustomFieldDataType
