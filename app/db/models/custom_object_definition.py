@@ -19,7 +19,6 @@ class CustomObjectDefinition(Base):
   )
 
   name = Column(String, nullable=False)
-  key = Column(String, nullable=False)
   description = Column(Text, nullable=True)
 
   company = relationship(
@@ -37,6 +36,18 @@ class CustomObjectDefinition(Base):
     "CustomFieldDefinition",
     back_populates="custom_object_definition",
     cascade="all, delete-orphan",
+  )
+
+  custom_relationship_definitions_as_source = relationship(
+    "CustomRelationshipDefinition",
+    foreign_keys="CustomRelationshipDefinition.source_custom_object_definition_id",
+    back_populates="source_custom_object_definition",
+  )
+
+  custom_relationship_definitions_as_target = relationship(
+    "CustomRelationshipDefinition",
+    foreign_keys="CustomRelationshipDefinition.target_custom_object_definition_id",
+    back_populates="target_custom_object_definition",
   )
 
   created_at = Column(

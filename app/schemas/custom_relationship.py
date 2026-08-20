@@ -69,13 +69,10 @@ class CustomRelationshipRead(BaseModel):
   id: UUID
   company_id: UUID
   custom_relationship_definition_id: UUID
-
   source_entity_type: CustomRelationshipEntityType
   source_entity_id: UUID
-
   target_entity_type: CustomRelationshipEntityType
   target_entity_id: UUID
-
   created_at: datetime
   updated_at: datetime
 

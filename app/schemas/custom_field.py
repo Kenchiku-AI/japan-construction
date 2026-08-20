@@ -8,7 +8,7 @@ from app.db.models.custom_field_definition import (
   CustomFieldDataType,
   CustomFieldEntityType,
 )
-from app.schemas.custom_object import CustomObjectDefinitionRead
+
 from app.schemas.custom_relationship import CustomRelationshipDefinitionRead
 
 
@@ -87,7 +87,6 @@ class CustomFieldDefinitionsResponse(BaseModel):
   user_relationships: List[CustomRelationshipDefinitionRead]
   company_fields: List[CustomFieldDefinitionRead]
   company_relationships: List[CustomRelationshipDefinitionRead]
-  custom_objects: List[CustomObjectDefinitionRead]
 
 
 class CustomFieldDefinitionUpdate(BaseModel):

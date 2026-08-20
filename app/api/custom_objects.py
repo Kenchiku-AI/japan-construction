@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,10 +21,13 @@ from app.schemas.custom_object import (
   CustomObjectDefinitionCreate,
   CustomObjectDefinitionUpdate,
   CustomObjectDefinitionRead,
+  CustomObjectDefinitionDetailRead,
   CustomObjectCreate,
   CustomObjectUpdate,
   CustomObjectRead,
 )
+from app.schemas.custom_field import CustomFieldDefinitionRead
+from app.schemas.custom_relationship import CustomRelationshipDefinitionRead
 
 
 router = APIRouter(
@@ -77,24 +80,9 @@ async def create_custom_object_definition(
     payload.company_id,
   )
 
-  existing_result = await db.execute(
-    select(CustomObjectDefinition)
-    .where(
-      CustomObjectDefinition.company_id == payload.company_id,
-      CustomObjectDefinition.key == payload.key,
-    )
-  )
-
-  if existing_result.scalar_one_or_none():
-    raise HTTPException(
-      status_code=status.HTTP_409_CONFLICT,
-      detail="A custom object definition with this key already exists",
-    )
-
   definition = CustomObjectDefinition(
     company_id=payload.company_id,
     name=payload.name,
-    key=payload.key,
     description=payload.description,
   )
 
@@ -107,17 +95,29 @@ async def create_custom_object_definition(
 
 @router.get(
   "/definitions/{definition_id}",
-  response_model=CustomObjectDefinitionRead,
+  response_model=CustomObjectDefinitionDetailRead,
 )
 async def get_custom_object_definition(
   definition_id: UUID,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  definition = await db.get(
-    CustomObjectDefinition,
-    definition_id,
+  result = await db.execute(
+    select(CustomObjectDefinition)
+    .where(
+      CustomObjectDefinition.id == definition_id,
+    )
+    .options(
+      selectinload(
+        CustomObjectDefinition.custom_field_definitions,
+      ),
+      selectinload(
+        CustomObjectDefinition.custom_relationship_definitions_as_source,
+      ),
+    )
   )
+
+  definition = result.scalar_one_or_none()
 
   if not definition:
     raise HTTPException(
@@ -131,12 +131,24 @@ async def get_custom_object_definition(
       definition.company_id,
     )
 
-  return definition
+  relationships = sorted(
+    definition.custom_relationship_definitions_as_source,
+    key=lambda relationship: relationship.sort_order,
+  )
 
+  return CustomObjectDefinitionDetailRead(
+    id=definition.id,
+    name=definition.name,
+    description=definition.description,
+    fields=definition.custom_field_definitions,
+    relationships=relationships,
+    created_at=definition.created_at,
+    updated_at=definition.updated_at,
+  )
 
 @router.patch(
   "/definitions/{definition_id}",
-  response_model=CustomObjectDefinitionRead,
+  response_model=CustomObjectDefinitionDetailRead,
 )
 async def update_custom_object_definition(
   definition_id: UUID,
@@ -144,10 +156,22 @@ async def update_custom_object_definition(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  definition = await db.get(
-    CustomObjectDefinition,
-    definition_id,
+  result = await db.execute(
+    select(CustomObjectDefinition)
+    .where(
+      CustomObjectDefinition.id == definition_id,
+    )
+    .options(
+      selectinload(
+        CustomObjectDefinition.custom_field_definitions,
+      ),
+      selectinload(
+        CustomObjectDefinition.custom_relationship_definitions_as_source,
+      ),
+    )
   )
+
+  definition = result.scalar_one_or_none()
 
   if not definition:
     raise HTTPException(
@@ -165,29 +189,27 @@ async def update_custom_object_definition(
     exclude_unset=True,
   )
 
-  if "key" in updates:
-    existing_result = await db.execute(
-      select(CustomObjectDefinition)
-      .where(
-        CustomObjectDefinition.company_id == definition.company_id,
-        CustomObjectDefinition.key == updates["key"],
-        CustomObjectDefinition.id != definition.id,
-      )
-    )
-
-    if existing_result.scalar_one_or_none():
-      raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail="A custom object definition with this key already exists",
-      )
-
   for field, value in updates.items():
     setattr(definition, field, value)
 
   await db.commit()
+
   await db.refresh(definition)
 
-  return definition
+  relationships = sorted(
+    definition.custom_relationship_definitions_as_source,
+    key=lambda relationship: relationship.sort_order,
+  )
+
+  return CustomObjectDefinitionDetailRead(
+    id=definition.id,
+    name=definition.name,
+    description=definition.description,
+    fields=definition.custom_field_definitions,
+    relationships=relationships,
+    created_at=definition.created_at,
+    updated_at=definition.updated_at,
+  )
 
 
 @router.delete(
@@ -231,32 +253,41 @@ async def delete_custom_object_definition(
   response_model=List[CustomObjectRead],
 )
 async def list_custom_objects(
-  company_id: UUID,
-  custom_object_definition_id: UUID | None = None,
+  custom_object_definition_id: UUID,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
+  definition_result = await db.execute(
+    select(CustomObjectDefinition)
+    .where(
+      CustomObjectDefinition.id == custom_object_definition_id,
+    )
+  )
+
+  definition = definition_result.scalar_one_or_none()
+
+  if definition is None:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Custom object definition not found",
+    )
+
   require_company_manager(
     current_user,
-    company_id,
+    definition.company_id,
   )
 
   query = (
     select(CustomObject)
     .where(
-      CustomObject.company_id == company_id,
+      CustomObject.custom_object_definition_id
+      == custom_object_definition_id,
     )
     .options(
       selectinload(CustomObject.definition),
     )
     .order_by(CustomObject.name)
   )
-
-  if custom_object_definition_id:
-    query = query.where(
-      CustomObject.custom_object_definition_id
-      == custom_object_definition_id,
-    )
 
   result = await db.execute(query)
 

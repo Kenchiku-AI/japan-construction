@@ -1,14 +1,15 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 
 from pydantic import BaseModel
 
+from app.schemas.custom_field import CustomFieldDefinitionRead
+from app.schemas.custom_relationship import CustomRelationshipDefinitionRead
 
 class CustomObjectDefinitionCreate(BaseModel):
   company_id: UUID
   name: str
-  key: str
   description: Optional[str] = None
 
 
@@ -22,6 +23,19 @@ class CustomObjectDefinitionRead(BaseModel):
   id: UUID
   name: str
   description: Optional[str] = None
+  created_at: datetime
+  updated_at: datetime
+
+  model_config = {
+    "from_attributes": True,
+  }
+
+class CustomObjectDefinitionDetailRead(BaseModel):
+  id: UUID
+  name: str
+  description: Optional[str] = None
+  fields: List[CustomFieldDefinitionRead]
+  relationships: List[CustomRelationshipDefinitionRead]
   created_at: datetime
   updated_at: datetime
 

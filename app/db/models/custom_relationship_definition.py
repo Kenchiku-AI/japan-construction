@@ -54,6 +54,7 @@ class CustomRelationshipDefinition(Base):
   source_custom_object_definition = relationship(
     "CustomObjectDefinition",
     foreign_keys=[source_custom_object_definition_id],
+    back_populates="custom_relationship_definitions_as_source",
   )
 
   target_entity_type = Column(
@@ -70,10 +71,11 @@ class CustomRelationshipDefinition(Base):
     nullable=True,
     index=True,
   )
-
+  
   target_custom_object_definition = relationship(
     "CustomObjectDefinition",
     foreign_keys=[target_custom_object_definition_id],
+    back_populates="custom_relationship_definitions_as_target",
   )
 
   cardinality = Column(

@@ -120,18 +120,6 @@ async def list_custom_field_definitions(
     == CustomRelationshipEntityType.company
   ]
 
-  custom_object_definitions_result = await db.execute(
-    select(CustomObjectDefinition)
-    .where(
-      CustomObjectDefinition.company_id == company_id,
-    )
-    .order_by(CustomObjectDefinition.name)
-  )
-
-  custom_objects_response = (
-    custom_object_definitions_result.scalars().all()
-  )
-
   return CustomFieldDefinitionsResponse(
     project_fields=project_fields,
     project_relationships=project_relationships,
@@ -139,7 +127,6 @@ async def list_custom_field_definitions(
     user_relationships=user_relationships,
     company_fields=company_fields,
     company_relationships=company_relationships,
-    custom_objects=custom_objects_response,
   )
 
 
