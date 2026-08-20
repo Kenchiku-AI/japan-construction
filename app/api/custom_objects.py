@@ -16,6 +16,12 @@ from app.db.models import (
   User,
   CustomObject,
   CustomObjectDefinition,
+  CustomFieldDefinition,
+  CustomFieldEntityType,
+  CustomFieldCustomObjectLink,
+  CustomRelationship,
+  CustomRelationshipDefinition,
+  CustomRelationshipEntityType,
 )
 from app.schemas.custom_object import (
   CustomObjectDefinitionCreate,
@@ -25,6 +31,7 @@ from app.schemas.custom_object import (
   CustomObjectCreate,
   CustomObjectUpdate,
   CustomObjectRead,
+  CustomObjectDetailRead,
 )
 from app.schemas.custom_field import CustomFieldDefinitionRead
 from app.schemas.custom_relationship import CustomRelationshipDefinitionRead
@@ -138,6 +145,7 @@ async def get_custom_object_definition(
 
   return CustomObjectDefinitionDetailRead(
     id=definition.id,
+    company_id=definition.company_id,
     name=definition.name,
     description=definition.description,
     fields=definition.custom_field_definitions,
@@ -203,6 +211,7 @@ async def update_custom_object_definition(
 
   return CustomObjectDefinitionDetailRead(
     id=definition.id,
+    company_id=definition.company_id,
     name=definition.name,
     description=definition.description,
     fields=definition.custom_field_definitions,
@@ -286,7 +295,7 @@ async def list_custom_objects(
     .options(
       selectinload(CustomObject.definition),
     )
-    .order_by(CustomObject.name)
+    .order_by(CustomObject.created_at)
   )
 
   result = await db.execute(query)
@@ -351,7 +360,7 @@ async def create_custom_object(
 
 @router.get(
   "/{custom_object_id}",
-  response_model=CustomObjectRead,
+  response_model=CustomObjectDetailRead,
 )
 async def get_custom_object(
   custom_object_id: UUID,
@@ -365,6 +374,9 @@ async def get_custom_object(
     )
     .options(
       selectinload(CustomObject.definition),
+      selectinload(CustomObject.custom_field_links)
+        .selectinload(CustomFieldCustomObjectLink.custom_field),
+      selectinload(CustomObject.custom_relationships),
     )
   )
 
@@ -382,7 +394,88 @@ async def get_custom_object(
       custom_object.company_id,
     )
 
-  return custom_object
+  field_definitions_result = await db.execute(
+    select(CustomFieldDefinition)
+    .where(
+      CustomFieldDefinition.custom_object_definition_id
+      == custom_object.custom_object_definition_id,
+      CustomFieldDefinition.entity_type
+      == CustomFieldEntityType.custom_object,
+    )
+    .order_by(
+      CustomFieldDefinition.sort_order,
+      CustomFieldDefinition.name,
+    )
+  )
+
+  field_definitions = field_definitions_result.scalars().all()
+
+  existing_fields = {
+    link.custom_field.custom_field_definition_id: link.custom_field
+    for link in custom_object.custom_field_links
+  }
+
+  fields = [
+    CustomFieldRead(
+      id=existing_fields[definition.id].id
+        if definition.id in existing_fields
+        else None,
+      value=existing_fields[definition.id].value
+        if definition.id in existing_fields
+        else None,
+      definition=definition,
+    )
+    for definition in field_definitions
+  ]
+
+  relationship_definitions_result = await db.execute(
+    select(CustomRelationshipDefinition)
+    .where(
+      CustomRelationshipDefinition.company_id
+      == custom_object.company_id,
+      CustomRelationshipDefinition.source_entity_type
+      == CustomRelationshipEntityType.custom_object,
+      CustomRelationshipDefinition.source_custom_object_definition_id
+      == custom_object.custom_object_definition_id,
+    )
+    .order_by(
+      CustomRelationshipDefinition.sort_order,
+      CustomRelationshipDefinition.name,
+    )
+  )
+
+  relationship_definitions = (
+    relationship_definitions_result.scalars().all()
+  )
+
+  existing_relationships = {
+    relationship.custom_relationship_definition_id: relationship
+    for relationship in custom_object.custom_relationships
+  }
+
+  relationships = [
+    CustomRelationshipRead(
+      id=existing_relationships[definition.id].id
+        if definition.id in existing_relationships
+        else None,
+      source_entity_id=custom_object.id,
+      target_entity_id=existing_relationships[definition.id].target_entity_id
+        if definition.id in existing_relationships
+        else None,
+      definition=definition,
+    )
+    for definition in relationship_definitions
+  ]
+
+  return CustomObjectDetailRead(
+    id=custom_object.id,
+    company_id=custom_object.company_id,
+    definition=custom_object.definition,
+    fields=fields,
+    relationships=relationships,
+    created_at=custom_object.created_at,
+    updated_at=custom_object.updated_at,
+  )
 
 
 @router.patch(

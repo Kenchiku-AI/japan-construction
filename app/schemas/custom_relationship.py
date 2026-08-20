@@ -66,15 +66,10 @@ class CustomRelationshipDefinitionSortOrderUpdate(BaseModel):
 
 
 class CustomRelationshipRead(BaseModel):
-  id: UUID
-  company_id: UUID
-  custom_relationship_definition_id: UUID
-  source_entity_type: CustomRelationshipEntityType
+  id: UUID | None = None
   source_entity_id: UUID
-  target_entity_type: CustomRelationshipEntityType
-  target_entity_id: UUID
-  created_at: datetime
-  updated_at: datetime
+  target_entity_id: UUID | None = None
+  definition: CustomRelationshipDefinitionRead
 
   model_config = {
     "from_attributes": True,

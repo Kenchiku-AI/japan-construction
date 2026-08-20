@@ -4,8 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.schemas.custom_field import CustomFieldDefinitionRead
-from app.schemas.custom_relationship import CustomRelationshipDefinitionRead
+from app.schemas.custom_field import CustomFieldDefinitionRead, CustomFieldRead
+from app.schemas.custom_relationship import CustomRelationshipDefinitionRead, CustomRelationshipRead
 
 class CustomObjectDefinitionCreate(BaseModel):
   company_id: UUID
@@ -32,6 +32,7 @@ class CustomObjectDefinitionRead(BaseModel):
 
 class CustomObjectDefinitionDetailRead(BaseModel):
   id: UUID
+  company_id: UUID
   name: str
   description: Optional[str] = None
   fields: List[CustomFieldDefinitionRead]
@@ -64,6 +65,19 @@ class CustomObjectRead(BaseModel):
   name: str
   description: Optional[str] = None
   definition: CustomObjectDefinitionRead
+  created_at: datetime
+  updated_at: datetime
+
+  model_config = {
+    "from_attributes": True,
+  }
+
+class CustomObjectDetailRead(BaseModel):
+  id: UUID
+  company_id: UUID
+  definition: CustomObjectDefinitionRead
+  fields: List[CustomFieldRead]
+  relationships: List[CustomRelationshipRead]
   created_at: datetime
   updated_at: datetime
 

@@ -9,6 +9,7 @@ from app.schemas.conversation import (
 )
 from app.schemas.user import UserRead
 from app.schemas.custom_field import CustomFieldRead
+from app.schemas.custom_relationship import CustomRelationshipRead
 
 class ProjectBase(BaseModel):
   name: str
@@ -77,6 +78,7 @@ class ProjectWithLists(ProjectWithCompanyName):
   conversations: List[ProjectConversationRead] = Field(default_factory=list)
   conversation_items: List[ConversationItemsGroupedRead] = Field(default_factory=list)
   custom_fields: List[CustomFieldRead] = Field(default_factory=list)
+  custom_relationships: List[CustomRelationshipRead] = Field(default_factory=list)
 
 class ProjectSetUsers(BaseModel):
   user_ids: list[UUID]

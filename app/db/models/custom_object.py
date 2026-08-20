@@ -25,9 +25,6 @@ class CustomObject(Base):
     index=True,
   )
 
-  name = Column(String, nullable=False)
-  description = Column(Text, nullable=True)
-
   company = relationship(
     "Company",
     back_populates="custom_objects",
@@ -42,6 +39,17 @@ class CustomObject(Base):
     "CustomFieldCustomObjectLink",
     back_populates="custom_object",
     cascade="all, delete-orphan",
+  )
+
+  custom_relationships = relationship(
+    "CustomRelationship",
+    primaryjoin=(
+      "and_("
+      "CustomObject.id == foreign(CustomRelationship.source_entity_id), "
+      "CustomObject.company_id == foreign(CustomRelationship.company_id)"
+      ")"
+    ),
+    viewonly=True,
   )
 
   created_at = Column(

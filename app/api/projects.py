@@ -33,6 +33,7 @@ from app.schemas.project import (
   ProjectSetUsers,
 )
 from app.schemas.custom_field import CustomFieldRead
+from app.schemas.custom_relationship import CustomRelationshipRead
 from app.schemas.user import UserRead
 from app.services.billing import can_use_billed_features
 
@@ -204,6 +205,47 @@ async def get_project_custom_fields(
     for definition in definitions
   ]
 
+async def get_project_custom_relationships(
+  project: Project,
+  db: AsyncSession,
+) -> list[CustomRelationshipRead]:
+  definitions_result = await db.execute(
+    select(CustomRelationshipDefinition)
+    .where(
+      CustomRelationshipDefinition.company_id == project.company_id,
+      CustomRelationshipDefinition.source_entity_type
+      == CustomRelationshipEntityType.project,
+    )
+    .order_by(
+      CustomRelationshipDefinition.sort_order,
+      CustomRelationshipDefinition.name,
+    )
+  )
+
+  definitions = definitions_result.scalars().all()
+
+  existing_relationships = {
+    relationship.custom_relationship_definition_id: relationship
+    for relationship in project.custom_relationships
+    if relationship.source_entity_id == project.id
+  }
+
+  return [
+    CustomRelationshipRead(
+      id=existing_relationships[definition.id].id
+        if definition.id in existing_relationships
+        else None,
+      source_entity_id=existing_relationships[definition.id].source_entity_id
+        if definition.id in existing_relationships
+        else project.id,
+      target_entity_id=existing_relationships[definition.id].target_entity_id
+        if definition.id in existing_relationships
+        else None,
+      definition=definition,
+    )
+    for definition in definitions
+  ]
+
 async def build_project_response(
   db: AsyncSession,
   project: Project,
@@ -236,6 +278,11 @@ async def build_project_response(
     db,
   )
 
+  custom_relationships = await get_project_custom_relationships(
+    project,
+    db,
+  )
+
   return ProjectWithLists(
     id=project.id,
     name=project.name,
@@ -247,6 +294,7 @@ async def build_project_response(
     conversations=conversations,
     conversation_items=conversation_items,
     custom_fields=custom_fields,
+    custom_relationships=custom_relationships,
     users=project.users,
   )
 
@@ -347,6 +395,7 @@ async def get_project(
         selectinload(Project.custom_field_links)
           .selectinload(CustomFieldProjectLink.custom_field)
           .selectinload(CustomField.definition),
+        selectinload(Project.custom_relationships),
       )
     )
 
@@ -373,6 +422,7 @@ async def get_project(
         selectinload(Project.custom_field_links)
           .selectinload(CustomFieldProjectLink.custom_field)
           .selectinload(CustomField.definition),
+        selectinload(Project.custom_relationships),
       )
     )
 
@@ -425,6 +475,7 @@ async def create_project(
       selectinload(Project.custom_field_links)
         .selectinload(CustomFieldProjectLink.custom_field)
         .selectinload(CustomField.definition),
+      selectinload(Project.custom_relationships),
     )
   )
 
@@ -569,6 +620,7 @@ async def update_project(
       selectinload(Project.custom_field_links)
         .selectinload(CustomFieldProjectLink.custom_field)
         .selectinload(CustomField.definition),
+      selectinload(Project.custom_relationships),
     )
   )
 
