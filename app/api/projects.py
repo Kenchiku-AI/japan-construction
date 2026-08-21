@@ -24,6 +24,8 @@ from app.db.models import (
   CustomField,
   CustomFieldDefinition,
   CustomFieldProjectLink,
+  CustomRelationshipDefinition,
+  CustomRelationshipEntityType,
 )
 from app.schemas.project import (
   ProjectCreate, 
