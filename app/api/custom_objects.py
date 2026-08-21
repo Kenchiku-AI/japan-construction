@@ -31,6 +31,8 @@ from app.schemas.custom_object import (
   CustomObjectCreate,
   CustomObjectUpdate,
   CustomObjectRead,
+  CustomObjectsByDefinitionsRequest,
+  CustomObjectListItemRead,
 )
 from app.schemas.custom_field import CustomFieldDefinitionRead
 from app.schemas.custom_relationship import CustomRelationshipDefinitionRead
@@ -397,6 +399,81 @@ async def list_custom_objects(
     )
     for custom_object in custom_objects
   ]
+
+
+@router.post(
+  "/by-definitions",
+  response_model=dict[UUID, List[CustomObjectListItemRead]],
+)
+async def list_custom_objects_by_definitions(
+  payload: CustomObjectsByDefinitionsRequest,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  require_company_manager(
+    current_user,
+    payload.company_id,
+  )
+
+  definitions_result = await db.execute(
+    select(CustomObjectDefinition.id)
+    .where(
+      CustomObjectDefinition.company_id == payload.company_id,
+      CustomObjectDefinition.id.in_(payload.definition_ids),
+    )
+  )
+
+  valid_definition_ids = {
+    definition_id
+    for definition_id in definitions_result.scalars().all()
+  }
+
+  invalid_definition_ids = (
+    set(payload.definition_ids) - valid_definition_ids
+  )
+
+  if invalid_definition_ids:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="One or more custom object definitions not found",
+    )
+
+  result = await db.execute(
+    select(
+      CustomObject.id,
+      CustomObject.name,
+      CustomObject.custom_object_definition_id,
+    )
+    .where(
+      CustomObject.company_id == payload.company_id,
+      CustomObject.custom_object_definition_id.in_(
+        payload.definition_ids
+      ),
+    )
+    .order_by(
+      CustomObject.custom_object_definition_id,
+      CustomObject.name,
+    )
+  )
+
+  rows = result.all()
+
+  objects_by_definition = {
+    definition_id: []
+    for definition_id in payload.definition_ids
+  }
+
+  for row in rows:
+    objects_by_definition[
+      row.custom_object_definition_id
+    ].append(
+      CustomObjectListItemRead(
+        id=row.id,
+        name=row.name,
+      )
+    )
+
+  return objects_by_definition
 
 
 @router.get(
