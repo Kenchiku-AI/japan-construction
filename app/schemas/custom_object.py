@@ -48,8 +48,8 @@ class CustomObjectDefinitionDetailRead(BaseModel):
 class CustomObjectCreate(BaseModel):
   company_id: UUID
   custom_object_definition_id: UUID
-  name: str
-  description: Optional[str] = None
+  fields: dict[UUID, Optional[str]] = {}
+  relationships: dict[UUID, UUID] = {}
 
 
 class CustomObjectUpdate(BaseModel):
@@ -59,20 +59,6 @@ class CustomObjectUpdate(BaseModel):
 
 
 class CustomObjectRead(BaseModel):
-  id: UUID
-  company_id: UUID
-  custom_object_definition_id: UUID
-  name: str
-  description: Optional[str] = None
-  definition: CustomObjectDefinitionRead
-  created_at: datetime
-  updated_at: datetime
-
-  model_config = {
-    "from_attributes": True,
-  }
-
-class CustomObjectDetailRead(BaseModel):
   id: UUID
   company_id: UUID
   definition: CustomObjectDefinitionRead
