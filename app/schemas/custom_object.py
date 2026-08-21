@@ -49,13 +49,13 @@ class CustomObjectCreate(BaseModel):
   company_id: UUID
   custom_object_definition_id: UUID
   fields: dict[UUID, Optional[str]] = Field(default_factory=dict)
-  relationships: dict[UUID, UUID] = Field(default_factory=dict)
+  relationships: dict[UUID, list[UUID]] = Field(default_factory=dict)
 
 
 class CustomObjectUpdate(BaseModel):
-  custom_object_definition_id: Optional[UUID] = None
-  name: Optional[str] = None
-  description: Optional[str] = None
+  custom_object_definition_id: UUID | None = None
+  fields: dict[UUID, str] | None = None
+  relationships: dict[UUID, list[UUID]] | None = None
 
 
 class CustomObjectRead(BaseModel):
@@ -79,7 +79,7 @@ class CustomObjectsByDefinitionsRequest(BaseModel):
 class CustomObjectListItemRead(BaseModel):
   id: UUID
   name: str
-  
+
   model_config = {
     "from_attributes": True,
   }

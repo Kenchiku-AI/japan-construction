@@ -2,7 +2,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.db.models import (
   Company,
   User,
+  CustomField,
   CustomObject,
   CustomObjectDefinition,
   CustomFieldDefinition,
@@ -22,6 +23,7 @@ from app.db.models import (
   CustomRelationship,
   CustomRelationshipDefinition,
   CustomRelationshipEntityType,
+  CustomRelationshipCardinality,
 )
 from app.schemas.custom_object import (
   CustomObjectDefinitionCreate,
@@ -35,8 +37,8 @@ from app.schemas.custom_object import (
   CustomObjectListItemRead,
   CustomObjectsByDefinitionRead,
 )
-from app.schemas.custom_field import CustomFieldDefinitionRead
-from app.schemas.custom_relationship import CustomRelationshipDefinitionRead
+from app.schemas.custom_field import CustomFieldDefinitionRead, CustomFieldRead
+from app.schemas.custom_relationship import CustomRelationshipDefinitionRead, CustomRelationshipRead
 
 
 router = APIRouter(
@@ -318,26 +320,36 @@ async def build_custom_object_response(
     relationship_definitions_result.scalars().all()
   )
 
-  existing_relationships = {
-    relationship.custom_relationship_definition_id: relationship
-    for relationship in custom_object.custom_relationships
-  }
+  existing_relationships = {}
 
-  relationships = [
-    CustomRelationshipRead(
-      id=existing_relationships[definition.id].id
-        if definition.id in existing_relationships
-        else None,
-      source_entity_id=custom_object.id,
-      target_entity_id=(
-        existing_relationships[definition.id].target_entity_id
-        if definition.id in existing_relationships
-        else None
-      ),
-      definition=definition,
+  for relationship in custom_object.custom_relationships:
+    if relationship.custom_relationship_definition_id not in existing_relationships:
+      existing_relationships[
+        relationship.custom_relationship_definition_id
+      ] = []
+
+    existing_relationships[
+      relationship.custom_relationship_definition_id
+    ].append(relationship)
+
+  relationships = []
+
+  for definition in relationship_definitions:
+
+    definition_relationships = existing_relationships.get(
+      definition.id,
+      [],
     )
-    for definition in relationship_definitions
-  ]
+
+    for relationship in definition_relationships:
+      relationships.append(
+        CustomRelationshipRead(
+          id=relationship.id,
+          source_entity_id=custom_object.id,
+          target_entity_id=relationship.target_entity_id,
+          definition=definition,
+        )
+      )
 
   return CustomObjectRead(
     id=custom_object.id,
@@ -388,7 +400,7 @@ async def list_custom_objects(
         .selectinload(CustomFieldCustomObjectLink.custom_field),
       selectinload(CustomObject.custom_relationships),
     )
-    .order_by(CustomObject.id)
+    .order_by(CustomObject.created_at.desc())
   )
 
   custom_objects = result.scalars().all()
@@ -649,7 +661,6 @@ async def create_custom_object(
 
   # Create the supplied field values
   for definition_id, value in payload.fields.items():
-
     if definition_id not in field_definitions_by_id:
       raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -660,6 +671,7 @@ async def create_custom_object(
       )
 
     custom_field = CustomField(
+      company_id=payload.company_id,
       custom_field_definition_id=definition_id,
       value=value,
     )
@@ -699,8 +711,7 @@ async def create_custom_object(
   }
 
   # Create the supplied relationship values
-  for definition_id, target_entity_id in payload.relationships.items():
-
+  for definition_id, target_entity_ids in payload.relationships.items():
     relationship_definition = relationship_definitions_by_id.get(
       definition_id
     )
@@ -714,27 +725,27 @@ async def create_custom_object(
         ),
       )
 
-    custom_relationship = CustomRelationship(
-      company_id=payload.company_id,
-      custom_relationship_definition_id=definition_id,
-      source_entity_type=(
-        CustomRelationshipEntityType.custom_object.value
-      ),
-      source_entity_id=custom_object.id,
-      source_custom_object_definition_id=(
-        payload.custom_object_definition_id
-      ),
-      target_entity_type=(
-        relationship_definition.target_entity_type.value
-      ),
-      target_entity_id=target_entity_id,
-      target_custom_object_definition_id=(
-        relationship_definition.target_custom_object_definition_id
-      ),
-    )
+    for target_entity_id in target_entity_ids:
+      custom_relationship = CustomRelationship(
+        company_id=payload.company_id,
+        custom_relationship_definition_id=definition_id,
+        source_entity_type=(
+          CustomRelationshipEntityType.custom_object.value
+        ),
+        source_entity_id=custom_object.id,
+        source_custom_object_definition_id=(
+          payload.custom_object_definition_id
+        ),
+        target_entity_type=(
+          relationship_definition.target_entity_type.value
+        ),
+        target_entity_id=target_entity_id,
+        target_custom_object_definition_id=(
+          relationship_definition.target_custom_object_definition_id
+        ),
+      )
 
-    db.add(custom_relationship)
-
+      db.add(custom_relationship)
   await db.commit()
 
   result = await db.execute(
@@ -789,26 +800,194 @@ async def update_custom_object(
     exclude_unset=True,
   )
 
-  if "custom_object_definition_id" in updates:
-    definition = await db.get(
-      CustomObjectDefinition,
-      updates["custom_object_definition_id"],
+  # Determine which definition the object will use after the update
+  definition_id = updates.get(
+    "custom_object_definition_id",
+    custom_object.custom_object_definition_id,
+  )
+
+  definition = await db.get(
+    CustomObjectDefinition,
+    definition_id,
+  )
+
+  if not definition:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Custom object definition not found",
     )
 
-    if not definition:
-      raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="Custom object definition not found",
+  if definition.company_id != custom_object.company_id:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="Custom object definition belongs to a different company",
+    )
+
+  # Get all field definitions for this custom object definition
+  field_definitions_result = await db.execute(
+    select(CustomFieldDefinition)
+    .where(
+      CustomFieldDefinition.company_id
+      == custom_object.company_id,
+      CustomFieldDefinition.entity_type
+      == CustomFieldEntityType.custom_object,
+      CustomFieldDefinition.custom_object_definition_id
+      == definition_id,
+    )
+  )
+
+  field_definitions = field_definitions_result.scalars().all()
+
+  field_definitions_by_id = {
+    field_definition.id: field_definition
+    for field_definition in field_definitions
+  }
+
+  # Update supplied fields
+  if "fields" in updates:
+    for field_definition_id, value in updates["fields"].items():
+      if field_definition_id not in field_definitions_by_id:
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail=(
+            f"Field definition {field_definition_id} does not belong "
+            "to this custom object definition"
+          ),
+        )
+
+      field_result = await db.execute(
+        select(CustomField)
+        .join(
+          CustomFieldCustomObjectLink,
+          CustomFieldCustomObjectLink.custom_field_id
+          == CustomField.id,
+        )
+        .where(
+          CustomFieldCustomObjectLink.custom_object_id
+          == custom_object.id,
+          CustomField.custom_field_definition_id
+          == field_definition_id,
+        )
       )
 
-    if definition.company_id != custom_object.company_id:
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Custom object definition belongs to a different company",
+      custom_field = field_result.scalar_one_or_none()
+
+      if custom_field:
+        custom_field.value = value
+      else:
+        custom_field = CustomField(
+          company_id=custom_object.company_id,
+          custom_field_definition_id=field_definition_id,
+          value=value,
+        )
+
+        db.add(custom_field)
+
+        await db.flush()
+
+        db.add(
+          CustomFieldCustomObjectLink(
+            custom_object_id=custom_object.id,
+            custom_field_id=custom_field.id,
+          )
+        )
+
+  # Get relationship definitions for this custom object definition
+  relationship_definitions_result = await db.execute(
+    select(CustomRelationshipDefinition)
+    .where(
+      CustomRelationshipDefinition.company_id
+      == custom_object.company_id,
+      CustomRelationshipDefinition.source_entity_type
+      == CustomRelationshipEntityType.custom_object,
+      CustomRelationshipDefinition.source_custom_object_definition_id
+      == definition_id,
+    )
+  )
+
+  relationship_definitions = (
+    relationship_definitions_result.scalars().all()
+  )
+
+  relationship_definitions_by_id = {
+    relationship_definition.id: relationship_definition
+    for relationship_definition in relationship_definitions
+  }
+
+  # Update supplied relationships
+  if "relationships" in updates:
+
+    for relationship_definition_id, target_entity_ids in (
+      updates["relationships"].items()
+    ):
+
+      relationship_definition = (
+        relationship_definitions_by_id.get(
+          relationship_definition_id
+        )
       )
 
-  for field, value in updates.items():
-    setattr(custom_object, field, value)
+      if not relationship_definition:
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail=(
+            f"Relationship definition "
+            f"{relationship_definition_id} does not belong "
+            "to this custom object definition"
+          ),
+        )
+
+      if (
+        relationship_definition.cardinality
+        == CustomRelationshipCardinality.one
+        and len(target_entity_ids) > 1
+      ):
+        raise HTTPException(
+          status_code=status.HTTP_400_BAD_REQUEST,
+          detail=(
+            f"Relationship definition "
+            f"{relationship_definition_id} only allows one target"
+          ),
+        )
+
+      # Remove existing relationships for this definition
+      await db.execute(
+        delete(CustomRelationship)
+        .where(
+          CustomRelationship.custom_relationship_definition_id
+          == relationship_definition_id,
+          CustomRelationship.source_entity_id
+          == custom_object.id,
+        )
+      )
+
+      # Create new relationships
+      for target_entity_id in target_entity_ids:
+
+        custom_relationship = CustomRelationship(
+          company_id=custom_object.company_id,
+          custom_relationship_definition_id=(
+            relationship_definition_id
+          ),
+          source_entity_type=(
+            CustomRelationshipEntityType.custom_object.value
+          ),
+          source_entity_id=custom_object.id,
+          source_custom_object_definition_id=definition_id,
+          target_entity_type=(
+            relationship_definition.target_entity_type.value
+          ),
+          target_entity_id=target_entity_id,
+          target_custom_object_definition_id=(
+            relationship_definition.target_custom_object_definition_id
+          ),
+        )
+
+        db.add(custom_relationship)
+
+  # Update normal CustomObject columns
+  if "custom_object_definition_id" in updates:
+    custom_object.custom_object_definition_id = definition_id
 
   await db.commit()
 
@@ -819,11 +998,20 @@ async def update_custom_object(
     )
     .options(
       selectinload(CustomObject.definition),
+      selectinload(CustomObject.custom_field_links)
+        .selectinload(
+          CustomFieldCustomObjectLink.custom_field
+        ),
+      selectinload(CustomObject.custom_relationships),
     )
   )
 
-  return result.scalar_one()
+  custom_object = result.scalar_one()
 
+  return await build_custom_object_response(
+    db,
+    custom_object,
+  )
 
 @router.delete(
   "/{custom_object_id}",
