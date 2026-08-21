@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.custom_field import CustomFieldDefinitionRead, CustomFieldRead
 from app.schemas.custom_relationship import CustomRelationshipDefinitionRead, CustomRelationshipRead
@@ -48,8 +48,8 @@ class CustomObjectDefinitionDetailRead(BaseModel):
 class CustomObjectCreate(BaseModel):
   company_id: UUID
   custom_object_definition_id: UUID
-  fields: dict[UUID, Optional[str]] = {}
-  relationships: dict[UUID, UUID] = {}
+  fields: dict[UUID, Optional[str]] = Field(default_factory=dict)
+  relationships: dict[UUID, UUID] = Field(default_factory=dict)
 
 
 class CustomObjectUpdate(BaseModel):
