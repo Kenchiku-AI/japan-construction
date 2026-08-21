@@ -46,6 +46,7 @@ class CustomObject(Base):
     primaryjoin=(
       "and_("
       "CustomObject.id == foreign(CustomRelationship.source_entity_id), "
+      "CustomRelationship.source_entity_type == 'custom_object', "
       "CustomObject.company_id == foreign(CustomRelationship.company_id)"
       ")"
     ),

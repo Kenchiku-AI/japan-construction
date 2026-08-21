@@ -33,6 +33,7 @@ from app.schemas.custom_object import (
   CustomObjectRead,
   CustomObjectsByDefinitionsRequest,
   CustomObjectListItemRead,
+  CustomObjectsByDefinitionRead,
 )
 from app.schemas.custom_field import CustomFieldDefinitionRead
 from app.schemas.custom_relationship import CustomRelationshipDefinitionRead
@@ -403,7 +404,7 @@ async def list_custom_objects(
 
 @router.post(
   "/by-definitions",
-  response_model=dict[UUID, List[CustomObjectListItemRead]],
+  response_model=dict[UUID, CustomObjectsByDefinitionRead],
 )
 async def list_custom_objects_by_definitions(
   payload: CustomObjectsByDefinitionsRequest,
@@ -415,21 +416,24 @@ async def list_custom_objects_by_definitions(
     payload.company_id,
   )
 
+  # Get the requested definitions
   definitions_result = await db.execute(
-    select(CustomObjectDefinition.id)
+    select(CustomObjectDefinition)
     .where(
       CustomObjectDefinition.company_id == payload.company_id,
       CustomObjectDefinition.id.in_(payload.definition_ids),
     )
   )
 
-  valid_definition_ids = {
-    definition_id
-    for definition_id in definitions_result.scalars().all()
+  definitions = definitions_result.scalars().all()
+
+  definitions_by_id = {
+    definition.id: definition
+    for definition in definitions
   }
 
   invalid_definition_ids = (
-    set(payload.definition_ids) - valid_definition_ids
+    set(payload.definition_ids) - set(definitions_by_id.keys())
   )
 
   if invalid_definition_ids:
@@ -438,38 +442,102 @@ async def list_custom_objects_by_definitions(
       detail="One or more custom object definitions not found",
     )
 
-  result = await db.execute(
-    select(
-      CustomObject.id,
-      CustomObject.name,
-      CustomObject.custom_object_definition_id,
+  # Get the first field definition for each requested custom object
+  # definition, based on sort order.
+  field_definitions_result = await db.execute(
+    select(CustomFieldDefinition)
+    .where(
+      CustomFieldDefinition.company_id == payload.company_id,
+      CustomFieldDefinition.custom_object_definition_id.in_(
+        payload.definition_ids
+      ),
+      CustomFieldDefinition.entity_type
+      == CustomFieldEntityType.custom_object,
     )
+    .order_by(
+      CustomFieldDefinition.custom_object_definition_id,
+      CustomFieldDefinition.sort_order,
+      CustomFieldDefinition.name,
+    )
+  )
+
+  field_definitions = field_definitions_result.scalars().all()
+
+  first_field_definition_by_definition = {}
+
+  for field_definition in field_definitions:
+    if (
+      field_definition.custom_object_definition_id
+      not in first_field_definition_by_definition
+    ):
+      first_field_definition_by_definition[
+        field_definition.custom_object_definition_id
+      ] = field_definition
+
+  # Get all custom objects
+  result = await db.execute(
+    select(CustomObject)
     .where(
       CustomObject.company_id == payload.company_id,
       CustomObject.custom_object_definition_id.in_(
         payload.definition_ids
       ),
     )
+    .options(
+      selectinload(CustomObject.custom_field_links)
+        .selectinload(CustomFieldCustomObjectLink.custom_field),
+    )
     .order_by(
       CustomObject.custom_object_definition_id,
-      CustomObject.name,
+      CustomObject.id,
     )
   )
 
-  rows = result.all()
+  custom_objects = result.scalars().all()
 
   objects_by_definition = {
-    definition_id: []
+    definition_id: CustomObjectsByDefinitionRead(
+      name=definitions_by_id[definition_id].name,
+      objects=[],
+    )
     for definition_id in payload.definition_ids
   }
 
-  for row in rows:
+  for custom_object in custom_objects:
+    definition = definitions_by_id[
+      custom_object.custom_object_definition_id
+    ]
+
+    first_field_definition = (
+      first_field_definition_by_definition.get(
+        custom_object.custom_object_definition_id
+      )
+    )
+
+    object_name = definition.name
+
+    if first_field_definition:
+      custom_field = next(
+        (
+          link.custom_field
+          for link in custom_object.custom_field_links
+          if (
+            link.custom_field.custom_field_definition_id
+            == first_field_definition.id
+          )
+        ),
+        None,
+      )
+
+      if custom_field and custom_field.value:
+        object_name = custom_field.value
+
     objects_by_definition[
-      row.custom_object_definition_id
-    ].append(
+      custom_object.custom_object_definition_id
+    ].objects.append(
       CustomObjectListItemRead(
-        id=row.id,
-        name=row.name,
+        id=custom_object.id,
+        name=object_name,
       )
     )
 

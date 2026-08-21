@@ -87,5 +87,17 @@ class Project(Base):
     cascade="all, delete-orphan",
   )
 
+  custom_relationships = relationship(
+    "CustomRelationship",
+    primaryjoin=(
+      "and_("
+      "Project.id == foreign(CustomRelationship.source_entity_id), "
+      "CustomRelationship.source_entity_type == 'project', "
+      "Project.company_id == foreign(CustomRelationship.company_id)"
+      ")"
+    ),
+    viewonly=True,
+  )
+
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
   updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

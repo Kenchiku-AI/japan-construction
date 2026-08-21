@@ -75,10 +75,21 @@ class CustomObjectsByDefinitionsRequest(BaseModel):
   company_id: UUID
   definition_ids: List[UUID]
 
+
 class CustomObjectListItemRead(BaseModel):
   id: UUID
   name: str
-
+  
   model_config = {
     "from_attributes": True,
   }
+
+
+class CustomObjectsByDefinitionRead(BaseModel):
+  name: str
+  objects: List[CustomObjectListItemRead]
+
+
+class CustomObjectsByDefinitionsRequest(BaseModel):
+  company_id: UUID
+  definition_ids: List[UUID]
