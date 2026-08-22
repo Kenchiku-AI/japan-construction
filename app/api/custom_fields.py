@@ -768,6 +768,123 @@ async def create_user_custom_field(
     entity_id=user_id,
   )
 
+# ---------------------------------------------------------------------------
+# Company fields
+# ---------------------------------------------------------------------------
+
+@router.post(
+  "/company/{company_id}",
+  response_model=CustomFieldRead,
+  status_code=status.HTTP_201_CREATED,
+)
+async def create_company_custom_field(
+  company_id: UUID,
+  payload: CustomFieldCreate,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  require_company_manager(
+    current_user,
+    company_id,
+  )
+
+  return await _create_field(
+    db=db,
+    company_id=company_id,
+    definition_id=payload.custom_field_definition_id,
+    value=payload.value,
+    entity_type="company",
+    entity_id=company_id,
+  )
+
+
+# ---------------------------------------------------------------------------
+# Project fields
+# ---------------------------------------------------------------------------
+
+@router.post(
+  "/project/{project_id}",
+  response_model=CustomFieldRead,
+  status_code=status.HTTP_201_CREATED,
+)
+async def create_project_custom_field(
+  project_id: UUID,
+  payload: CustomFieldCreate,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  project = await db.get(
+    Project,
+    project_id,
+  )
+
+  if not project:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Project not found",
+    )
+
+  require_company_manager(
+    current_user,
+    project.company_id,
+  )
+
+  return await _create_field(
+    db=db,
+    company_id=project.company_id,
+    definition_id=payload.custom_field_definition_id,
+    value=payload.value,
+    entity_type="project",
+    entity_id=project_id,
+  )
+
+
+# ---------------------------------------------------------------------------
+# User fields
+# ---------------------------------------------------------------------------
+
+@router.post(
+  "/user/{user_id}",
+  response_model=CustomFieldRead,
+  status_code=status.HTTP_201_CREATED,
+)
+async def create_user_custom_field(
+  user_id: UUID,
+  payload: CustomFieldCreate,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  user = await db.get(
+    User,
+    user_id,
+  )
+
+  if not user:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="User not found",
+    )
+
+  if not user.company_id:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="User does not belong to a company",
+    )
+
+  require_company_manager(
+    current_user,
+    user.company_id,
+  )
+
+  return await _create_field(
+    db=db,
+    company_id=user.company_id,
+    definition_id=payload.custom_field_definition_id,
+    value=payload.value,
+    entity_type="user",
+    entity_id=user_id,
+  )
+
 
 # ---------------------------------------------------------------------------
 # Custom object fields

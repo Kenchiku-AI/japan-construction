@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, or_, and_, func
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import (
@@ -20,6 +21,7 @@ from app.db.models import (
   CustomRelationship,
   CustomRelationshipDefinition,
   CustomRelationshipEntityType,
+  CustomRelationshipCardinality,
 )
 from app.schemas.custom_relationship import (
   CustomRelationshipDefinitionCreate,
@@ -583,6 +585,9 @@ async def update_custom_relationships(
       == definition.id,
       CustomRelationship.source_entity_id
       == payload.source_entity_id,
+    )
+    .options(
+      selectinload(CustomRelationship.definition),
     )
     .order_by(CustomRelationship.created_at)
   )
