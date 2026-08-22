@@ -472,35 +472,18 @@ async def get_custom_relationship(
 
 
 @router.patch(
-  "/{relationship_id}",
-  response_model=CustomRelationshipRead,
+  "",
+  response_model=List[CustomRelationshipRead],
 )
-async def update_custom_relationship(
-  relationship_id: UUID,
+async def update_custom_relationships(
+  custom_relationship_definition_id: UUID,
   payload: CustomRelationshipUpdate,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  relationship = await db.get(
-    CustomRelationship,
-    relationship_id,
-  )
-
-  if not relationship:
-    raise HTTPException(
-      status_code=status.HTTP_404_NOT_FOUND,
-      detail="Custom relationship not found",
-    )
-
-  if current_user.role != "admin":
-    require_company_manager(
-      current_user,
-      relationship.company_id,
-    )
-
   definition = await db.get(
     CustomRelationshipDefinition,
-    relationship.custom_relationship_definition_id,
+    custom_relationship_definition_id,
   )
 
   if not definition:
@@ -509,49 +492,102 @@ async def update_custom_relationship(
       detail="Custom relationship definition not found",
     )
 
-  new_source_entity_id = payload.source_entity_id
-  new_target_entity_id = payload.target_entity_id
+  if current_user.role != "admin":
+    require_company_manager(
+      current_user,
+      definition.company_id,
+    )
 
-  if new_source_entity_id is None:
-    new_source_entity_id = relationship.source_entity_id
-
-  if new_target_entity_id is None:
-    new_target_entity_id = relationship.target_entity_id
-
+  # A "many" relationship can have multiple targets.
+  # A "one" relationship can have at most one.
   if (
-    new_source_entity_id != relationship.source_entity_id
-    or new_target_entity_id != relationship.target_entity_id
+    definition.cardinality == CustomRelationshipCardinality.one
+    and len(payload.target_entity_ids) > 1
   ):
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="This relationship only allows one target",
+    )
+
+  # Remove duplicate target IDs from the request.
+  target_entity_ids = list(
+    dict.fromkeys(payload.target_entity_ids)
+  )
+
+  # Validate all requested targets.
+  for target_entity_id in target_entity_ids:
     await _validate_relationship_entities(
       db=db,
       definition=definition,
-      source_entity_id=new_source_entity_id,
-      target_entity_id=new_target_entity_id,
+      source_entity_id=payload.source_entity_id,
+      target_entity_id=target_entity_id,
     )
 
-    await _validate_duplicate_relationship(
-      db=db,
-      definition=definition,
-      source_entity_id=new_source_entity_id,
-      target_entity_id=new_target_entity_id,
-      exclude_relationship_id=relationship.id,
+  # Get all existing relationships for this source + definition.
+  existing_result = await db.execute(
+    select(CustomRelationship)
+    .where(
+      CustomRelationship.custom_relationship_definition_id
+      == definition.id,
+      CustomRelationship.source_entity_id
+      == payload.source_entity_id,
+    )
+  )
+
+  existing_relationships = existing_result.scalars().all()
+
+  existing_by_target_id = {
+    relationship.target_entity_id: relationship
+    for relationship in existing_relationships
+  }
+
+  requested_target_ids = set(target_entity_ids)
+  existing_target_ids = set(existing_by_target_id.keys())
+
+  # Delete relationships whose target is no longer requested.
+  for target_entity_id in (
+    existing_target_ids - requested_target_ids
+  ):
+    await db.delete(
+      existing_by_target_id[target_entity_id]
     )
 
-    await _validate_cardinality(
-      db=db,
-      definition=definition,
-      source_entity_id=new_source_entity_id,
-      target_entity_id=new_target_entity_id,
-      exclude_relationship_id=relationship.id,
+  # Create relationships for newly requested targets.
+  for target_entity_id in (
+    requested_target_ids - existing_target_ids
+  ):
+    relationship = CustomRelationship(
+      company_id=definition.company_id,
+      custom_relationship_definition_id=definition.id,
+      source_entity_type=definition.source_entity_type,
+      source_entity_id=payload.source_entity_id,
+      source_custom_object_definition_id=(
+        definition.source_custom_object_definition_id
+      ),
+      target_entity_type=definition.target_entity_type,
+      target_entity_id=target_entity_id,
+      target_custom_object_definition_id=(
+        definition.target_custom_object_definition_id
+      ),
     )
 
-    relationship.source_entity_id = new_source_entity_id
-    relationship.target_entity_id = new_target_entity_id
+    db.add(relationship)
 
   await db.commit()
-  await db.refresh(relationship)
 
-  return relationship
+  # Return the final set of relationships.
+  result = await db.execute(
+    select(CustomRelationship)
+    .where(
+      CustomRelationship.custom_relationship_definition_id
+      == definition.id,
+      CustomRelationship.source_entity_id
+      == payload.source_entity_id,
+    )
+    .order_by(CustomRelationship.created_at)
+  )
+
+  return result.scalars().all()
 
 
 @router.delete(

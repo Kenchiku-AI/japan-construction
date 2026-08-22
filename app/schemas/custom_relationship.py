@@ -56,8 +56,8 @@ class CustomRelationshipCreate(BaseModel):
 
 
 class CustomRelationshipUpdate(BaseModel):
-  source_entity_id: Optional[UUID] = None
-  target_entity_id: Optional[UUID] = None
+  source_entity_id: UUID
+  target_entity_ids: list[UUID]
 
 
 class CustomRelationshipDefinitionSortOrderUpdate(BaseModel):
