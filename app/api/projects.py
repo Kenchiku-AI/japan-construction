@@ -457,6 +457,18 @@ async def create_project(
 
   company = await db.get(Company, payload.company_id)
 
+  if not company:
+    raise HTTPException(
+      status_code=404,
+      detail="Company not found",
+    )
+
+  if current_user.role != "admin":
+    require_company_manager(
+      current_user,
+      payload.company_id,
+    )
+
   project = Project(
     **payload.model_dump(),
     status=ProjectStatus.active,
@@ -516,99 +528,10 @@ async def update_project(
     exclude_none=True,
   )
 
-  custom_field_updates = update_data.pop(
-    "custom_fields",
-    [],
-  )
-
-  # -------------------------------------------------------------------------
-  # Standard project fields
-  # -------------------------------------------------------------------------
-
   for field, value in update_data.items():
     setattr(project, field, value)
 
-  # -------------------------------------------------------------------------
-  # Custom fields
-  # -------------------------------------------------------------------------
-
-  for custom_field_update in custom_field_updates:
-    definition_id = custom_field_update["custom_field_definition_id"]
-    value = custom_field_update.get("value")
-
-    # Make sure the definition exists.
-    definition = await db.get(
-      CustomFieldDefinition,
-      definition_id,
-    )
-
-    if not definition:
-      raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="Custom field definition not found",
-      )
-
-    # Make sure the definition belongs to the project's company.
-    if definition.company_id != project.company_id:
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Custom field definition belongs to a different company",
-      )
-
-    # Make sure this definition is for projects.
-    if definition.entity_type != "project":
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Custom field definition is not for projects",
-      )
-
-    # Look for an existing field associated with this project.
-    existing_field_result = await db.execute(
-      select(CustomField)
-      .join(
-        CustomFieldProjectLink,
-        CustomFieldProjectLink.custom_field_id == CustomField.id,
-      )
-      .where(
-        CustomFieldProjectLink.project_id == project.id,
-        CustomField.custom_field_definition_id == definition_id,
-      )
-    )
-
-    custom_field = existing_field_result.scalar_one_or_none()
-
-    if custom_field:
-      # Existing field → update its value.
-      custom_field.value = value
-
-    else:
-      # No field yet → create the field.
-      custom_field = CustomField(
-        company_id=project.company_id,
-        custom_field_definition_id=definition_id,
-        value=value,
-      )
-
-      db.add(custom_field)
-      await db.flush()
-
-      # Associate it with the project.
-      link = CustomFieldProjectLink(
-        custom_field_id=custom_field.id,
-        project_id=project.id,
-      )
-
-      db.add(link)
-
-  # -------------------------------------------------------------------------
-  # Save everything in one transaction
-  # -------------------------------------------------------------------------
-
   await db.commit()
-
-  # -------------------------------------------------------------------------
-  # Reload the project
-  # -------------------------------------------------------------------------
 
   stmt = (
     select(Project)
@@ -639,6 +562,7 @@ async def update_project(
     db,
     project,
   )
+
 
 @router.delete(
   "/{project_id}/guests/{guest_link_id}",

@@ -18,15 +18,10 @@ class ProjectBase(BaseModel):
 class ProjectCreate(ProjectBase):
   company_id: UUID
 
-class ProjectCustomFieldUpdate(BaseModel):
-  custom_field_definition_id: UUID
-  value: Optional[str] = None
-
 class ProjectUpdate(ProjectBase):
   name: str | None = None
   description: str | None = None
   status: str | None = None
-  custom_fields: List[ProjectCustomFieldUpdate] = Field(default_factory=list)
 
 class ProjectRead(ProjectBase):
   id: UUID
