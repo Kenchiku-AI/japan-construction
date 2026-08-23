@@ -23,6 +23,7 @@ class UserCreate(UserBase):
   invitation_token: str
 
 class UserWithCompanyIdAndRole(UserBase):
+  id: UUID
   company_id: Optional[UUID] = None
   role: UserRole
   custom_fields: List[CustomFieldRead] = Field(default_factory=list)
