@@ -748,17 +748,6 @@ async def create_user_custom_field(
       detail="User not found",
     )
 
-  if not user.company_id:
-    raise HTTPException(
-      status_code=status.HTTP_400_BAD_REQUEST,
-      detail="User does not belong to a company",
-    )
-
-  require_company_manager(
-    current_user,
-    user.company_id,
-  )
-
   return await _create_field(
     db=db,
     company_id=user.company_id,

@@ -19,7 +19,9 @@ from app.db.models import (
   ImageTag,
   ProjectGuestLink,
   BillingPlan,
-  ConversationItem
+  ConversationItem,
+  CustomFieldDefinition,
+  CustomRelationshipDefinition
 )
 from app.db.session import get_db
 from app.schemas.company import (

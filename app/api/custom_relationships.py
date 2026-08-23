@@ -895,10 +895,7 @@ async def _get_entity_company_id(
   entity_id: UUID,
 ) -> UUID:
   if entity_type == CustomRelationshipEntityType.company:
-    entity = await db.get(
-      Company,
-      entity_id,
-    )
+    return entity_id
 
   elif entity_type == CustomRelationshipEntityType.user:
     entity = await db.get(
