@@ -4,14 +4,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.custom_field import CustomFieldRead
 from app.schemas.user import (
   UserCompanyRead, 
   UserProjectRead, 
   UserWithCompanyAndProjects,
 )
-from app.db.models.custom_field import CustomField, CustomFieldUserLink
-from app.db.models.custom_field_definition import CustomFieldDefinition
 from app.db.models.user import User
 from app.db.models.project import Project
 from app.db.models.project_guest_link import ProjectGuestLink
@@ -26,9 +23,6 @@ async def build_user_with_company_and_projects(
     select(User)
     .options(
       selectinload(User.company),
-      selectinload(User.custom_field_links)
-        .selectinload(CustomFieldUserLink.custom_field)
-        .selectinload(CustomField.definition),
     )
     .where(User.id == user.id)
   )
@@ -85,11 +79,6 @@ async def build_user_with_company_and_projects(
         status=project.status,
       ))
 
-  custom_fields = await get_user_custom_fields(
-    user,
-    db,
-  )
-
   return UserWithCompanyAndProjects(
     id=user.id,
     first_name=user.first_name,
@@ -108,44 +97,5 @@ async def build_user_with_company_and_projects(
       else None
     ),
     projects=projects_data,
-    custom_fields=custom_fields,
   )
 
-async def get_user_custom_fields(
-  user: User,
-  db: AsyncSession,
-) -> list[CustomFieldRead]:
-  if user.company_id is None:
-    return []
-
-  definitions_result = await db.execute(
-    select(CustomFieldDefinition)
-    .where(
-      CustomFieldDefinition.company_id == user.company_id,
-      CustomFieldDefinition.entity_type == "user",
-    )
-    .order_by(
-      CustomFieldDefinition.sort_order,
-      CustomFieldDefinition.name,
-    )
-  )
-
-  definitions = definitions_result.scalars().all()
-
-  existing_fields = {
-    link.custom_field.custom_field_definition_id: link.custom_field
-    for link in user.custom_field_links
-  }
-
-  return [
-    CustomFieldRead(
-      id=existing_fields[definition.id].id
-        if definition.id in existing_fields
-        else None,
-      value=existing_fields[definition.id].value
-        if definition.id in existing_fields
-        else None,
-      definition=definition,
-    )
-    for definition in definitions
-  ]

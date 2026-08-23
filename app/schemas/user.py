@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field
 
 from app.schemas.custom_field import CustomFieldRead
+from app.schemas.custom_relationship import CustomRelationshipRead
 
 class UserRole(str, Enum):
   admin = "admin"
@@ -25,25 +26,20 @@ class UserWithCompanyIdAndRole(UserBase):
   company_id: Optional[UUID] = None
   role: UserRole
   custom_fields: List[CustomFieldRead] = Field(default_factory=list)
+  custom_relationships: List[CustomRelationshipRead] = Field(default_factory=list)
 
   model_config = {
     "from_attributes": True
   }
-
-class UserCustomFieldUpdate(BaseModel):
-  custom_field_definition_id: UUID
-  value: Optional[str] = None
 
 class UserUpdate(BaseModel):
   email: Optional[EmailStr] = None
   first_name: Optional[str] = None
   last_name: Optional[str] = None
   role: Optional[UserRole] = None
-  custom_fields: List[UserCustomFieldUpdate] = Field(default_factory=list)
 
 class UserRead(UserBase):
   id: UUID
-  custom_fields: List[CustomFieldRead] = Field(default_factory=list)
   created_at: datetime
   updated_at: datetime
 
@@ -80,7 +76,6 @@ class UserWithCompanyAndProjects(BaseModel):
   role: UserRole
   company: Optional[UserCompanyRead] = None
   projects: List[UserProjectRead]
-  custom_fields: List[CustomFieldRead] = Field(default_factory=list)
 
   model_config = {
     "from_attributes": True
