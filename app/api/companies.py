@@ -38,6 +38,8 @@ from app.schemas.conversation import (
   ConversationItemTypeUpdate,
   ConversationItemTypeRead,
 )
+from app.schemas.custom_field import CustomFieldRead
+from app.schemas.custom_relationship import CustomRelationshipRead
 from app.schemas.invitation import CompanyInvitationCreate
 from app.services.billing import (
   get_payment_method_display,
@@ -361,6 +363,7 @@ async def get_company(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
+
   if current_user.role != "admin" and current_user.company_id != company_id:
     raise HTTPException(
       status_code=status.HTTP_403_FORBIDDEN,
@@ -379,6 +382,9 @@ async def get_company(
       ).selectinload(
         CustomField.definition
       ),
+      selectinload(
+        Company.custom_relationships
+      ),
     )
     .where(Company.id == company_id)
   )
@@ -386,7 +392,10 @@ async def get_company(
   company = result.scalar_one_or_none()
 
   if not company:
-    raise HTTPException(status_code=404, detail="Company not found")
+    raise HTTPException(
+      status_code=404,
+      detail="Company not found",
+    )
 
   projects = sorted(
     company.projects,
@@ -394,11 +403,15 @@ async def get_company(
     reverse=True,
   )[:25]
 
-  custom_fields = [
-    link.custom_field
-    for link in company.custom_field_links
-    if link.custom_field is not None
-  ]
+  custom_fields = await get_company_custom_fields(
+    company,
+    db,
+  )
+
+  custom_relationships = await get_company_custom_relationships(
+    company,
+    db,
+  )
 
   payment_method_name = await get_payment_method_display(company)
   billing_status = get_billing_status(company)
@@ -420,7 +433,109 @@ async def get_company(
     users=company.users,
     projects=projects,
     custom_fields=custom_fields,
+    custom_relationships=custom_relationships,
   )
+
+async def get_company_custom_fields(
+  company: Company,
+  db: AsyncSession,
+) -> list[CustomFieldRead]:
+
+  definitions_result = await db.execute(
+    select(CustomFieldDefinition)
+    .where(
+      CustomFieldDefinition.company_id == company.id,
+      CustomFieldDefinition.entity_type == "company",
+    )
+    .order_by(
+      CustomFieldDefinition.sort_order,
+      CustomFieldDefinition.name,
+    )
+  )
+
+  definitions = definitions_result.scalars().all()
+
+  existing_fields = {
+    link.custom_field.custom_field_definition_id: link.custom_field
+    for link in company.custom_field_links
+    if link.custom_field is not None
+  }
+
+  return [
+    CustomFieldRead(
+      id=existing_fields[definition.id].id
+        if definition.id in existing_fields
+        else None,
+      value=existing_fields[definition.id].value
+        if definition.id in existing_fields
+        else None,
+      definition=definition,
+    )
+    for definition in definitions
+  ]
+
+async def get_company_custom_relationships(
+  company: Company,
+  db: AsyncSession,
+) -> list[CustomRelationshipRead]:
+
+  definitions_result = await db.execute(
+    select(CustomRelationshipDefinition)
+    .where(
+      CustomRelationshipDefinition.company_id == company.id,
+      CustomRelationshipDefinition.source_entity_type == "company",
+    )
+    .order_by(
+      CustomRelationshipDefinition.sort_order,
+      CustomRelationshipDefinition.name,
+    )
+  )
+
+  definitions = definitions_result.scalars().all()
+
+  existing_relationships = {}
+
+  for relationship in sorted(
+    company.custom_relationships,
+    key=lambda r: r.created_at,
+  ):
+    if relationship.source_entity_id != company.id:
+      continue
+
+    existing_relationships.setdefault(
+      relationship.custom_relationship_definition_id,
+      [],
+    ).append(relationship)
+
+  results = []
+
+  for definition in definitions:
+    relationships = existing_relationships.get(
+      definition.id,
+      [],
+    )
+
+    if relationships:
+      for relationship in relationships:
+        results.append(
+          CustomRelationshipRead(
+            id=relationship.id,
+            source_entity_id=relationship.source_entity_id,
+            target_entity_id=relationship.target_entity_id,
+            definition=definition,
+          )
+        )
+    else:
+      results.append(
+        CustomRelationshipRead(
+          id=None,
+          source_entity_id=company.id,
+          target_entity_id=None,
+          definition=definition,
+        )
+      )
+
+  return results
 
 @router.patch(
   "/{company_id}",

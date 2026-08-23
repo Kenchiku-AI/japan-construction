@@ -208,6 +208,67 @@ async def get_project_custom_fields(
     for definition in definitions
   ]
 
+async def get_project_custom_relationships(
+  project: Project,
+  db: AsyncSession,
+) -> list[CustomRelationshipRead]:
+
+  definitions_result = await db.execute(
+    select(CustomRelationshipDefinition)
+    .where(
+      CustomRelationshipDefinition.company_id == project.company_id,
+      CustomRelationshipDefinition.source_entity_type
+      == CustomRelationshipEntityType.project,
+    )
+    .order_by(
+      CustomRelationshipDefinition.sort_order,
+      CustomRelationshipDefinition.name,
+    )
+  )
+
+  definitions = definitions_result.scalars().all()
+
+  existing_relationships = {}
+
+  for relationship in project.custom_relationships:
+    if relationship.source_entity_id != project.id:
+      continue
+
+    existing_relationships.setdefault(
+      relationship.custom_relationship_definition_id,
+      [],
+    ).append(relationship)
+
+  results = []
+
+  for definition in definitions:
+    relationships = existing_relationships.get(
+      definition.id,
+      [],
+    )
+
+    if relationships:
+      for relationship in relationships:
+        results.append(
+          CustomRelationshipRead(
+            id=relationship.id,
+            source_entity_id=relationship.source_entity_id,
+            target_entity_id=relationship.target_entity_id,
+            definition=definition,
+          )
+        )
+    else:
+      results.append(
+        CustomRelationshipRead(
+          id=None,
+          source_entity_id=project.id,
+          target_entity_id=None,
+          definition=definition,
+        )
+      )
+
+  return results
+
 async def build_project_response(
   db: AsyncSession,
   project: Project,
@@ -240,16 +301,10 @@ async def build_project_response(
     db,
   )
 
-  custom_relationships = [
-    CustomRelationshipRead(
-      id=relationship.id,
-      source_entity_id=relationship.source_entity_id,
-      target_entity_id=relationship.target_entity_id,
-      definition=relationship.definition,
-    )
-    for relationship in project.custom_relationships
-    if relationship.source_entity_id == project.id
-  ]
+  custom_relationships = await get_project_custom_relationships(
+    project,
+    db,
+  )
 
   return ProjectWithLists(
     id=project.id,
