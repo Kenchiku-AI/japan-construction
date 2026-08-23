@@ -24,6 +24,7 @@ from app.db.models import (
   CustomField,
   CustomFieldDefinition,
   CustomFieldProjectLink,
+  CustomRelationship,
   CustomRelationshipDefinition,
   CustomRelationshipEntityType,
 )
@@ -207,47 +208,6 @@ async def get_project_custom_fields(
     for definition in definitions
   ]
 
-async def get_project_custom_relationships(
-  project: Project,
-  db: AsyncSession,
-) -> list[CustomRelationshipRead]:
-  definitions_result = await db.execute(
-    select(CustomRelationshipDefinition)
-    .where(
-      CustomRelationshipDefinition.company_id == project.company_id,
-      CustomRelationshipDefinition.source_entity_type
-      == CustomRelationshipEntityType.project,
-    )
-    .order_by(
-      CustomRelationshipDefinition.sort_order,
-      CustomRelationshipDefinition.name,
-    )
-  )
-
-  definitions = definitions_result.scalars().all()
-
-  existing_relationships = {
-    relationship.custom_relationship_definition_id: relationship
-    for relationship in project.custom_relationships
-    if relationship.source_entity_id == project.id
-  }
-
-  return [
-    CustomRelationshipRead(
-      id=existing_relationships[definition.id].id
-        if definition.id in existing_relationships
-        else None,
-      source_entity_id=existing_relationships[definition.id].source_entity_id
-        if definition.id in existing_relationships
-        else project.id,
-      target_entity_id=existing_relationships[definition.id].target_entity_id
-        if definition.id in existing_relationships
-        else None,
-      definition=definition,
-    )
-    for definition in definitions
-  ]
-
 async def build_project_response(
   db: AsyncSession,
   project: Project,
@@ -280,10 +240,16 @@ async def build_project_response(
     db,
   )
 
-  custom_relationships = await get_project_custom_relationships(
-    project,
-    db,
-  )
+  custom_relationships = [
+    CustomRelationshipRead(
+      id=relationship.id,
+      source_entity_id=relationship.source_entity_id,
+      target_entity_id=relationship.target_entity_id,
+      definition=relationship.definition,
+    )
+    for relationship in project.custom_relationships
+    if relationship.source_entity_id == project.id
+  ]
 
   return ProjectWithLists(
     id=project.id,
@@ -393,11 +359,12 @@ async def get_project(
         selectinload(Project.users),
         selectinload(Project.conversations)
           .selectinload(LineConversation.item_type_links)
-          .selectinload(ConversationItemTypeLink.item_type), 
+          .selectinload(ConversationItemTypeLink.item_type),
         selectinload(Project.custom_field_links)
           .selectinload(CustomFieldProjectLink.custom_field)
           .selectinload(CustomField.definition),
-        selectinload(Project.custom_relationships),
+        selectinload(Project.custom_relationships)
+          .selectinload(CustomRelationship.definition),
       )
     )
 
@@ -424,7 +391,8 @@ async def get_project(
         selectinload(Project.custom_field_links)
           .selectinload(CustomFieldProjectLink.custom_field)
           .selectinload(CustomField.definition),
-        selectinload(Project.custom_relationships),
+        selectinload(Project.custom_relationships)
+          .selectinload(CustomRelationship.definition),
       )
     )
 
