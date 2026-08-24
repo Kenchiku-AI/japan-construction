@@ -117,15 +117,21 @@ class FormJobService:
         f"{relative_path}"
       )
 
+      content_type = None
+
+      if relative_path.suffix.lower() == ".pdf":
+        content_type = "application/pdf"
+
       self.storage.upload_file(
         local_path=local_path,
         s3_key=s3_key,
+        content_type=content_type,
       )
 
       job_file = FormJobFile(
         form_job_id=job.id,
         filename=relative_path.name,
-        content_type=None,
+        content_type=content_type,
         s3_key=s3_key,
         is_input=False,
       )
