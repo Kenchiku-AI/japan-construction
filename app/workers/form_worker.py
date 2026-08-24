@@ -3,12 +3,18 @@ import json
 
 import boto3
 
+from app.core.config import settings
 from app.services.forms.service import FormJobService
 from app.services.forms.storage import FormStorage
 from app.db.session import async_session
 
 
-sqs = boto3.client("sqs")
+sqs = boto3.client(
+  "sqs",
+  region_name=settings.AWS_REGION,
+)
+
+QUEUE_URL = settings.SQS_FORM_QUEUE_URL
 
 
 async def process_message(
@@ -24,7 +30,7 @@ async def process_message(
   async with async_session() as db:
 
     storage = FormStorage(
-      bucket_name="YOUR_BUCKET_NAME",
+      bucket_name=settings.S3_BUCKET_NAME,
     )
 
     service = FormJobService(
@@ -39,9 +45,8 @@ async def process_message(
 
 async def main():
   while True:
-
     response = sqs.receive_message(
-      QueueUrl="YOUR_QUEUE_URL",
+      QueueUrl=QUEUE_URL,
       MaxNumberOfMessages=1,
       WaitTimeSeconds=20,
     )
@@ -52,20 +57,17 @@ async def main():
     )
 
     for message in messages:
-
       try:
         await process_message(
           message,
         )
 
         sqs.delete_message(
-          QueueUrl="YOUR_QUEUE_URL",
+          QueueUrl=QUEUE_URL,
           ReceiptHandle=message["ReceiptHandle"],
         )
 
       except Exception:
-        # Leave message in queue so SQS
-        # retry / DLQ handling can occur.
         pass
 
 

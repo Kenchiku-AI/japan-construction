@@ -95,6 +95,53 @@ class FormJobService:
 
       raise
 
+  async def _collect_output_files(
+    self,
+    job: FormJob,
+    output_dir: Path,
+  ) -> list[FormJobFile]:
+    output_files = []
+
+    for local_path in output_dir.rglob("*"):
+      if not local_path.is_file():
+        continue
+
+      relative_path = local_path.relative_to(
+        output_dir,
+      )
+
+      s3_key = (
+        f"form-jobs/"
+        f"{job.id}/"
+        f"output/"
+        f"{relative_path}"
+      )
+
+      self.storage.upload_file(
+        local_path=local_path,
+        s3_key=s3_key,
+      )
+
+      job_file = FormJobFile(
+        form_job_id=job.id,
+        filename=relative_path.name,
+        content_type=None,
+        s3_key=s3_key,
+        is_input=False,
+      )
+
+      self.db.add(
+        job_file,
+      )
+
+      output_files.append(
+        job_file,
+      )
+
+    await self.db.flush()
+
+    return output_files
+
   async def _download_input_files(
     self,
     job: FormJob,

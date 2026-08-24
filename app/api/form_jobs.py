@@ -1,120 +1,98 @@
-import uuid
+import asyncio
+import json
+import logging
 
 import boto3
-from fastapi import APIRouter, Depends, File, Form, UploadFile
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user
-from app.db.session import get_db
-from app.db.models.form_job import (
-  FormJob,
-  FormJobFile,
-  FormJobOrigin,
-  FormJobStatus,
-)
+from app.core.config import settings
+from app.db.session import async_session
+from app.services.forms.service import FormJobService
+from app.services.forms.storage import FormStorage
 from app.services.s3 import BUCKET_NAME
 
-router = APIRouter(
-  prefix="/form-jobs",
-  tags=["form-jobs"],
+
+logging.basicConfig(level=logging.INFO)
+
+logger = logging.getLogger(__name__)
+
+
+QUEUE_URL = settings.SQS_FORM_QUEUE_URL
+
+sqs = boto3.client(
+  "sqs",
+  region_name=settings.AWS_REGION,
 )
 
 
-s3 = boto3.client("s3")
-sqs = boto3.client("sqs")
-
-
-@router.post("")
-async def create_form_job(
-  project_id: uuid.UUID | None = Form(None),
-  instructions: str | None = Form(None),
-  files: list[UploadFile] = File(...),
-  db: AsyncSession = Depends(get_db),
-  current_user: User = Depends(get_current_user),
-):
-  company_id = current_user.company_id
-
-  job = FormJob(
-    company_id=company_id,
-    project_id=project_id,
-    instructions=instructions,
-    status=FormJobStatus.pending,
-    origin=FormJobOrigin.web,
+async def process_message(
+  message: dict,
+) -> None:
+  body = json.loads(
+    message["Body"],
   )
 
-  db.add(job)
+  form_job_id = body["form_job_id"]
 
-  await db.flush()
-
-  for upload in files:
-
-    filename = upload.filename or "file"
-
-    s3_key = (
-      f"form-jobs/"
-      f"{job.id}/"
-      f"input/"
-      f"{filename}"
+  async with async_session() as db:
+    storage = FormStorage(
+      bucket_name=BUCKET_NAME,
     )
 
-    s3.upload_fileobj(
-      upload.file,
-      BUCKET_NAME,
-      s3_key,
+    service = FormJobService(
+      db=db,
+      storage=storage,
     )
 
-    job_file = FormJobFile(
-      form_job_id=job.id,
-      filename=filename,
-      content_type=upload.content_type,
-      s3_key=s3_key,
-      is_input=True,
+    await service.process(
+      form_job_id=form_job_id,
     )
 
-    db.add(job_file)
 
-  await db.commit()
-
-  sqs.send_message(
-    QueueUrl="YOUR_QUEUE_URL",
-    MessageBody=str(
-      {
-        "form_job_id": str(job.id),
-      }
-    ),
+async def run_worker():
+  logger.info(
+    "Form worker started",
   )
 
-  return {
-    "id": str(job.id),
-    "status": job.status.value,
-  }
+  while True:
+    try:
+      response = sqs.receive_message(
+        QueueUrl=QUEUE_URL,
+        MaxNumberOfMessages=1,
+        WaitTimeSeconds=20,
+      )
 
-@router.get("/{form_job_id}")
-async def get_form_job(
-  form_job_id: uuid.UUID,
-  db: AsyncSession = Depends(get_db),
-):
-  job = await db.scalar(
-    select(FormJob)
-    .where(FormJob.id == form_job_id)
+      messages = response.get(
+        "Messages",
+        [],
+      )
+
+      for message in messages:
+        try:
+          await process_message(
+            message,
+          )
+
+          sqs.delete_message(
+            QueueUrl=QUEUE_URL,
+            ReceiptHandle=message[
+              "ReceiptHandle"
+            ],
+          )
+
+        except Exception:
+          logger.exception(
+            "Failed to process form job message",
+          )
+
+    except Exception:
+      logger.exception(
+        "Form worker polling error",
+      )
+
+      await asyncio.sleep(5)
+
+
+if __name__ == "__main__":
+  asyncio.run(
+    run_worker(),
   )
-
-  if job is None:
-    raise HTTPException(
-      status_code=404,
-      detail="Form job not found",
-    )
-
-  return {
-    "id": str(job.id),
-    "status": job.status.value,
-    "instructions": job.instructions,
-    "files": [
-      {
-        "id": str(file.id),
-        "filename": file.filename,
-        "is_input": file.is_input,
-      }
-      for file in job.files
-    ],
-  }
