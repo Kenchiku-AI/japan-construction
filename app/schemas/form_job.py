@@ -9,6 +9,24 @@ from app.db.models.form_job import (
 )
 
 
+class FormJobCreate(BaseModel):
+  company_id: UUID
+  name: str
+  description: str | None = None
+  project_id: UUID | None = None
+  filename: str
+  content_type: str
+
+
+class FormJobCreateResponse(BaseModel):
+  id: UUID
+  name: str
+  status: FormJobStatus
+  upload_url: str
+  filename: str
+  created_at: datetime
+
+
 class FormJobFileResponse(BaseModel):
   id: UUID
   filename: str
@@ -21,19 +39,12 @@ class FormJobFileResponse(BaseModel):
   }
 
 
-class FormJobCreateResponse(BaseModel):
-  id: UUID
-  status: FormJobStatus
-  upload_url: str
-  filename: str
-  created_at: datetime
-
-
 class FormJobResponse(BaseModel):
   id: UUID
   company_id: UUID
   project_id: UUID | None
-  instructions: str | None
+  name: str
+  description: str | None
   status: FormJobStatus
   origin: FormJobOrigin
   error: str | None

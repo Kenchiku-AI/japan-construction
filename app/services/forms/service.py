@@ -193,25 +193,24 @@ class FormJobService:
     return f"""
 Complete the form files provided in the workspace.
 
+Form name:
+{job.name}
+
+Form description:
+{job.description or "No description provided."}
+
 Company ID:
 {job.company_id}
 
 Project ID:
 {job.project_id or "Not specified"}
 
-User instructions:
-{job.instructions or "No additional instructions."}
-
 Input files:
 {file_list}
 
-Read the input files from:
-
-/workspace/input/
-
 Save all completed files to:
 
-/workspace/output/
+{output_dir}
 
 Use the Kenchiku tools to retrieve information as necessary.
 
