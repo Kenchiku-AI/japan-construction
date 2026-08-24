@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, case, or_, func, and_
 from sqlalchemy.orm import selectinload
 
+
 from app.core.dependencies import get_current_user, require_company_manager, require_project_access
 from app.db.session import get_db
 from app.db.models import (
@@ -19,13 +20,24 @@ from app.db.models import (
   ConversationItem,
   ConversationItemType,
   ConversationItemTypeLink,
+  ProjectUserLink,
+  CustomField,
+  CustomFieldDefinition,
+  CustomFieldProjectLink,
+  CustomRelationship,
+  CustomRelationshipDefinition,
+  CustomRelationshipEntityType,
 )
 from app.schemas.project import (
   ProjectCreate, 
   ProjectUpdate,
   ProjectWithCompanyName,
   ProjectWithLists,
+  ProjectSetUsers,
 )
+from app.schemas.custom_field import CustomFieldRead
+from app.schemas.custom_relationship import CustomRelationshipRead
+from app.schemas.user import UserRead
 from app.services.billing import can_use_billed_features
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
@@ -160,6 +172,103 @@ async def get_conversation_last_messages(
 
   return dict(result.all())
 
+async def get_project_custom_fields(
+  project: Project,
+  db: AsyncSession,
+) -> list[CustomFieldRead]:
+  definitions_result = await db.execute(
+    select(CustomFieldDefinition)
+    .where(
+      CustomFieldDefinition.company_id == project.company_id,
+      CustomFieldDefinition.entity_type == "project",
+    )
+    .order_by(
+      CustomFieldDefinition.sort_order,
+      CustomFieldDefinition.name,
+    )
+  )
+
+  definitions = definitions_result.scalars().all()
+
+  existing_fields = {
+    link.custom_field.custom_field_definition_id: link.custom_field
+    for link in project.custom_field_links
+  }
+
+  return [
+    CustomFieldRead(
+      id=existing_fields[definition.id].id
+        if definition.id in existing_fields
+        else None,
+      value=existing_fields[definition.id].value
+        if definition.id in existing_fields
+        else None,
+      definition=definition,
+    )
+    for definition in definitions
+  ]
+
+async def get_project_custom_relationships(
+  project: Project,
+  db: AsyncSession,
+) -> list[CustomRelationshipRead]:
+
+  definitions_result = await db.execute(
+    select(CustomRelationshipDefinition)
+    .where(
+      CustomRelationshipDefinition.company_id == project.company_id,
+      CustomRelationshipDefinition.source_entity_type
+      == CustomRelationshipEntityType.project,
+    )
+    .order_by(
+      CustomRelationshipDefinition.sort_order,
+      CustomRelationshipDefinition.name,
+    )
+  )
+
+  definitions = definitions_result.scalars().all()
+
+  existing_relationships = {}
+
+  for relationship in project.custom_relationships:
+    if relationship.source_entity_id != project.id:
+      continue
+
+    existing_relationships.setdefault(
+      relationship.custom_relationship_definition_id,
+      [],
+    ).append(relationship)
+
+  results = []
+
+  for definition in definitions:
+    relationships = existing_relationships.get(
+      definition.id,
+      [],
+    )
+
+    if relationships:
+      for relationship in relationships:
+        results.append(
+          CustomRelationshipRead(
+            id=relationship.id,
+            source_entity_id=relationship.source_entity_id,
+            target_entity_id=relationship.target_entity_id,
+            definition=definition,
+          )
+        )
+    else:
+      results.append(
+        CustomRelationshipRead(
+          id=None,
+          source_entity_id=project.id,
+          target_entity_id=None,
+          definition=definition,
+        )
+      )
+
+  return results
+
 async def build_project_response(
   db: AsyncSession,
   project: Project,
@@ -187,6 +296,16 @@ async def build_project_response(
     )
     conversations.append(conversation)
 
+  custom_fields = await get_project_custom_fields(
+    project,
+    db,
+  )
+
+  custom_relationships = await get_project_custom_relationships(
+    project,
+    db,
+  )
+
   return ProjectWithLists(
     id=project.id,
     name=project.name,
@@ -197,6 +316,9 @@ async def build_project_response(
     reports=project.reports,
     conversations=conversations,
     conversation_items=conversation_items,
+    custom_fields=custom_fields,
+    custom_relationships=custom_relationships,
+    users=project.users,
   )
 
 @router.get("", response_model=List[ProjectWithCompanyName])
@@ -289,9 +411,15 @@ async def get_project(
       .where(Project.id == project_id)
       .options(
         selectinload(Project.reports),
+        selectinload(Project.users),
         selectinload(Project.conversations)
           .selectinload(LineConversation.item_type_links)
-          .selectinload(ConversationItemTypeLink.item_type), 
+          .selectinload(ConversationItemTypeLink.item_type),
+        selectinload(Project.custom_field_links)
+          .selectinload(CustomFieldProjectLink.custom_field)
+          .selectinload(CustomField.definition),
+        selectinload(Project.custom_relationships)
+          .selectinload(CustomRelationship.definition),
       )
     )
 
@@ -311,9 +439,15 @@ async def get_project(
       .where(Project.id == project_id)
       .options(
         selectinload(Project.reports),
+        selectinload(Project.users),
         selectinload(Project.conversations)
           .selectinload(LineConversation.item_type_links)
           .selectinload(ConversationItemTypeLink.item_type),
+        selectinload(Project.custom_field_links)
+          .selectinload(CustomFieldProjectLink.custom_field)
+          .selectinload(CustomField.definition),
+        selectinload(Project.custom_relationships)
+          .selectinload(CustomRelationship.definition),
       )
     )
 
@@ -328,7 +462,7 @@ async def get_project(
   return await build_project_response(
     db,
     project,
-  ) 
+  )
 
 @router.post(
   "",
@@ -346,6 +480,18 @@ async def create_project(
 
   company = await db.get(Company, payload.company_id)
 
+  if not company:
+    raise HTTPException(
+      status_code=404,
+      detail="Company not found",
+    )
+
+  if current_user.role != "admin":
+    require_company_manager(
+      current_user,
+      payload.company_id,
+    )
+
   project = Project(
     **payload.model_dump(),
     status=ProjectStatus.active,
@@ -353,18 +499,31 @@ async def create_project(
 
   db.add(project)
   await db.commit()
-  await db.refresh(project)
 
-  return ProjectWithLists(
-    id=project.id,
-    name=project.name,
-    description=project.description,
-    status=project.status,
-    company_id=project.company_id,
-    reports=[],
-    conversations=[],
-    conversation_items=[],
+  stmt = (
+    select(Project)
+    .where(Project.id == project.id)
+    .options(
+      selectinload(Project.reports),
+      selectinload(Project.users),
+      selectinload(Project.conversations)
+        .selectinload(LineConversation.item_type_links)
+        .selectinload(ConversationItemTypeLink.item_type),
+      selectinload(Project.custom_field_links)
+        .selectinload(CustomFieldProjectLink.custom_field)
+        .selectinload(CustomField.definition),
+      selectinload(Project.custom_relationships),
+    )
   )
+
+  result = await db.execute(stmt)
+  project = result.scalar_one()
+
+  return await build_project_response(
+    db,
+    project,
+  )
+
 
 @router.patch("/{project_id}", response_model=ProjectWithLists)
 async def update_project(
@@ -374,13 +533,25 @@ async def update_project(
   current_user: User = Depends(get_current_user),
 ):
   project = await db.get(Project, project_id)
+
   if not project:
-    raise HTTPException(status_code=404, detail="Project not found")
+    raise HTTPException(
+      status_code=404,
+      detail="Project not found",
+    )
 
   if current_user.role != "admin":
-    require_company_manager(current_user, project.company_id)
+    require_company_manager(
+      current_user,
+      project.company_id,
+    )
 
-  for field, value in payload.model_dump(exclude_unset=True).items():
+  update_data = payload.model_dump(
+    exclude_unset=True,
+    exclude_none=True,
+  )
+
+  for field, value in update_data.items():
     setattr(project, field, value)
 
   await db.commit()
@@ -390,21 +561,31 @@ async def update_project(
     .where(Project.id == project_id)
     .options(
       selectinload(Project.reports),
+      selectinload(Project.users),
       selectinload(Project.conversations)
         .selectinload(LineConversation.item_type_links)
         .selectinload(ConversationItemTypeLink.item_type),
+      selectinload(Project.custom_field_links)
+        .selectinload(CustomFieldProjectLink.custom_field)
+        .selectinload(CustomField.definition),
+      selectinload(Project.custom_relationships),
     )
   )
 
   result = await db.execute(stmt)
   project = result.scalars().first()
+
   if not project:
-    raise HTTPException(status_code=404, detail="Project not found")
+    raise HTTPException(
+      status_code=404,
+      detail="Project not found",
+    )
 
   return await build_project_response(
     db,
     project,
   )
+
 
 @router.delete(
   "/{project_id}/guests/{guest_link_id}",
@@ -475,3 +656,116 @@ async def delete_project(
   await db.commit()
 
   return None
+
+@router.put(
+  "/{project_id}/users",
+  response_model=List[UserRead],
+)
+async def set_project_users(
+  project_id: UUID,
+  payload: ProjectSetUsers,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  project = await db.get(Project, project_id)
+
+  if not project:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Project not found",
+    )
+
+  if current_user.role != "admin":
+    require_company_manager(
+      current_user,
+      project.company_id,
+    )
+
+  user_ids = list(set(payload.user_ids))
+
+  if user_ids:
+    result = await db.execute(
+      select(User).where(
+        User.id.in_(user_ids),
+        User.company_id == project.company_id,
+      )
+    )
+
+    users = result.scalars().all()
+
+    found_user_ids = {
+      user.id
+      for user in users
+    }
+
+    missing_user_ids = [
+      user_id
+      for user_id in user_ids
+      if user_id not in found_user_ids
+    ]
+
+    if missing_user_ids:
+      raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="One or more users do not belong to the project company",
+      )
+  else:
+    users = []
+
+  result = await db.execute(
+    select(ProjectUserLink).where(
+      ProjectUserLink.project_id == project_id
+    )
+  )
+
+  existing_links = result.scalars().all()
+
+  existing_user_ids = {
+    link.user_id
+    for link in existing_links
+  }
+
+  requested_user_ids = set(user_ids)
+
+  links_to_delete = [
+    link
+    for link in existing_links
+    if link.user_id not in requested_user_ids
+  ]
+
+  links_to_create = [
+    user_id
+    for user_id in requested_user_ids
+    if user_id not in existing_user_ids
+  ]
+
+  for link in links_to_delete:
+    await db.delete(link)
+
+  for user_id in links_to_create:
+    db.add(
+      ProjectUserLink(
+        project_id=project_id,
+        user_id=user_id,
+      )
+    )
+
+  await db.commit()
+
+  result = await db.execute(
+    select(User)
+    .join(
+      ProjectUserLink,
+      ProjectUserLink.user_id == User.id,
+    )
+    .where(
+      ProjectUserLink.project_id == project_id,
+    )
+    .order_by(
+      User.first_name,
+      User.last_name,
+      User.email,
+    )
+  )
+
+  return result.scalars().all()

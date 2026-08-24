@@ -1,12 +1,15 @@
 import logging
-from fastapi import BackgroundTasks
-from sqlalchemy import select, delete, and_, or_
+
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.user import UserCompanyRead, UserProjectRead, UserWithCompanyAndProjects
+from app.schemas.user import (
+  UserCompanyRead, 
+  UserProjectRead, 
+  UserWithCompanyAndProjects,
+)
 from app.db.models.user import User
-from app.db.models.company import Company
 from app.db.models.project import Project
 from app.db.models.project_guest_link import ProjectGuestLink
 
@@ -16,6 +19,15 @@ async def build_user_with_company_and_projects(
   user: User,
   db: AsyncSession,
 ) -> UserWithCompanyAndProjects:
+  user_result = await db.execute(
+    select(User)
+    .options(
+      selectinload(User.company),
+    )
+    .where(User.id == user.id)
+  )
+  user = user_result.scalar_one()
+
   projects_data: list[UserProjectRead] = []
   company = None
   guest_projects = []
@@ -27,14 +39,7 @@ async def build_user_with_company_and_projects(
     projects = projects_result.scalars().all()
 
   elif user.company_id:
-    user_result = await db.execute(
-      select(User)
-      .options(selectinload(User.company))
-      .where(User.id == user.id)
-    )
-    user = user_result.scalar_one()
     company = user.company
-
     projects_result = await db.execute(
       select(Project)
       .where(Project.company_id == company.id)
@@ -93,3 +98,4 @@ async def build_user_with_company_and_projects(
     ),
     projects=projects_data,
   )
+

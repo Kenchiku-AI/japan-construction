@@ -20,8 +20,21 @@ from app.db.models.report import (
   ReportImageLink,
   ReportProjectLink,
 )
+from app.db.models.custom_field import (
+  CustomField, 
+  CustomFieldUserLink, 
+  CustomFieldCompanyLink, 
+  CustomFieldProjectLink,
+  CustomFieldCustomObjectLink,
+)
+from app.db.models.custom_field_definition import CustomFieldDefinition, CustomFieldEntityType
+from app.db.models.custom_object import CustomObject
+from app.db.models.custom_object_definition import CustomObjectDefinition
+from app.db.models.custom_relationship import CustomRelationship
+from app.db.models.custom_relationship_definition import CustomRelationshipDefinition, CustomRelationshipEntityType, CustomRelationshipCardinality
 from app.db.models.image import (
   Image,
   ImageTag,
   ImageTagLink,
 )
+from app.db.models.project_user_link import ProjectUserLink

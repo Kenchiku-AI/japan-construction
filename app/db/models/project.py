@@ -48,6 +48,20 @@ class Project(Base):
     cascade="all, delete-orphan",
   )
 
+  users = relationship(
+    "User",
+    secondary="project_user_links",
+    primaryjoin="Project.id == ProjectUserLink.project_id",
+    secondaryjoin="User.id == ProjectUserLink.user_id",
+    viewonly=True,
+  )
+
+  user_links = relationship(
+    "ProjectUserLink",
+    back_populates="project",
+    cascade="all, delete-orphan",
+  )
+
   guest_links = relationship(
     "ProjectGuestLink",
     back_populates="project",
@@ -65,6 +79,24 @@ class Project(Base):
     "ConversationItem",
     back_populates="project",
     cascade="all, delete-orphan",
+  )
+
+  custom_field_links = relationship(
+    "CustomFieldProjectLink",
+    back_populates="project",
+    cascade="all, delete-orphan",
+  )
+
+  custom_relationships = relationship(
+    "CustomRelationship",
+    primaryjoin=(
+      "and_("
+      "Project.id == foreign(CustomRelationship.source_entity_id), "
+      "CustomRelationship.source_entity_type == 'project', "
+      "Project.company_id == foreign(CustomRelationship.company_id)"
+      ")"
+    ),
+    viewonly=True,
   )
 
   created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

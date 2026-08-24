@@ -34,8 +34,20 @@ class User(Base):
     back_populates="users",
   )
 
+  project_links = relationship(
+    "ProjectUserLink",
+    back_populates="user",
+    cascade="all, delete-orphan",
+  )
+
   guest_project_links = relationship(
     "ProjectGuestLink",
+    back_populates="user",
+    cascade="all, delete-orphan",
+  )
+
+  custom_field_links = relationship(
+    "CustomFieldUserLink",
     back_populates="user",
     cascade="all, delete-orphan",
   )

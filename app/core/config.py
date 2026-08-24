@@ -19,6 +19,7 @@ class Settings(BaseSettings):
   AWS_REGION: str
   S3_BUCKET: str
   SQS_QUEUE_URL: str
+  SQS_FORM_QUEUE_URL: str
   ALGORITHM: str = "HS256"
   WEB_CLIENT_URL: str = "http://localhost:3000"
 
