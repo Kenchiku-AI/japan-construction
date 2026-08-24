@@ -9,6 +9,7 @@ from fastapi import (
 )
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from pathlib import Path
 
@@ -25,7 +26,7 @@ from app.db.models.form_job import (
 )
 from app.db.models.project import Project
 from app.db.models.user import User
-from app.schemas.form_job import FormJobResponse
+from app.schemas.form_job import FormJobResponse, FormJobCreateResponse
 from app.services.forms.storage import FormStorage
 from app.services.s3 import BUCKET_NAME
 
@@ -149,6 +150,9 @@ async def list_form_jobs(
 
   result = await db.execute(
     select(FormJob)
+    .options(
+      selectinload(FormJob.files),
+    )
     .where(
       FormJob.company_id == company_id,
     )
@@ -169,7 +173,11 @@ async def get_form_job(
   current_user: User = Depends(get_current_user),
 ):
   result = await db.execute(
-    select(FormJob).where(
+    select(FormJob)
+    .options(
+      selectinload(FormJob.files),
+    )
+    .where(
       FormJob.id == form_job_id,
     ),
   )

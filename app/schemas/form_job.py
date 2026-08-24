@@ -3,7 +3,10 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.models.form_job import FormJobOrigin, FormJobStatus
+from app.db.models.form_job import (
+  FormJobOrigin,
+  FormJobStatus,
+)
 
 
 class FormJobFileResponse(BaseModel):
@@ -11,6 +14,18 @@ class FormJobFileResponse(BaseModel):
   filename: str
   content_type: str | None
   is_input: bool
+  created_at: datetime
+
+  model_config = {
+    "from_attributes": True,
+  }
+
+
+class FormJobCreateResponse(BaseModel):
+  id: UUID
+  status: FormJobStatus
+  upload_url: str
+  filename: str
   created_at: datetime
 
 
