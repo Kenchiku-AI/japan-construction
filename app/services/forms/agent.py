@@ -1,6 +1,14 @@
+from pathlib import Path
+
 from agents import Runner
 from agents.run import RunConfig
-from agents.sandbox import SandboxRunConfig, SandboxAgent
+from agents.sandbox import (
+  Manifest,
+  SandboxAgent,
+  SandboxPathGrant,
+  SandboxRunConfig,
+)
+from agents.sandbox.entries import LocalDir
 
 from app.services.forms.prompts import FORM_AGENT_INSTRUCTIONS
 from app.services.forms.tools import (
@@ -29,8 +37,24 @@ def build_form_agent() -> SandboxAgent:
 async def run_form_agent(
   prompt: str,
   sandbox_client,
+  workspace: Path,
 ):
   agent = build_form_agent()
+
+  manifest = Manifest(
+    root="/workspace",
+    extra_path_grants=(
+      SandboxPathGrant(
+        path="/tmp",
+        read_only=True,
+      ),
+    ),
+    entries={
+      ".": LocalDir(
+        src=workspace,
+      ),
+    },
+  )
 
   result = await Runner.run(
     agent,
@@ -38,6 +62,7 @@ async def run_form_agent(
     run_config=RunConfig(
       sandbox=SandboxRunConfig(
         client=sandbox_client,
+        manifest=manifest,
       ),
     ),
   )

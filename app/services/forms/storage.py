@@ -68,6 +68,22 @@ class FormStorage:
       str(local_path),
     )
 
+  def create_upload_url(
+    self,
+    s3_key: str,
+    content_type: str,
+    expires_in: int = 300,
+  ) -> str:
+    return self.s3.generate_presigned_url(
+      "put_object",
+      Params={
+        "Bucket": self.bucket_name,
+        "Key": s3_key,
+        "ContentType": content_type,
+      },
+      ExpiresIn=expires_in,
+    )
+
   def create_download_url(
     self,
     s3_key: str,

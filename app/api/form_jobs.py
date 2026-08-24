@@ -3,14 +3,11 @@ from uuid import UUID
 from fastapi import (
   APIRouter,
   Depends,
-  File,
   Form,
   HTTPException,
-  UploadFile,
   status,
 )
 from fastapi.responses import RedirectResponse
-from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pathlib import Path
@@ -29,7 +26,6 @@ from app.db.models.form_job import (
 from app.db.models.project import Project
 from app.db.models.user import User
 from app.schemas.form_job import FormJobResponse
-from app.services.forms.queue import enqueue_form_job
 from app.services.forms.storage import FormStorage
 from app.services.s3 import BUCKET_NAME
 
@@ -42,12 +38,13 @@ router = APIRouter(
 
 @router.post(
   "",
-  response_model=FormJobResponse,
+  response_model=FormJobCreateResponse,
   status_code=status.HTTP_201_CREATED,
 )
 async def create_form_job(
   company_id: UUID = Form(...),
-  file: UploadFile = File(...),
+  filename: str = Form(...),
+  content_type: str = Form(...),
   instructions: str | None = Form(None),
   project_id: UUID | None = Form(None),
   db: AsyncSession = Depends(get_db),
@@ -74,17 +71,19 @@ async def create_form_job(
         detail="Project not found",
       )
 
-  if not file.filename:
+  if not filename:
     raise HTTPException(
       status_code=status.HTTP_400_BAD_REQUEST,
-      detail="A file is required",
+      detail="A filename is required",
     )
 
-  if file.content_type != "application/pdf":
+  if content_type != "application/pdf":
     raise HTTPException(
       status_code=status.HTTP_400_BAD_REQUEST,
       detail="Only PDF files are supported",
     )
+
+  safe_filename = Path(filename).name
 
   form_job = FormJob(
     company_id=company_id,
@@ -98,26 +97,24 @@ async def create_form_job(
 
   await db.flush()
 
+  s3_key = (
+    f"form-job-inputs/{form_job.id}/"
+    f"{safe_filename}"
+  )
+
   storage = FormStorage(
     bucket_name=BUCKET_NAME,
   )
 
-  s3_key = (
-    f"form-jobs/{form_job.id}/input/"
-    f"{Path(file.filename).name}"
-  )
-
-  await run_in_threadpool(
-    storage.upload_fileobj,
-    file.file,
-    s3_key,
-    file.content_type,
+  upload_url = storage.create_upload_url(
+    s3_key=s3_key,
+    content_type=content_type,
   )
 
   form_file = FormJobFile(
     form_job_id=form_job.id,
-    filename=file.filename,
-    content_type=file.content_type,
+    filename=safe_filename,
+    content_type=content_type,
     s3_key=s3_key,
     is_input=True,
   )
@@ -128,11 +125,13 @@ async def create_form_job(
 
   await db.refresh(form_job)
 
-  enqueue_form_job(
-    form_job.id,
+  return FormJobCreateResponse(
+    id=form_job.id,
+    status=form_job.status,
+    upload_url=upload_url,
+    filename=safe_filename,
+    created_at=form_job.created_at,
   )
-
-  return form_job
 
 @router.get(
   "",

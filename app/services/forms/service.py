@@ -38,6 +38,14 @@ class FormJobService:
         f"Form job {form_job_id} not found"
       )
 
+    if job.status != FormJobStatus.pending:
+      logger.info(
+        "Skipping form job %s with status %s",
+        form_job_id,
+        job.status,
+      )
+      return
+
     job.status = FormJobStatus.processing
 
     await self.db.commit()
@@ -61,7 +69,6 @@ class FormJobService:
         prompt = self._build_prompt(
           job,
           input_files,
-          output_dir,
         )
 
         sandbox_client = get_form_sandbox_client()
@@ -69,6 +76,7 @@ class FormJobService:
         result = await run_form_agent(
           prompt=prompt,
           sandbox_client=sandbox_client,
+          workspace=workspace,
         )
 
         await self._collect_output_files(
@@ -175,11 +183,10 @@ class FormJobService:
     self,
     job: FormJob,
     input_files: list[Path],
-    output_dir: Path,
   ) -> str:
 
     file_list = "\n".join(
-      f"- {path.name}"
+      f"- /workspace/input/{path.name}"
       for path in input_files
     )
 
@@ -198,9 +205,13 @@ User instructions:
 Input files:
 {file_list}
 
+Read the input files from:
+
+/workspace/input/
+
 Save all completed files to:
 
-{output_dir}
+/workspace/output/
 
 Use the Kenchiku tools to retrieve information as necessary.
 
