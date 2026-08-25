@@ -6,7 +6,7 @@ from urllib.parse import unquote_plus
 import boto3
 
 from app.core.config import settings
-from app.db.session import async_session
+from app.db.session import AsyncSessionLocal
 from app.services.forms.service import FormJobService
 from app.services.forms.storage import FormStorage
 from app.services.s3 import BUCKET_NAME
@@ -61,7 +61,7 @@ async def process_message(
 
     form_job_id = parts[1]
 
-    async with async_session() as db:
+    async with AsyncSessionLocal() as db:
       storage = FormStorage(
         bucket_name=BUCKET_NAME,
       )
