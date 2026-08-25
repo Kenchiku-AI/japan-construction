@@ -75,53 +75,24 @@ async def run_form_agent(
   try:
     print("=== SANDBOX DEBUG START ===")
 
-    print("Manifest root:")
-    print(sandbox.manifest.root)
+    try:
+      result = await sandbox.exec_command(
+        command="pwd && echo '--- ROOT ---' && ls -la / && echo '--- VERCEL ---' && ls -la /vercel && echo '--- WORKSPACE ---' && ls -la /workspace 2>&1 || true && echo '--- INPUT ---' && ls -la /workspace/input 2>&1 || true && echo '--- RELATIVE INPUT ---' && ls -la input 2>&1 || true"
+      )
 
-    print("Manifest entries:")
-    print(sandbox.manifest.entries)
+      print("SANDBOX COMMAND EXIT CODE:")
+      print(result.exit_code)
 
-    print("Local workspace:")
-    print(sandbox.local_workspace)
+      print("SANDBOX COMMAND STDOUT:")
+      print(result.stdout)
 
-    print("Local input directory:")
-    print(sandbox.local_workspace / "input")
+      print("SANDBOX COMMAND STDERR:")
+      print(result.stderr)
 
-    print("Local input files:")
-    for path in (sandbox.local_workspace / "input").iterdir():
-      print(f"  {path} | file={path.is_file()}")
-
-    print("Local output directory:")
-    print(sandbox.local_workspace / "output")
-
-    print("=== SANDBOX RELATIVE PATH TESTS ===")
-
-    for path in [
-      Path("."),
-      Path("input"),
-      Path("input/kyouryokukai_meibo.xls"),
-      Path("output"),
-    ]:
-      try:
-        print(f"TEST {path}:")
-        result = await sandbox.ls(path)
-        print(result)
-      except Exception as e:
-        print(f"ERROR {path}: {type(e).__name__}: {e}")
-
-    print("=== SANDBOX NORMALIZE TESTS ===")
-
-    for path in [
-      Path("."),
-      Path("input"),
-      Path("input/kyouryokukai_meibo.xls"),
-      Path("output"),
-    ]:
-      try:
-        result = sandbox.normalize_path(path)
-        print(f"NORMALIZE {path} -> {result}")
-      except Exception as e:
-        print(f"NORMALIZE ERROR {path}: {type(e).__name__}: {e}")
+    except Exception as e:
+      print("SANDBOX DEBUG ERROR:")
+      print(type(e).__name__)
+      print(str(e))
 
     print("=== SANDBOX DEBUG END ===")
 
