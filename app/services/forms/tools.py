@@ -20,7 +20,6 @@ from app.db.models import (
   CustomFieldUserLink,
   CustomFieldCustomObjectLink,
   CustomObject,
-  CustomObjectDefinition,
   CustomRelationship,
   CustomRelationshipDefinition,
 )
@@ -55,10 +54,24 @@ async def _get_company(
   if not company:
     return None
 
+  fields = await _get_company_custom_fields(
+    db,
+    company_id,
+  )
+
+  relationships = await _get_custom_relationships_for_entity(
+    db,
+    company_id,
+    "company",
+    company_id,
+  )
+
   return {
     "id": str(company.id),
     "name": company.name,
     "corporate_number": company.corporate_number,
+    "custom_fields": fields,
+    "relationships": relationships,
   }
 
 
@@ -79,12 +92,68 @@ async def _get_project(
   if not project:
     return None
 
+  fields = await _get_project_custom_fields(
+    db,
+    company_id,
+    project_id,
+  )
+
+  relationships = await _get_custom_relationships_for_entity(
+    db,
+    company_id,
+    "project",
+    project_id,
+  )
+
   return {
     "id": str(project.id),
     "name": project.name,
     "description": project.description,
     "status": _enum_value(project.status),
     "company_id": str(project.company_id),
+    "custom_fields": fields,
+    "relationships": relationships,
+  }
+
+
+async def _get_user(
+  db: AsyncSession,
+  company_id,
+  user_id,
+) -> dict[str, Any] | None:
+  result = await db.execute(
+    select(User).where(
+      User.id == user_id,
+      User.company_id == company_id,
+    )
+  )
+
+  user = result.scalar_one_or_none()
+
+  if not user:
+    return None
+
+  fields = await _get_user_custom_fields(
+    db,
+    company_id,
+    user_id,
+  )
+
+  relationships = await _get_custom_relationships_for_entity(
+    db,
+    company_id,
+    "user",
+    user_id,
+  )
+
+  return {
+    "id": str(user.id),
+    "email": user.email,
+    "first_name": user.first_name,
+    "last_name": user.last_name,
+    "company_id": str(user.company_id) if user.company_id else None,
+    "custom_fields": fields,
+    "relationships": relationships,
   }
 
 
@@ -129,16 +198,37 @@ async def _get_project_users(
   for user in guest_users:
     users_by_id[user.id] = user
 
-  return [
-    {
-      "id": str(user.id),
-      "email": user.email,
-      "first_name": user.first_name,
-      "last_name": user.last_name,
-      "company_id": str(user.company_id) if user.company_id else None,
-    }
-    for user in users_by_id.values()
-  ]
+  users = []
+
+  for user in users_by_id.values():
+    fields = await _get_user_custom_fields(
+      db,
+      company_id,
+      user.id,
+    )
+
+    relationships = await _get_custom_relationships_for_entity(
+      db,
+      company_id,
+      "user",
+      user.id,
+    )
+
+    users.append(
+      {
+        "id": str(user.id),
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "company_id": str(user.company_id)
+        if user.company_id
+        else None,
+        "custom_fields": fields,
+        "relationships": relationships,
+      }
+    )
+
+  return users
 
 
 async def _get_company_custom_fields(
@@ -352,10 +442,20 @@ async def _get_custom_relationships_for_entity(
       "source": {
         "entity_type": relationship.source_entity_type,
         "entity_id": str(relationship.source_entity_id),
+        "custom_object_definition_id": (
+          str(relationship.source_custom_object_definition_id)
+          if relationship.source_custom_object_definition_id
+          else None
+        ),
       },
       "target": {
         "entity_type": relationship.target_entity_type,
         "entity_id": str(relationship.target_entity_id),
+        "custom_object_definition_id": (
+          str(relationship.target_custom_object_definition_id)
+          if relationship.target_custom_object_definition_id
+          else None
+        ),
       },
     }
     for relationship in relationships
@@ -462,7 +562,8 @@ async def _get_company_custom_objects(
 async def get_company_information(
   ctx: RunContextWrapper[FormAgentContext],
 ) -> dict[str, Any]:
-  """Get information about the company associated with the current form."""
+  """Get information about the company associated with the current form,
+  including company custom fields and custom relationships."""
 
   company = await _get_company(
     ctx.context.db,
@@ -481,7 +582,8 @@ async def get_company_information(
 async def get_project_information(
   ctx: RunContextWrapper[FormAgentContext],
 ) -> dict[str, Any]:
-  """Get information about the project associated with the current form."""
+  """Get information about the project associated with the current form,
+  including project custom fields and custom relationships."""
 
   if ctx.context.project_id is None:
     return {
@@ -507,7 +609,10 @@ async def get_project_information(
 async def get_project_users(
   ctx: RunContextWrapper[FormAgentContext],
 ) -> list[dict[str, Any]]:
-  """Get the users assigned to the current project, including project guests."""
+  """Get the users assigned to the current project, including project guests.
+
+  Each user includes their custom fields and custom relationships.
+  """
 
   if ctx.context.project_id is None:
     return []
@@ -529,8 +634,6 @@ async def get_custom_object(
   Args:
     custom_object_id: The ID of the custom object to retrieve.
   """
-
-  from uuid import UUID
 
   try:
     object_id = UUID(custom_object_id)
@@ -557,11 +660,15 @@ async def get_custom_object(
 async def get_form_data(
   ctx: RunContextWrapper[FormAgentContext],
 ) -> dict[str, Any]:
-  """Get all available company and project data that may be relevant to filling out the form.
+  """Get all available company and project data that may be relevant to
+  filling out the form.
 
   This includes company information, project information, project users,
   company custom fields, project custom fields, custom objects, and
-  project relationships.
+  custom relationships.
+
+  Every company, project, user, and custom object includes its own custom
+  fields and custom relationships.
 
   Project-specific data is omitted when no project is associated with
   the current form.
@@ -583,8 +690,6 @@ async def get_form_data(
 
   project = None
   users = []
-  project_fields = []
-  relationships = []
 
   if project_id is not None:
     project = await _get_project(
@@ -604,24 +709,6 @@ async def get_form_data(
       project_id,
     )
 
-    project_fields = await _get_project_custom_fields(
-      db,
-      company_id,
-      project_id,
-    )
-
-    relationships = await _get_custom_relationships_for_entity(
-      db,
-      company_id,
-      "project",
-      project_id,
-    )
-
-  company_fields = await _get_company_custom_fields(
-    db,
-    company_id,
-  )
-
   custom_objects = await _get_company_custom_objects(
     db,
     company_id,
@@ -631,10 +718,5 @@ async def get_form_data(
     "company": company,
     "project": project,
     "users": users,
-    "custom_fields": {
-      "company": company_fields,
-      "project": project_fields,
-    },
     "custom_objects": custom_objects,
-    "relationships": relationships,
   }
