@@ -10,6 +10,7 @@ from agents.sandbox import (
   SandboxRunConfig,
 )
 from agents.sandbox.entries import LocalDir
+from agents.extensions.sandbox import VercelSandboxClientOptions
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.forms.prompts import FORM_AGENT_INSTRUCTIONS
@@ -64,8 +65,10 @@ async def run_form_agent(
   )
 
   sandbox = await sandbox_client.create(
-    options={},
     manifest=manifest,
+    options=VercelSandboxClientOptions(
+      allow_s3_credential_exposure=False,
+    ),
   )
 
   try:
