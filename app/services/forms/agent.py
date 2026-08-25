@@ -54,6 +54,7 @@ async def run_form_agent(
   output_dir = output_dir.resolve()
 
   manifest = Manifest(
+    root=str(workspace),
     entries={
       "input": LocalDir(
         src=input_dir,
@@ -72,7 +73,7 @@ async def run_form_agent(
   print(f"Workspace: {workspace}")
   print(f"Local input directory: {input_dir}")
   print(f"Local output directory: {output_dir}")
-  print("Sandbox manifest root: default/unset")
+  print(f"Sandbox manifest root: {workspace}")
   print("Sandbox manifest entries: input=LocalDir, output=Dir")
 
   sandbox = await sandbox_client.create(
