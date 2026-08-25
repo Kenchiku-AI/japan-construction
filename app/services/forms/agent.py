@@ -9,7 +9,7 @@ from agents.sandbox import (
   SandboxAgent,
   SandboxRunConfig,
 )
-from agents.sandbox.entries import LocalDir
+from agents.sandbox.entries import LocalDir, Dir
 from agents.extensions.sandbox import VercelSandboxClientOptions
 from sqlalchemy.ext.asyncio import AsyncSession
 
