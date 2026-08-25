@@ -102,15 +102,21 @@ class FormJobService:
           prompt=prompt,
           sandbox_client=sandbox_client,
           workspace=workspace,
+          output_dir=output_dir,
           db=self.db,
           company_id=job.company_id,
           project_id=job.project_id,
         )
 
-        await self._collect_output_files(
+        output_files = await self._collect_output_files(
           job,
           output_dir,
         )
+
+        if not output_files:
+          raise ValueError(
+            "The form agent did not produce any output files."
+          )
 
         job.result_json = json.dumps(
           {

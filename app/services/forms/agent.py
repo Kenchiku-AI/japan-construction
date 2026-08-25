@@ -41,6 +41,7 @@ async def run_form_agent(
   prompt: str,
   sandbox_client: Any,
   workspace: Path,
+  output_dir: Path,
   db: AsyncSession,
   company_id: UUID,
   project_id: UUID | None,
@@ -62,16 +63,80 @@ async def run_form_agent(
     project_id=project_id,
   )
 
-  result = await Runner.run(
-    agent,
-    prompt,
-    context=context,
-    run_config=RunConfig(
-      sandbox=SandboxRunConfig(
-        client=sandbox_client,
-        manifest=manifest,
-      ),
-    ),
+  sandbox = await sandbox_client.create(
+    manifest=manifest,
   )
 
-  return result
+  try:
+    result = await Runner.run(
+      agent,
+      prompt,
+      context=context,
+      run_config=RunConfig(
+        sandbox=SandboxRunConfig(
+          session=sandbox,
+        ),
+      ),
+    )
+
+    await _collect_sandbox_output_files(
+      sandbox,
+      output_dir,
+    )
+
+    return result
+
+  finally:
+    await sandbox.aclose()
+
+
+async def _collect_sandbox_output_files(
+  sandbox,
+  output_dir: Path,
+) -> None:
+
+  output_dir.mkdir(
+    parents=True,
+    exist_ok=True,
+  )
+
+  async def collect_directory(
+    sandbox_path: Path,
+    local_path: Path,
+  ) -> None:
+
+    entries = await sandbox.ls(
+      sandbox_path,
+    )
+
+    for entry in entries:
+      source_path = sandbox_path / entry.name
+      destination_path = local_path / entry.name
+
+      if entry.type == "directory":
+        destination_path.mkdir(
+          parents=True,
+          exist_ok=True,
+        )
+
+        await collect_directory(
+          source_path,
+          destination_path,
+        )
+
+      elif entry.type == "file":
+        file_obj = await sandbox.read(
+          source_path,
+        )
+
+        with destination_path.open(
+          "wb",
+        ) as destination:
+          destination.write(
+            file_obj.read(),
+          )
+
+  await collect_directory(
+    Path("/workspace/output"),
+    output_dir,
+  )
