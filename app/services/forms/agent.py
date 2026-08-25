@@ -55,9 +55,7 @@ async def run_form_agent(
       "input": LocalDir(
         src=workspace / "input",
       ),
-      "output": LocalDir(
-        src=output_dir,
-      ),
+      "output": Dir(),
     },
   )
 
