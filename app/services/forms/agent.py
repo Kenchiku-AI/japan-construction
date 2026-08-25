@@ -72,17 +72,103 @@ async def run_form_agent(
     ),
   )
 
-  print("SANDBOX CREATED")
-
   try:
-    print("LS DOT")
-    print(await sandbox.ls(Path(".")))
+    print("=== SANDBOX DEBUG START ===")
 
-    print("LS INPUT")
-    print(await sandbox.ls(Path("input")))
+    print("Manifest root:")
+    print(manifest.root)
 
-    print("LS OUTPUT")
-    print(await sandbox.ls(Path("output")))
+    print("Manifest entries:")
+    print(manifest.entries)
+
+    print("Local workspace:")
+    print(workspace)
+
+    print("Local input directory:")
+    print(workspace / "input")
+
+    print("Local input exists:")
+    print((workspace / "input").exists())
+
+    print("Local input files:")
+    for path in (workspace / "input").rglob("*"):
+      print(f"  {path} | file={path.is_file()}")
+
+    print("Local output directory:")
+    print(workspace / "output")
+
+    print("Local output exists:")
+    print((workspace / "output").exists())
+
+    print("=== SANDBOX ROOT ===")
+    try:
+      print(await sandbox.ls(Path("/")))
+    except Exception as exc:
+      print(f"ERROR listing /: {type(exc).__name__}: {exc}")
+
+    print("=== SANDBOX /workspace ===")
+    try:
+      print(await sandbox.ls(Path("/workspace")))
+    except Exception as exc:
+      print(
+        f"ERROR listing /workspace: "
+        f"{type(exc).__name__}: {exc}"
+      )
+
+    print("=== SANDBOX /workspace/input ===")
+    try:
+      print(
+        await sandbox.ls(
+          Path("/workspace/input"),
+        )
+      )
+    except Exception as exc:
+      print(
+        f"ERROR listing /workspace/input: "
+        f"{type(exc).__name__}: {exc}"
+      )
+
+    print("=== SANDBOX /workspace/output ===")
+    try:
+      print(
+        await sandbox.ls(
+          Path("/workspace/output"),
+        )
+      )
+    except Exception as exc:
+      print(
+        f"ERROR listing /workspace/output: "
+        f"{type(exc).__name__}: {exc}"
+      )
+
+    print("=== SANDBOX RELATIVE . ===")
+    try:
+      print(await sandbox.ls(Path(".")))
+    except Exception as exc:
+      print(
+        f"ERROR listing .: "
+        f"{type(exc).__name__}: {exc}"
+      )
+
+    print("=== SANDBOX RELATIVE input ===")
+    try:
+      print(await sandbox.ls(Path("input")))
+    except Exception as exc:
+      print(
+        f"ERROR listing input: "
+        f"{type(exc).__name__}: {exc}"
+      )
+
+    print("=== SANDBOX RELATIVE output ===")
+    try:
+      print(await sandbox.ls(Path("output")))
+    except Exception as exc:
+      print(
+        f"ERROR listing output: "
+        f"{type(exc).__name__}: {exc}"
+      )
+
+    print("=== SANDBOX DEBUG END ===")
 
     result = await Runner.run(
       agent,
@@ -136,8 +222,8 @@ async def _collect_sandbox_output_files(
         )
 
         await collect_directory(
-          source_path,
-          destination_path,
+          Path("/workspace/output"),
+          output_dir,
         )
 
       elif entry.type == "file":
@@ -153,6 +239,6 @@ async def _collect_sandbox_output_files(
           )
 
   await collect_directory(
-    Path("output"),
+    Path("/workspace/output"),
     output_dir,
   )
