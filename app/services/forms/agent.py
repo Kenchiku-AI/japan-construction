@@ -74,7 +74,18 @@ async def run_form_agent(
     ),
   )
 
+  print("SANDBOX CREATED")
+
   try:
+    print("LS DOT")
+    print(await sandbox.ls(Path(".")))
+
+    print("LS INPUT")
+    print(await sandbox.ls(Path("input")))
+
+    print("LS OUTPUT")
+    print(await sandbox.ls(Path("output")))
+
     result = await Runner.run(
       agent,
       prompt,
