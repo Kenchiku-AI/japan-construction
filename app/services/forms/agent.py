@@ -50,7 +50,7 @@ async def run_form_agent(
   agent = build_form_agent()
 
   manifest = Manifest(
-    root="/workspace",
+    root=".",
     entries={
       "input": LocalDir(
         src=workspace / "input",
@@ -69,7 +69,7 @@ async def run_form_agent(
   print(f"Workspace: {workspace}")
   print(f"Local input directory: {workspace / 'input'}")
   print(f"Local output directory: {output_dir}")
-  print("Sandbox manifest root: /workspace")
+  print(f"Sandbox manifest root: .")
   print("Sandbox manifest entries: input=LocalDir, output=Dir")
 
   sandbox = await sandbox_client.create(
@@ -82,6 +82,36 @@ async def run_form_agent(
   print("Sandbox created successfully.")
 
   try:
+    print("Starting sandbox filesystem debug...")
+
+    try:
+      debug_result = await sandbox.exec_command(
+        command=(
+          "pwd && "
+          "echo '--- CURRENT DIRECTORY ---' && "
+          "ls -la . && "
+          "echo '--- INPUT ---' && "
+          "ls -la input 2>&1 || true && "
+          "echo '--- OUTPUT ---' && "
+          "ls -la output 2>&1 || true"
+        )
+      )
+
+      print("SANDBOX DEBUG COMMAND EXIT CODE:")
+      print(debug_result.exit_code)
+
+      print("SANDBOX DEBUG COMMAND STDOUT:")
+      print(debug_result.stdout)
+
+      print("SANDBOX DEBUG COMMAND STDERR:")
+      print(debug_result.stderr)
+
+    except Exception as e:
+      print("=== SANDBOX DEBUG ERROR ===")
+      print(f"Exception type: {type(e).__name__}")
+      print(f"Exception: {e}")
+      print("=== SANDBOX DEBUG ERROR END ===")
+
     print("Starting form agent...")
 
     result = await Runner.run(
@@ -96,11 +126,6 @@ async def run_form_agent(
     )
 
     print("Form agent completed successfully.")
-    print(f"Agent result type: {type(result).__name__}")
-
-    print("Collecting sandbox output files...")
-    print("Sandbox output path: output")
-    print(f"Local output destination: {output_dir}")
 
     await _collect_sandbox_output_files(
       sandbox,
@@ -108,21 +133,14 @@ async def run_form_agent(
     )
 
     print("Sandbox output files collected successfully.")
-    print("=== FORM SANDBOX DEBUG END ===")
 
     return result
-
-  except Exception as e:
-    print("=== FORM SANDBOX DEBUG ERROR ===")
-    print(f"Exception type: {type(e).__name__}")
-    print(f"Exception: {str(e)}")
-    print("=== FORM SANDBOX DEBUG ERROR END ===")
-    raise
 
   finally:
     print("Closing sandbox...")
     await sandbox.aclose()
     print("Sandbox closed.")
+    print("=== FORM SANDBOX DEBUG END ===")
 
 
 async def _collect_sandbox_output_files(
@@ -140,26 +158,13 @@ async def _collect_sandbox_output_files(
     local_path: Path,
   ) -> None:
 
-    print(
-      f"Listing sandbox directory: {sandbox_path} -> local directory: {local_path}"
-    )
-
     entries = await sandbox.ls(
       sandbox_path,
-    )
-
-    print(
-      f"Found {len(entries)} entries in sandbox directory: {sandbox_path}"
     )
 
     for entry in entries:
       source_path = sandbox_path / entry.name
       destination_path = local_path / entry.name
-
-      print(
-        f"Sandbox entry: name={entry.name}, type={entry.type}, "
-        f"source={source_path}, destination={destination_path}"
-      )
 
       if entry.type == "directory":
         destination_path.mkdir(
@@ -173,8 +178,6 @@ async def _collect_sandbox_output_files(
         )
 
       elif entry.type == "file":
-        print(f"Reading sandbox file: {source_path}")
-
         file_obj = await sandbox.read(
           source_path,
         )
@@ -185,8 +188,6 @@ async def _collect_sandbox_output_files(
           destination.write(
             file_obj.read(),
           )
-
-        print(f"Copied sandbox file to: {destination_path}")
 
   await collect_directory(
     Path("output"),
