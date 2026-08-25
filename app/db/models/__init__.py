@@ -38,3 +38,4 @@ from app.db.models.image import (
   ImageTagLink,
 )
 from app.db.models.project_user_link import ProjectUserLink
+from app.db.models.form_job import FormJob, FormJobStatus, FormJobOrigin
