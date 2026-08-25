@@ -64,6 +64,7 @@ async def run_form_agent(
   )
 
   sandbox = await sandbox_client.create(
+    options={},
     manifest=manifest,
   )
 
