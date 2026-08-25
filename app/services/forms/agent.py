@@ -9,7 +9,7 @@ from agents.sandbox import (
   SandboxAgent,
   SandboxRunConfig,
 )
-from agents.sandbox.entries import LocalDir
+from agents.sandbox.entries import Dir, LocalDir
 from agents.extensions.sandbox import VercelSandboxClientOptions
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,9 +52,10 @@ async def run_form_agent(
   manifest = Manifest(
     root="/workspace",
     entries={
-      ".": LocalDir(
-        src=workspace,
+      "input": LocalDir(
+        src=workspace / "input",
       ),
+      "output": Dir(),
     },
   )
 
