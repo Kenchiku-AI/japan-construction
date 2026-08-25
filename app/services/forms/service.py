@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from sqlalchemy import select, update
+from sqlalchemy.orm import selectinload
 
 from app.db.models.form_job import (
   FormJob,
@@ -25,6 +26,7 @@ class FormJobService:
   ):
     self.db = db
     self.storage = storage
+
 
   async def process(
     self,
@@ -68,6 +70,9 @@ class FormJobService:
     try:
       job = await self.db.scalar(
         select(FormJob)
+        .options(
+          selectinload(FormJob.files),
+        )
         .where(FormJob.id == form_job_id)
       )
 
@@ -134,6 +139,9 @@ class FormJobService:
 
       job = await self.db.scalar(
         select(FormJob)
+        .options(
+          selectinload(FormJob.files),
+        )
         .where(FormJob.id == form_job_id)
       )
 
@@ -144,6 +152,7 @@ class FormJobService:
         await self.db.commit()
 
       raise
+
 
   async def _collect_output_files(
     self,
