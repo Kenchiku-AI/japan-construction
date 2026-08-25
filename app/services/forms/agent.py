@@ -76,97 +76,52 @@ async def run_form_agent(
     print("=== SANDBOX DEBUG START ===")
 
     print("Manifest root:")
-    print(manifest.root)
+    print(sandbox.manifest.root)
 
     print("Manifest entries:")
-    print(manifest.entries)
+    print(sandbox.manifest.entries)
 
     print("Local workspace:")
-    print(workspace)
+    print(sandbox.local_workspace)
 
     print("Local input directory:")
-    print(workspace / "input")
-
-    print("Local input exists:")
-    print((workspace / "input").exists())
+    print(sandbox.local_workspace / "input")
 
     print("Local input files:")
-    for path in (workspace / "input").rglob("*"):
+    for path in (sandbox.local_workspace / "input").iterdir():
       print(f"  {path} | file={path.is_file()}")
 
     print("Local output directory:")
-    print(workspace / "output")
+    print(sandbox.local_workspace / "output")
 
-    print("Local output exists:")
-    print((workspace / "output").exists())
+    print("=== SANDBOX RELATIVE PATH TESTS ===")
 
-    print("=== SANDBOX ROOT ===")
-    try:
-      print(await sandbox.ls(Path("/")))
-    except Exception as exc:
-      print(f"ERROR listing /: {type(exc).__name__}: {exc}")
+    for path in [
+      Path("."),
+      Path("input"),
+      Path("input/kyouryokukai_meibo.xls"),
+      Path("output"),
+    ]:
+      try:
+        print(f"TEST {path}:")
+        result = await sandbox.ls(path)
+        print(result)
+      except Exception as e:
+        print(f"ERROR {path}: {type(e).__name__}: {e}")
 
-    print("=== SANDBOX /workspace ===")
-    try:
-      print(await sandbox.ls(Path("/workspace")))
-    except Exception as exc:
-      print(
-        f"ERROR listing /workspace: "
-        f"{type(exc).__name__}: {exc}"
-      )
+    print("=== SANDBOX NORMALIZE TESTS ===")
 
-    print("=== SANDBOX /workspace/input ===")
-    try:
-      print(
-        await sandbox.ls(
-          Path("/workspace/input"),
-        )
-      )
-    except Exception as exc:
-      print(
-        f"ERROR listing /workspace/input: "
-        f"{type(exc).__name__}: {exc}"
-      )
-
-    print("=== SANDBOX /workspace/output ===")
-    try:
-      print(
-        await sandbox.ls(
-          Path("/workspace/output"),
-        )
-      )
-    except Exception as exc:
-      print(
-        f"ERROR listing /workspace/output: "
-        f"{type(exc).__name__}: {exc}"
-      )
-
-    print("=== SANDBOX RELATIVE . ===")
-    try:
-      print(await sandbox.ls(Path(".")))
-    except Exception as exc:
-      print(
-        f"ERROR listing .: "
-        f"{type(exc).__name__}: {exc}"
-      )
-
-    print("=== SANDBOX RELATIVE input ===")
-    try:
-      print(await sandbox.ls(Path("input")))
-    except Exception as exc:
-      print(
-        f"ERROR listing input: "
-        f"{type(exc).__name__}: {exc}"
-      )
-
-    print("=== SANDBOX RELATIVE output ===")
-    try:
-      print(await sandbox.ls(Path("output")))
-    except Exception as exc:
-      print(
-        f"ERROR listing output: "
-        f"{type(exc).__name__}: {exc}"
-      )
+    for path in [
+      Path("."),
+      Path("input"),
+      Path("input/kyouryokukai_meibo.xls"),
+      Path("output"),
+    ]:
+      try:
+        result = sandbox.normalize_path(path)
+        print(f"NORMALIZE {path} -> {result}")
+      except Exception as e:
+        print(f"NORMALIZE ERROR {path}: {type(e).__name__}: {e}")
 
     print("=== SANDBOX DEBUG END ===")
 
