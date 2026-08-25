@@ -141,6 +141,6 @@ async def _collect_sandbox_output_files(
           )
 
   await collect_directory(
-    Path("/workspace/output"),
+    Path("output"),
     output_dir,
   )
