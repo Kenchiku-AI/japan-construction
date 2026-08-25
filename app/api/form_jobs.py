@@ -7,7 +7,6 @@ from fastapi import (
   HTTPException,
   status,
 )
-from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +29,7 @@ from app.schemas.form_job import (
   FormJobCreate,
   FormJobCreateResponse,
   FormJobResponse,
+  FormJobDownloadResponse,
 )
 from app.services.forms.storage import FormStorage
 from app.services.s3 import BUCKET_NAME
@@ -82,12 +82,6 @@ async def create_form_job(
     raise HTTPException(
       status_code=status.HTTP_400_BAD_REQUEST,
       detail="A filename is required",
-    )
-
-  if payload.content_type != "application/pdf":
-    raise HTTPException(
-      status_code=status.HTTP_400_BAD_REQUEST,
-      detail="Only PDF files are supported",
     )
 
   safe_filename = Path(payload.filename).name
@@ -207,6 +201,7 @@ async def get_form_job(
 
 @router.get(
   "/{form_job_id}/download",
+  response_model=FormJobDownloadResponse,
 )
 async def download_form_job(
   form_job_id: UUID,
@@ -239,28 +234,45 @@ async def download_form_job(
     )
 
   result = await db.execute(
-    select(FormJobFile).where(
+    select(FormJobFile)
+    .where(
       FormJobFile.form_job_id == form_job.id,
       FormJobFile.is_input.is_(False),
+    )
+    .order_by(
+      FormJobFile.filename,
     ),
   )
 
-  output_file = result.scalar_one_or_none()
+  output_files = result.scalars().all()
 
-  if output_file is None:
+  if not output_files:
     raise HTTPException(
       status_code=status.HTTP_404_NOT_FOUND,
-      detail="Completed form file not found",
+      detail="No completed form files found",
     )
 
   storage = FormStorage(
     bucket_name=BUCKET_NAME,
   )
 
-  download_url = storage.create_download_url(
-    s3_key=output_file.s3_key,
-  )
+  files = []
 
-  return RedirectResponse(
-    url=download_url,
+  for output_file in output_files:
+    download_url = storage.create_download_url(
+      s3_key=output_file.s3_key,
+    )
+
+    files.append(
+      {
+        "id": str(output_file.id),
+        "filename": output_file.filename,
+        "content_type": output_file.content_type,
+        "download_url": download_url,
+      }
+    )
+
+  return FormJobDownloadResponse(
+    form_job_id=str(form_job.id),
+    files=files,
   )

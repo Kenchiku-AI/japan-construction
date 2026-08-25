@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-QUEUE_URL = settings.FORM_SQS_QUEUE_URL
+QUEUE_URL = settings.SQS_FORM_QUEUE_URL
 
 sqs = boto3.client(
   "sqs",

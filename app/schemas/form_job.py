@@ -55,3 +55,14 @@ class FormJobResponse(BaseModel):
   model_config = {
     "from_attributes": True,
   }
+
+class FormJobDownloadFile(BaseModel):
+  id: UUID
+  filename: str
+  content_type: str | None = None
+  download_url: str
+
+
+class FormJobDownloadResponse(BaseModel):
+  form_job_id: UUID
+  files: list[FormJobDownloadFile]
