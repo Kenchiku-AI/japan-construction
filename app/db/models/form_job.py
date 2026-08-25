@@ -55,7 +55,12 @@ class FormJob(Base):
     index=True,
   )
 
-  instructions = Column(
+  name = Column(
+    String,
+    nullable=False,
+  )
+
+  description = Column(
     Text,
     nullable=True,
   )

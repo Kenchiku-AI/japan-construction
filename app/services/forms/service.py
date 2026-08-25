@@ -1,8 +1,10 @@
 import json
 import tempfile
+import mimetypes
+import logging
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.db.models.form_job import (
   FormJob,
@@ -13,6 +15,7 @@ from app.services.forms.agent import run_form_agent
 from app.services.forms.sandbox import get_form_sandbox_client
 from app.services.forms.storage import FormStorage
 
+logger = logging.getLogger(__name__)
 
 class FormJobService:
   def __init__(
@@ -28,29 +31,51 @@ class FormJobService:
     form_job_id,
   ) -> None:
 
-    job = await self.db.scalar(
-      select(FormJob)
-      .where(FormJob.id == form_job_id)
+    result = await self.db.execute(
+      update(FormJob)
+      .where(
+        FormJob.id == form_job_id,
+        FormJob.status == FormJobStatus.pending,
+      )
+      .values(
+        status=FormJobStatus.processing,
+      )
     )
 
-    if job is None:
-      raise ValueError(
-        f"Form job {form_job_id} not found"
+    if result.rowcount != 1:
+      job = await self.db.scalar(
+        select(FormJob)
+        .where(FormJob.id == form_job_id)
       )
 
-    if job.status != FormJobStatus.pending:
+      if job is None:
+        raise ValueError(
+          f"Form job {form_job_id} not found"
+        )
+
       logger.info(
         "Skipping form job %s with status %s",
         form_job_id,
         job.status,
       )
-      return
 
-    job.status = FormJobStatus.processing
+      await self.db.rollback()
+
+      return
 
     await self.db.commit()
 
     try:
+      job = await self.db.scalar(
+        select(FormJob)
+        .where(FormJob.id == form_job_id)
+      )
+
+      if job is None:
+        raise ValueError(
+          f"Form job {form_job_id} not found"
+        )
+
       with tempfile.TemporaryDirectory() as temp_dir:
 
         workspace = Path(temp_dir)
@@ -77,12 +102,21 @@ class FormJobService:
           prompt=prompt,
           sandbox_client=sandbox_client,
           workspace=workspace,
+          output_dir=output_dir,
+          db=self.db,
+          company_id=job.company_id,
+          project_id=job.project_id,
         )
 
-        await self._collect_output_files(
+        output_files = await self._collect_output_files(
           job,
           output_dir,
         )
+
+        if not output_files:
+          raise ValueError(
+            "The form agent did not produce any output files."
+          )
 
         job.result_json = json.dumps(
           {
@@ -96,10 +130,18 @@ class FormJobService:
         await self.db.commit()
 
     except Exception as exc:
-      job.status = FormJobStatus.failed
-      job.error = str(exc)
+      await self.db.rollback()
 
-      await self.db.commit()
+      job = await self.db.scalar(
+        select(FormJob)
+        .where(FormJob.id == form_job_id)
+      )
+
+      if job is not None:
+        job.status = FormJobStatus.failed
+        job.error = str(exc)
+
+        await self.db.commit()
 
       raise
 
@@ -125,10 +167,9 @@ class FormJobService:
         f"{relative_path}"
       )
 
-      content_type = None
-
-      if relative_path.suffix.lower() == ".pdf":
-        content_type = "application/pdf"
+      content_type, _ = mimetypes.guess_type(
+        local_path.name,
+      )
 
       self.storage.upload_file(
         local_path=local_path,
@@ -193,27 +234,20 @@ class FormJobService:
     return f"""
 Complete the form files provided in the workspace.
 
-Company ID:
-{job.company_id}
+Form name:
+{job.name}
 
-Project ID:
-{job.project_id or "Not specified"}
-
-User instructions:
-{job.instructions or "No additional instructions."}
+Form description:
+{job.description or "No description provided."}
 
 Input files:
 {file_list}
 
-Read the input files from:
+Use the Kenchiku tools to retrieve information as necessary.
 
-/workspace/input/
-
-Save all completed files to:
+Save all completed documents to:
 
 /workspace/output/
-
-Use the Kenchiku tools to retrieve information as necessary.
 
 Do not invent missing information.
 """

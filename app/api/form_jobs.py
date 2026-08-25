@@ -7,7 +7,6 @@ from fastapi import (
   HTTPException,
   status,
 )
-from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +25,12 @@ from app.db.models.form_job import (
 )
 from app.db.models.project import Project
 from app.db.models.user import User
-from app.schemas.form_job import FormJobResponse, FormJobCreateResponse
+from app.schemas.form_job import (
+  FormJobCreate,
+  FormJobCreateResponse,
+  FormJobResponse,
+  FormJobDownloadResponse,
+)
 from app.services.forms.storage import FormStorage
 from app.services.s3 import BUCKET_NAME
 
@@ -43,24 +47,20 @@ router = APIRouter(
   status_code=status.HTTP_201_CREATED,
 )
 async def create_form_job(
-  company_id: UUID = Form(...),
-  filename: str = Form(...),
-  content_type: str = Form(...),
-  instructions: str | None = Form(None),
-  project_id: UUID | None = Form(None),
+  payload: FormJobCreate,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
   require_company_manager(
     current_user,
-    company_id,
+    payload.company_id,
   )
 
-  if project_id is not None:
+  if payload.project_id is not None:
     result = await db.execute(
       select(Project).where(
-        Project.id == project_id,
-        Project.company_id == company_id,
+        Project.id == payload.project_id,
+        Project.company_id == payload.company_id,
       ),
     )
 
@@ -72,24 +72,25 @@ async def create_form_job(
         detail="Project not found",
       )
 
-  if not filename:
+  if not payload.name.strip():
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="A form name is required",
+    )
+
+  if not payload.filename:
     raise HTTPException(
       status_code=status.HTTP_400_BAD_REQUEST,
       detail="A filename is required",
     )
 
-  if content_type != "application/pdf":
-    raise HTTPException(
-      status_code=status.HTTP_400_BAD_REQUEST,
-      detail="Only PDF files are supported",
-    )
-
-  safe_filename = Path(filename).name
+  safe_filename = Path(payload.filename).name
 
   form_job = FormJob(
-    company_id=company_id,
-    project_id=project_id,
-    instructions=instructions,
+    company_id=payload.company_id,
+    project_id=payload.project_id,
+    name=payload.name.strip(),
+    description=payload.description,
     status=FormJobStatus.pending,
     origin=FormJobOrigin.web,
   )
@@ -109,13 +110,13 @@ async def create_form_job(
 
   upload_url = storage.create_upload_url(
     s3_key=s3_key,
-    content_type=content_type,
+    content_type=payload.content_type,
   )
 
   form_file = FormJobFile(
     form_job_id=form_job.id,
     filename=safe_filename,
-    content_type=content_type,
+    content_type=payload.content_type,
     s3_key=s3_key,
     is_input=True,
   )
@@ -128,6 +129,7 @@ async def create_form_job(
 
   return FormJobCreateResponse(
     id=form_job.id,
+    name=form_job.name,
     status=form_job.status,
     upload_url=upload_url,
     filename=safe_filename,
@@ -199,6 +201,7 @@ async def get_form_job(
 
 @router.get(
   "/{form_job_id}/download",
+  response_model=FormJobDownloadResponse,
 )
 async def download_form_job(
   form_job_id: UUID,
@@ -231,28 +234,45 @@ async def download_form_job(
     )
 
   result = await db.execute(
-    select(FormJobFile).where(
+    select(FormJobFile)
+    .where(
       FormJobFile.form_job_id == form_job.id,
       FormJobFile.is_input.is_(False),
+    )
+    .order_by(
+      FormJobFile.filename,
     ),
   )
 
-  output_file = result.scalar_one_or_none()
+  output_files = result.scalars().all()
 
-  if output_file is None:
+  if not output_files:
     raise HTTPException(
       status_code=status.HTTP_404_NOT_FOUND,
-      detail="Completed form file not found",
+      detail="No completed form files found",
     )
 
   storage = FormStorage(
     bucket_name=BUCKET_NAME,
   )
 
-  download_url = storage.create_download_url(
-    s3_key=output_file.s3_key,
-  )
+  files = []
 
-  return RedirectResponse(
-    url=download_url,
+  for output_file in output_files:
+    download_url = storage.create_download_url(
+      s3_key=output_file.s3_key,
+    )
+
+    files.append(
+      {
+        "id": str(output_file.id),
+        "filename": output_file.filename,
+        "content_type": output_file.content_type,
+        "download_url": download_url,
+      }
+    )
+
+  return FormJobDownloadResponse(
+    form_job_id=str(form_job.id),
+    files=files,
   )
