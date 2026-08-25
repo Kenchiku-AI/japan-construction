@@ -49,11 +49,15 @@ async def run_form_agent(
 ):
   agent = build_form_agent()
 
+  workspace = workspace.resolve()
+  input_dir = (workspace / "input").resolve()
+  output_dir = output_dir.resolve()
+
   manifest = Manifest(
-    root=".",
+    root=str(workspace),
     entries={
       "input": LocalDir(
-        src=workspace / "input",
+        src=input_dir,
       ),
       "output": Dir(),
     },
@@ -67,9 +71,9 @@ async def run_form_agent(
 
   print("=== FORM SANDBOX DEBUG START ===")
   print(f"Workspace: {workspace}")
-  print(f"Local input directory: {workspace / 'input'}")
+  print(f"Local input directory: {input_dir}")
   print(f"Local output directory: {output_dir}")
-  print(f"Sandbox manifest root: .")
+  print(f"Sandbox manifest root: {workspace}")
   print("Sandbox manifest entries: input=LocalDir, output=Dir")
 
   sandbox = await sandbox_client.create(
@@ -80,40 +84,9 @@ async def run_form_agent(
   )
 
   print("Sandbox created successfully.")
+  print("Starting form agent...")
 
   try:
-    print("Starting sandbox filesystem debug...")
-
-    try:
-      debug_result = await sandbox.exec_command(
-        command=(
-          "pwd && "
-          "echo '--- CURRENT DIRECTORY ---' && "
-          "ls -la . && "
-          "echo '--- INPUT ---' && "
-          "ls -la input 2>&1 || true && "
-          "echo '--- OUTPUT ---' && "
-          "ls -la output 2>&1 || true"
-        )
-      )
-
-      print("SANDBOX DEBUG COMMAND EXIT CODE:")
-      print(debug_result.exit_code)
-
-      print("SANDBOX DEBUG COMMAND STDOUT:")
-      print(debug_result.stdout)
-
-      print("SANDBOX DEBUG COMMAND STDERR:")
-      print(debug_result.stderr)
-
-    except Exception as e:
-      print("=== SANDBOX DEBUG ERROR ===")
-      print(f"Exception type: {type(e).__name__}")
-      print(f"Exception: {e}")
-      print("=== SANDBOX DEBUG ERROR END ===")
-
-    print("Starting form agent...")
-
     result = await Runner.run(
       agent,
       prompt,
