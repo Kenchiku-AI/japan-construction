@@ -120,6 +120,39 @@ async def _collect_sandbox_output_files(
   sandbox,
   output_dir: Path,
 ) -> None:
+  print("=== SANDBOX OUTPUT DEBUG START ===")
+
+  for path in [
+    Path("/workspace"),
+    Path("/workspace/input"),
+    Path("/workspace/output"),
+    Path("/vercel/sandbox"),
+    Path("/vercel/sandbox/workspace"),
+    Path("/vercel/sandbox/workspace/input"),
+    Path("/vercel/sandbox/workspace/output"),
+    Path("/vercel/sandbox/output"),
+  ]:
+    print(f"--- {path} ---")
+
+    try:
+      entries = await sandbox.ls(
+        path,
+      )
+
+      if not entries:
+        print("  [empty]")
+
+      for entry in entries:
+        print(
+          f"  {entry.type}: {entry.name}",
+        )
+
+    except Exception as e:
+      print(
+        f"  ERROR: {e}",
+      )
+
+  print("=== SANDBOX OUTPUT DEBUG END ===")
 
   output_dir.mkdir(
     parents=True,
