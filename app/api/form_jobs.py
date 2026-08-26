@@ -276,3 +276,53 @@ async def download_form_job(
     form_job_id=str(form_job.id),
     files=files,
   )
+
+@router.delete(
+  "/{form_job_id}",
+  status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_form_job(
+  form_job_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  result = await db.execute(
+    select(FormJob)
+    .options(
+      selectinload(FormJob.files),
+    )
+    .where(
+      FormJob.id == form_job_id,
+    ),
+  )
+
+  form_job = result.scalar_one_or_none()
+
+  if form_job is None:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Form job not found",
+    )
+
+  require_company_manager(
+    current_user,
+    form_job.company_id,
+  )
+
+  storage = FormStorage(
+    bucket_name=BUCKET_NAME,
+  )
+
+  # Delete all input files for this job.
+  storage.delete_prefix(
+    f"form-job-inputs/{form_job.id}/",
+  )
+
+  # Delete all output files for this job.
+  storage.delete_prefix(
+    f"form-jobs/{form_job.id}/output/",
+  )
+
+  await db.delete(form_job)
+
+  await db.commit()

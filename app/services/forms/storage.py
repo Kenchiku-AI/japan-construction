@@ -106,3 +106,27 @@ class FormStorage:
       Bucket=self.bucket_name,
       Key=s3_key,
     )
+
+  def delete_prefix(
+    self,
+    prefix: str,
+  ) -> None:
+    response = self.s3.list_objects_v2(
+      Bucket=self.bucket_name,
+      Prefix=prefix,
+    )
+
+    objects = response.get("Contents", [])
+
+    if not objects:
+      return
+
+    self.s3.delete_objects(
+      Bucket=self.bucket_name,
+      Delete={
+        "Objects": [
+          {"Key": obj["Key"]}
+          for obj in objects
+        ],
+      },
+  )
