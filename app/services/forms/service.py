@@ -236,7 +236,7 @@ class FormJobService:
   ) -> str:
 
     file_list = "\n".join(
-      f"- /workspace/input/{path.name}"
+      f"- input/{path.name}"
       for path in input_files
     )
 
@@ -256,7 +256,7 @@ Use the Kenchiku tools to retrieve information as necessary.
 
 Save all completed documents to:
 
-/workspace/output/
+output/
 
 Do not invent missing information.
 """
