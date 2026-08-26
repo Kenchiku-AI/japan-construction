@@ -1,12 +1,14 @@
 from pathlib import Path
 from typing import Any
 from uuid import UUID
+import importlib.metadata
 
 from agents import Runner
 from agents.run import RunConfig
 from agents.sandbox import (
   Manifest,
   SandboxAgent,
+  SandboxPathGrant,
   SandboxRunConfig,
 )
 from agents.sandbox.entries import LocalDir, Dir
@@ -47,12 +49,12 @@ async def run_form_agent(
   company_id: UUID,
   project_id: UUID | None,
 ):
-  import importlib.metadata
-
-  print("=== PACKAGE VERSION DEBUG START ===")
+  print("=== FORM SANDBOX DEBUG START ===")
 
   try:
-    agents_version = importlib.metadata.version("openai-agents")
+    agents_version = importlib.metadata.version(
+      "openai-agents",
+    )
     print(
       f"OpenAI Agents SDK version: {agents_version}",
     )
@@ -63,7 +65,9 @@ async def run_form_agent(
     )
 
   try:
-    vercel_version = importlib.metadata.version("vercel")
+    vercel_version = importlib.metadata.version(
+      "vercel",
+    )
     print(
       f"Vercel Python package version: {vercel_version}",
     )
@@ -73,19 +77,25 @@ async def run_form_agent(
       f"{type(e).__name__}: {e}",
     )
 
-  print("=== PACKAGE VERSION DEBUG END ===")
-
   agent = build_form_agent()
 
   workspace = workspace.resolve()
   input_dir = (workspace / "input").resolve()
   output_dir = output_dir.resolve()
 
-  print("=== SANDBOX DEBUG START ===")
-
+  print("--- HOST PATHS ---")
   print(f"Host workspace: {workspace}")
   print(f"Host input directory: {input_dir}")
   print(f"Host output directory: {output_dir}")
+  print(
+    f"Host workspace exists: {workspace.exists()}",
+  )
+  print(
+    f"Host input exists: {input_dir.exists()}",
+  )
+  print(
+    f"Host output exists: {output_dir.exists()}",
+  )
 
   print("--- HOST INPUT FILES ---")
 
@@ -113,6 +123,12 @@ async def run_form_agent(
 
   manifest = Manifest(
     root="/workspace",
+    extra_path_grants=(
+      SandboxPathGrant(
+        path=str(input_dir),
+        read_only=True,
+      ),
+    ),
     entries={
       "input": LocalDir(
         src=input_dir,
@@ -122,12 +138,27 @@ async def run_form_agent(
   )
 
   print("--- MANIFEST ---")
-  print(f"  root: {manifest.root}")
-  print(f"  entries: {manifest.entries}")
+  print(
+    f"  root: {manifest.root}",
+  )
+  print(
+    f"  entries: {manifest.entries}",
+  )
+  print(
+    f"  extra_path_grants: {manifest.extra_path_grants}",
+  )
+
+  for grant in manifest.extra_path_grants:
+    print(
+      f"  path grant: "
+      f"path={grant.path}, "
+      f"read_only={grant.read_only}, "
+      f"host_path={grant.host_path}",
+    )
 
   for name, entry in manifest.entries.items():
     print(
-      f"  {name}: "
+      f"  entry {name}: "
       f"type={type(entry).__name__}, "
       f"value={entry}",
     )
@@ -140,17 +171,26 @@ async def run_form_agent(
 
   print("--- CREATING SANDBOX ---")
 
-  sandbox = await sandbox_client.create(
-    manifest=manifest,
-    options=VercelSandboxClientOptions(
-      allow_s3_credential_exposure=False,
-    ),
-  )
+  try:
+    sandbox = await sandbox_client.create(
+      manifest=manifest,
+      options=VercelSandboxClientOptions(
+        allow_s3_credential_exposure=False,
+      ),
+    )
+  except Exception as e:
+    print(
+      f"ERROR creating sandbox: "
+      f"{type(e).__name__}: {e}",
+    )
+    raise
 
   print("Sandbox created successfully.")
-  print(f"Sandbox type: {type(sandbox)}")
+  print(
+    f"Sandbox type: {type(sandbox)}",
+  )
 
-  print("--- SANDBOX RELATIVE PATHS ---")
+  print("--- SANDBOX RELATIVE PATHS AFTER CREATE ---")
 
   diagnostic_paths = [
     Path("."),
@@ -162,7 +202,9 @@ async def run_form_agent(
   ]
 
   for path in diagnostic_paths:
-    print(f"--- LS {path} ---")
+    print(
+      f"--- LS {path} ---",
+    )
 
     try:
       entries = await sandbox.ls(path)
@@ -184,27 +226,11 @@ async def run_form_agent(
         f"  ERROR: {type(e).__name__}: {e}",
       )
 
-  print("--- SANDBOX SHELL WORKING DIRECTORY ---")
-
-  try:
-    result = await sandbox.run(
-      "pwd",
-    )
-
-    print(
-      result.stdout
-      if hasattr(result, "stdout")
-      else result,
-    )
-
-  except Exception as e:
-    print(
-      f"  ERROR: {type(e).__name__}: {e}",
-    )
-
   print("=== SANDBOX CREATE DEBUG END ===")
 
   try:
+    print("--- STARTING FORM AGENT ---")
+
     result = await Runner.run(
       agent,
       prompt,
@@ -216,8 +242,9 @@ async def run_form_agent(
       ),
     )
 
-    print("=== AGENT RESULT DEBUG START ===")
+    print("Form agent runner completed.")
 
+    print("--- AGENT RESULT ---")
     print(
       f"Result type: {type(result)}",
     )
@@ -232,8 +259,6 @@ async def run_form_agent(
         f"{type(e).__name__}: {e}",
       )
 
-    print("=== AGENT RESULT DEBUG END ===")
-
     print("--- POST-AGENT SANDBOX PATHS ---")
 
     post_agent_paths = [
@@ -246,7 +271,9 @@ async def run_form_agent(
     ]
 
     for path in post_agent_paths:
-      print(f"--- POST-AGENT LS {path} ---")
+      print(
+        f"--- POST-AGENT LS {path} ---",
+      )
 
       try:
         entries = await sandbox.ls(path)
@@ -268,19 +295,31 @@ async def run_form_agent(
           f"  ERROR: {type(e).__name__}: {e}",
         )
 
+    print("--- COLLECTING OUTPUT FILES ---")
+
     await _collect_sandbox_output_files(
       sandbox,
       output_dir,
     )
 
-    print("Sandbox output files collected successfully.")
+    print(
+      "Sandbox output files collected successfully.",
+    )
 
     return result
 
   finally:
     print("Closing sandbox...")
-    await sandbox.aclose()
-    print("Sandbox closed.")
+
+    try:
+      await sandbox.aclose()
+      print("Sandbox closed.")
+    except Exception as e:
+      print(
+        f"ERROR closing sandbox: "
+        f"{type(e).__name__}: {e}",
+      )
+
     print("=== FORM SANDBOX DEBUG END ===")
 
 
@@ -303,6 +342,11 @@ async def _collect_sandbox_output_files(
 
     entries = await sandbox.ls(
       sandbox_path,
+    )
+
+    print(
+      f"Found {len(entries)} entries in "
+      f"{sandbox_path}",
     )
 
     for entry in entries:
@@ -329,11 +373,17 @@ async def _collect_sandbox_output_files(
           source_path,
         )
 
+        file_contents = file_obj.read()
+
+        print(
+          f"  file size: {len(file_contents)} bytes",
+        )
+
         with destination_path.open(
           "wb",
         ) as destination:
           destination.write(
-            file_obj.read(),
+            file_contents,
           )
 
   try:
@@ -344,8 +394,11 @@ async def _collect_sandbox_output_files(
 
   except Exception as e:
     print(
-      f"ERROR collecting sandbox output: {e}",
+      f"ERROR collecting sandbox output: "
+      f"{type(e).__name__}: {e}",
     )
     raise
 
-  print("Sandbox output files collected successfully.")
+  print(
+    "Sandbox output files collected successfully.",
+  )
