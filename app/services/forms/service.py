@@ -123,73 +123,48 @@ class FormJobService:
             "The form agent did not produce any output files."
           )
 
-        final_output = result.final_output
-
-        logger.info(
-          "Form agent final output for job %s: %s",
-          form_job_id,
-          final_output,
-        )
-
-        agent_report = None
-
+        # The agent is instructed to return a JSON object containing
+        # summary, completed, missing_data, recommendations, etc.
+        #
+        # Store that object directly while preserving the existing
+        # "output" key for compatibility.
         try:
-          agent_report = json.loads(
-            final_output,
+          agent_output = json.loads(
+            result.final_output,
           )
 
-          if not isinstance(agent_report, dict):
+          if not isinstance(agent_output, dict):
             raise ValueError(
-              "Agent final output JSON is not an object."
+              "Agent final output is not a JSON object."
             )
 
-        except Exception as exc:
+        except (json.JSONDecodeError, ValueError):
           logger.warning(
-            "Could not parse form agent final output as JSON "
-            "for job %s: %s",
+            "Form agent returned non-JSON output for job %s",
             form_job_id,
-            exc,
           )
 
-          agent_report = {
-            "summary": final_output,
+          agent_output = {
+            "summary": result.final_output,
             "completed": True,
-            "files": [
-              f"output/{output_file.filename}"
-              for output_file in output_files
-            ],
             "missing_data": [],
             "recommendations": [],
           }
 
         job.result_json = json.dumps(
           {
-            "output": final_output,
-            "summary": agent_report.get(
-              "summary",
-              "",
-            ),
-            "completed": agent_report.get(
-              "completed",
-              True,
-            ),
-            "files": agent_report.get(
-              "files",
-              [
-                f"output/{output_file.filename}"
-                for output_file in output_files
-              ],
-            ),
-            "missing_data": agent_report.get(
-              "missing_data",
-              [],
-            ),
-            "recommendations": agent_report.get(
-              "recommendations",
-              [],
-            ),
+            "output": agent_output,
           },
           ensure_ascii=False,
+        )
+
+        logger.info(
+          "Form agent final output for job %s: %s",
+          form_job_id,
+          json.dumps(
+            agent_output,
+            ensure_ascii=False,
+          ),
         )
 
         job.status = FormJobStatus.completed
@@ -214,7 +189,6 @@ class FormJobService:
         await self.db.commit()
 
       raise
-
 
   async def _collect_output_files(
     self,
