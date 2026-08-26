@@ -93,11 +93,26 @@ async def run_form_agent(
     },
   )
 
-  print("--- SANDBOX MANIFEST ---")
-  print("  root: /workspace")
-  print("  input: LocalDir")
-  print(f"  input source: {input_dir}")
-  print("  output: Dir")
+  print("--- MANIFEST OBJECT DEBUG ---")
+
+  print(
+    f"manifest: {manifest}",
+  )
+
+  print(
+    f"manifest.root: {manifest.root}",
+  )
+
+  print(
+    f"manifest.entries: {manifest.entries}",
+  )
+
+  for name, entry in manifest.entries.items():
+    print(
+      f"manifest entry {name}: "
+      f"type={type(entry).__name__}, "
+      f"value={entry}",
+    )
 
   print("--- CREATING SANDBOX ---")
 
@@ -114,7 +129,99 @@ async def run_form_agent(
     ),
   )
 
+  print("--- SANDBOX OBJECT DEBUG ---")
+
+  print(
+    f"sandbox type: {type(sandbox)}",
+  )
+
+  print(
+    f"sandbox repr: {sandbox!r}",
+  )
+
+  try:
+    print(
+      f"sandbox attributes: {sorted(dir(sandbox))}",
+    )
+  except Exception as e:
+    print(
+      f"Could not inspect sandbox attributes: {e}",
+    )
+
   print("Sandbox created successfully.")
+
+  print("=== SANDBOX FILESYSTEM DIAGNOSTIC START ===")
+
+  diagnostic_paths = [
+    Path("."),
+    Path("/"),
+    Path("/workspace"),
+    Path("/vercel"),
+    Path("/vercel/sandbox"),
+    Path("/vercel/sandbox/workspace"),
+    Path("/tmp"),
+  ]
+
+  for path in diagnostic_paths:
+    print(f"--- SANDBOX LS: {path} ---")
+
+    try:
+      entries = await sandbox.ls(path)
+
+      print(
+        f"  SUCCESS: {len(entries)} entries",
+      )
+
+      if not entries:
+        print("  [empty]")
+
+      for entry in entries:
+        print(
+          f"  {entry.type}: {entry.name}",
+        )
+
+    except Exception as e:
+      print(
+        f"  ERROR: {type(e).__name__}: {e}",
+      )
+
+  print("=== SANDBOX FILESYSTEM DIAGNOSTIC END ===")
+
+  print("=== SANDBOX ENVIRONMENT DIAGNOSTIC START ===")
+
+  try:
+    result = await sandbox.run(
+      "pwd",
+    )
+
+    print("--- pwd ---")
+    print(
+      result.stdout if hasattr(result, "stdout") else result,
+    )
+
+  except Exception as e:
+    print(
+      f"pwd ERROR: {type(e).__name__}: {e}",
+    )
+
+  try:
+    result = await sandbox.run(
+      "sh",
+      "-c",
+      "echo SHELL_PWD=$PWD && id && whoami",
+    )
+
+    print("--- identity ---")
+    print(
+      result.stdout if hasattr(result, "stdout") else result,
+    )
+
+  except Exception as e:
+    print(
+      f"identity ERROR: {type(e).__name__}: {e}",
+    )
+
+  print("=== SANDBOX ENVIRONMENT DIAGNOSTIC END ===")
 
   print("--- SANDBOX INPUT DIRECTORY ---")
 
@@ -141,6 +248,10 @@ async def run_form_agent(
   print("Starting form agent...")
 
   try:
+    print("=== BEFORE AGENT RUN ===")
+    print(f"Agent prompt:\n{prompt}")
+    print("=== END AGENT PROMPT ===")
+
     result = await Runner.run(
       agent,
       prompt,
@@ -152,7 +263,67 @@ async def run_form_agent(
       ),
     )
 
+    print("=== AGENT RESULT DEBUG START ===")
+
+    print(
+      f"Result type: {type(result)}",
+    )
+
+    print(
+      f"Result repr: {result!r}",
+    )
+
+    try:
+      print(
+        f"Final output:\n{result.final_output}",
+      )
+    except Exception as e:
+      print(
+        f"Could not read final_output: {type(e).__name__}: {e}",
+      )
+
+    print("=== AGENT RESULT DEBUG END ===")
+
     print("Form agent completed successfully.")
+
+    print("=== POST-AGENT FILESYSTEM SNAPSHOT START ===")
+
+    post_agent_paths = [
+      Path("."),
+      Path("/"),
+      Path("/workspace"),
+      Path("/workspace/input"),
+      Path("/workspace/output"),
+      Path("/vercel"),
+      Path("/vercel/sandbox"),
+      Path("/vercel/sandbox/input"),
+      Path("/vercel/sandbox/output"),
+    ]
+
+    for path in post_agent_paths:
+      print(f"--- POST-AGENT LS: {path} ---")
+
+      try:
+        entries = await sandbox.ls(path)
+
+        print(
+          f"  SUCCESS: {len(entries)} entries",
+        )
+
+        if not entries:
+          print("  [empty]")
+
+        for entry in entries:
+          print(
+            f"  {entry.type}: {entry.name}",
+          )
+
+      except Exception as e:
+        print(
+          f"  ERROR: {type(e).__name__}: {e}",
+        )
+
+    print("=== POST-AGENT FILESYSTEM SNAPSHOT END ===")
 
     await _collect_sandbox_output_files(
       sandbox,
