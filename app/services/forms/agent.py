@@ -53,6 +53,36 @@ async def run_form_agent(
   input_dir = (workspace / "input").resolve()
   output_dir = output_dir.resolve()
 
+  print("=== SANDBOX CREATE DEBUG START ===")
+
+  print(f"Host workspace: {workspace}")
+  print(f"Host input directory: {input_dir}")
+  print(f"Host output directory: {output_dir}")
+
+  print("--- HOST INPUT FILES ---")
+
+  if input_dir.exists():
+    host_input_entries = list(input_dir.iterdir())
+
+    if not host_input_entries:
+      print("  [empty]")
+
+    for entry in host_input_entries:
+      if entry.is_file():
+        print(
+          f"  file: {entry.name} "
+          f"({entry.stat().st_size} bytes)",
+        )
+      elif entry.is_dir():
+        print(
+          f"  directory: {entry.name}",
+        )
+  else:
+    print(
+      f"  ERROR: host input directory does not exist: "
+      f"{input_dir}",
+    )
+
   manifest = Manifest(
     root="/workspace",
     entries={
@@ -63,18 +93,19 @@ async def run_form_agent(
     },
   )
 
+  print("--- SANDBOX MANIFEST ---")
+  print("  root: /workspace")
+  print("  input: LocalDir")
+  print(f"  input source: {input_dir}")
+  print("  output: Dir")
+
+  print("--- CREATING SANDBOX ---")
+
   context = FormAgentContext(
     db=db,
     company_id=company_id,
     project_id=project_id,
   )
-
-  print("=== FORM SANDBOX DEBUG START ===")
-  print(f"Workspace: {workspace}")
-  print(f"Local input directory: {input_dir}")
-  print(f"Local output directory: {output_dir}")
-  print("Sandbox manifest root: /workspace")
-  print("Sandbox manifest entries: input=LocalDir, output=Dir")
 
   sandbox = await sandbox_client.create(
     manifest=manifest,
@@ -84,6 +115,29 @@ async def run_form_agent(
   )
 
   print("Sandbox created successfully.")
+
+  print("--- SANDBOX INPUT DIRECTORY ---")
+
+  try:
+    sandbox_input_entries = await sandbox.ls(
+      Path("input"),
+    )
+
+    if not sandbox_input_entries:
+      print("  [empty]")
+
+    for entry in sandbox_input_entries:
+      print(
+        f"  {entry.type}: {entry.name}",
+      )
+
+  except Exception as e:
+    print(
+      f"  ERROR: {e}",
+    )
+
+  print("=== SANDBOX CREATE DEBUG END ===")
+
   print("Starting form agent...")
 
   try:
