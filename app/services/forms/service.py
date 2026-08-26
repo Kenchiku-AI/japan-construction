@@ -113,6 +113,24 @@ class FormJobService:
           project_id=job.project_id,
         )
 
+        # The job may have been deleted while the agent was running.
+        # Re-check the database before collecting/uploading any output.
+        job_exists = await self.db.scalar(
+          select(FormJob.id)
+          .where(
+            FormJob.id == form_job_id,
+          )
+        )
+
+        if job_exists is None:
+          logger.info(
+            "Form job %s was deleted while the agent was running. "
+            "Discarding agent output.",
+            form_job_id,
+          )
+
+          return
+
         output_files = await self._collect_output_files(
           job,
           output_dir,
@@ -166,6 +184,22 @@ class FormJobService:
             ensure_ascii=False,
           ),
         )
+
+        job_exists = await self.db.scalar(
+          select(FormJob.id)
+          .where(
+            FormJob.id == form_job_id,
+          )
+        )
+
+        if job_exists is None:
+          logger.info(
+            "Form job %s was deleted before completion. "
+            "Discarding result.",
+            form_job_id,
+          )
+
+          return
 
         job.status = FormJobStatus.completed
 
