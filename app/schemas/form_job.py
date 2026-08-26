@@ -48,6 +48,7 @@ class FormJobResponse(BaseModel):
   status: FormJobStatus
   origin: FormJobOrigin
   error: str | None
+  result_json: str | None
   files: list[FormJobFileResponse]
   created_at: datetime
   updated_at: datetime
