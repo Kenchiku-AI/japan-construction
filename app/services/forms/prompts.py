@@ -478,8 +478,6 @@ Your final response MUST be valid JSON.
 
 Do not wrap the JSON in Markdown code fences.
 
-Do not include any text before or after the JSON.
-
 Use exactly this structure:
 
 {
