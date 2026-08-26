@@ -140,16 +140,6 @@ async def run_form_agent(
   print("--- CREATING VERCEL SANDBOX ---")
 
   try:
-    # IMPORTANT:
-    #
-    # We intentionally do NOT pass the Manifest here.
-    #
-    # The previous deployment successfully created the Vercel sandbox,
-    # but none of the Manifest entries appeared inside the sandbox.
-    #
-    # For this diagnostic deployment we are bypassing Manifest
-    # materialization completely and will explicitly upload the files
-    # through the sandbox filesystem API below.
     sandbox = await sandbox_client.create(
       options=VercelSandboxClientOptions(
         allow_s3_credential_exposure=False,
@@ -168,33 +158,7 @@ async def run_form_agent(
   )
 
   try:
-    print("--- INITIAL SANDBOX DIAGNOSTICS ---")
-
-    print("--- LS . ---")
-
-    try:
-      entries = await sandbox.ls(Path("."))
-
-      print(
-        f"  SUCCESS: {len(entries)} entries",
-      )
-
-      for entry in entries:
-        print(
-          f"  {entry.type}: {entry.name}",
-        )
-
-    except Exception as e:
-      print(
-        f"  ERROR: {type(e).__name__}: {e}",
-      )
-
-    print("--- SANDBOX WORKSPACE FILESYSTEM TEST ---")
-
-    print(
-      "Creating input/ and output/ explicitly "
-      "inside the sandbox...",
-    )
+    print("--- SANDBOX FILESYSTEM SETUP ---")
 
     mkdir_result = await sandbox.exec(
       "mkdir",
@@ -209,13 +173,13 @@ async def run_form_agent(
 
     if mkdir_result.stdout:
       print(
-        f"mkdir stdout: "
+        "mkdir stdout: "
         f"{mkdir_result.stdout.decode(errors='replace')}",
       )
 
     if mkdir_result.stderr:
       print(
-        f"mkdir stderr: "
+        "mkdir stderr: "
         f"{mkdir_result.stderr.decode(errors='replace')}",
       )
 
@@ -258,8 +222,6 @@ async def run_form_agent(
         f"  Upload completed: {sandbox_path}",
       )
 
-      # Immediately read the file back from the sandbox.
-      # This is the most important diagnostic step.
       print(
         f"  Verifying uploaded file: {sandbox_path}",
       )
@@ -293,37 +255,7 @@ async def run_form_agent(
         f"  VERIFIED: {sandbox_path}",
       )
 
-    print("--- SANDBOX INPUT DIRECTORY AFTER UPLOAD ---")
-
-    entries = await sandbox.ls(
-      Path("input"),
-    )
-
-    print(
-      f"input/ contains {len(entries)} entries",
-    )
-
-    for entry in entries:
-      print(
-        f"  {entry.type}: {entry.name}",
-      )
-
-    print("--- SANDBOX OUTPUT DIRECTORY AFTER CREATE ---")
-
-    entries = await sandbox.ls(
-      Path("output"),
-    )
-
-    print(
-      f"output/ contains {len(entries)} entries",
-    )
-
-    for entry in entries:
-      print(
-        f"  {entry.type}: {entry.name}",
-      )
-
-    print("--- SANDBOX FILESYSTEM COMMAND TEST ---")
+    print("--- SANDBOX FILESYSTEM VERIFICATION ---")
 
     pwd_result = await sandbox.exec(
       "pwd",
@@ -333,21 +265,61 @@ async def run_form_agent(
       f"pwd exit code: {pwd_result.exit_code}",
     )
     print(
-      f"pwd stdout: "
+      "pwd stdout:\n"
       f"{pwd_result.stdout.decode(errors='replace')}",
     )
     print(
-      f"pwd stderr: "
+      "pwd stderr:\n"
       f"{pwd_result.stderr.decode(errors='replace')}",
     )
+
+    print("--- SANDBOX INPUT LIST ---")
+
+    input_ls = await sandbox.exec(
+      "ls",
+      "-lah",
+      "input",
+    )
+
+    print(
+      f"input ls exit code: {input_ls.exit_code}",
+    )
+    print(
+      "input ls stdout:\n"
+      f"{input_ls.stdout.decode(errors='replace')}",
+    )
+    print(
+      "input ls stderr:\n"
+      f"{input_ls.stderr.decode(errors='replace')}",
+    )
+
+    print("--- SANDBOX OUTPUT LIST ---")
+
+    output_ls = await sandbox.exec(
+      "ls",
+      "-lah",
+      "output",
+    )
+
+    print(
+      f"output ls exit code: {output_ls.exit_code}",
+    )
+    print(
+      "output ls stdout:\n"
+      f"{output_ls.stdout.decode(errors='replace')}",
+    )
+    print(
+      "output ls stderr:\n"
+      f"{output_ls.stderr.decode(errors='replace')}",
+    )
+
+    print("--- SANDBOX FIND ---")
 
     find_result = await sandbox.exec(
       "find",
       ".",
       "-maxdepth",
       "3",
-      "-type",
-      "f",
       "-print",
     )
 
@@ -363,7 +335,9 @@ async def run_form_agent(
       f"{find_result.stderr.decode(errors='replace')}",
     )
 
-    print("=== SANDBOX FILE MATERIALIZATION DEBUG COMPLETE ===")
+    print(
+      "=== SANDBOX FILE MATERIALIZATION VERIFIED ===",
+    )
 
     print("--- STARTING FORM AGENT ---")
 
@@ -395,38 +369,55 @@ async def run_form_agent(
         f"{type(e).__name__}: {e}",
       )
 
-    print("--- POST-AGENT SANDBOX PATHS ---")
+    print("--- POST-AGENT FILESYSTEM ---")
 
-    post_agent_paths = [
-      Path("."),
-      Path("input"),
-      Path("output"),
-    ]
+    post_find_result = await sandbox.exec(
+      "find",
+      ".",
+      "-maxdepth",
+      "5",
+      "-type",
+      "f",
+      "-print",
+    )
 
-    for path in post_agent_paths:
-      print(
-        f"--- POST-AGENT LS {path} ---",
-      )
+    print(
+      f"post-agent find exit code: "
+      f"{post_find_result.exit_code}",
+    )
 
-      try:
-        entries = await sandbox.ls(path)
+    print(
+      "post-agent files:\n"
+      f"{post_find_result.stdout.decode(errors='replace')}",
+    )
 
-        print(
-          f"  SUCCESS: {len(entries)} entries",
-        )
+    print(
+      "post-agent find stderr:\n"
+      f"{post_find_result.stderr.decode(errors='replace')}",
+    )
 
-        if not entries:
-          print("  [empty]")
+    print("--- POST-AGENT OUTPUT DIRECTORY ---")
 
-        for entry in entries:
-          print(
-            f"  {entry.type}: {entry.name}",
-          )
+    post_output_ls = await sandbox.exec(
+      "ls",
+      "-lah",
+      "output",
+    )
 
-      except Exception as e:
-        print(
-          f"  ERROR: {type(e).__name__}: {e}",
-        )
+    print(
+      f"post-agent output ls exit code: "
+      f"{post_output_ls.exit_code}",
+    )
+
+    print(
+      "post-agent output ls stdout:\n"
+      f"{post_output_ls.stdout.decode(errors='replace')}",
+    )
+
+    print(
+      "post-agent output ls stderr:\n"
+      f"{post_output_ls.stderr.decode(errors='replace')}",
+    )
 
     print("--- COLLECTING OUTPUT FILES ---")
 
@@ -469,7 +460,7 @@ async def run_form_agent(
       )
 
     print("=== FORM SANDBOX DEBUG END ===")
-
+    
 
 async def _collect_sandbox_output_files(
   sandbox,
@@ -484,110 +475,116 @@ async def _collect_sandbox_output_files(
   print(
     f"Local output directory: {output_dir}",
   )
-  print(
-    f"Local output directory exists: "
-    f"{output_dir.exists()}",
+
+  print("--- FINDING SANDBOX OUTPUT FILES ---")
+
+  find_result = await sandbox.exec(
+    "find",
+    "output",
+    "-type",
+    "f",
+    "-print",
   )
 
-  async def collect_directory(
-    sandbox_path: Path,
-    local_path: Path,
-  ) -> None:
-    print(
-      f"Collecting sandbox directory: {sandbox_path}",
+  print(
+    f"find exit code: {find_result.exit_code}",
+  )
+
+  stdout = find_result.stdout.decode(
+    errors="replace",
+  )
+
+  stderr = find_result.stderr.decode(
+    errors="replace",
+  )
+
+  print(
+    f"find stdout:\n{stdout}",
+  )
+
+  print(
+    f"find stderr:\n{stderr}",
+  )
+
+  if find_result.exit_code != 0:
+    raise RuntimeError(
+      "Failed to enumerate sandbox output files: "
+      f"{stderr}"
     )
 
+  sandbox_files = [
+    line.strip()
+    for line in stdout.splitlines()
+    if line.strip()
+  ]
+
+  if not sandbox_files:
+    print(
+      "WARNING: Sandbox output directory contains "
+      "no files.",
+    )
+
+    return
+
+  print(
+    f"Found {len(sandbox_files)} sandbox output files.",
+  )
+
+  for sandbox_file_string in sandbox_files:
+    sandbox_path = Path(
+      sandbox_file_string,
+    )
+
+    print(
+      f"Collecting sandbox file: {sandbox_path}",
+    )
+
+    # Safety check: only collect files underneath output/.
     try:
-      entries = await sandbox.ls(
-        sandbox_path,
+      relative_path = sandbox_path.relative_to(
+        Path("output"),
       )
-    except Exception as e:
-      print(
-        f"ERROR listing sandbox directory "
-        f"{sandbox_path}: "
-        f"{type(e).__name__}: {e}",
+    except ValueError:
+      raise RuntimeError(
+        f"Sandbox returned a file outside output/: "
+        f"{sandbox_path}"
       )
-      raise
+
+    destination_path = (
+      output_dir / relative_path
+    )
+
+    destination_path.parent.mkdir(
+      parents=True,
+      exist_ok=True,
+    )
 
     print(
-      f"Found {len(entries)} entries in "
-      f"{sandbox_path}",
+      f"  Destination: {destination_path}",
     )
 
-    if not entries:
-      print(
-        f"  {sandbox_path} is empty.",
-      )
-
-    for entry in entries:
-      source_path = sandbox_path / entry.name
-      destination_path = local_path / entry.name
-
-      print(
-        f"  Entry: "
-        f"type={entry.type}, "
-        f"name={entry.name}, "
-        f"source={source_path}, "
-        f"destination={destination_path}",
-      )
-
-      if entry.type == "directory":
-        destination_path.mkdir(
-          parents=True,
-          exist_ok=True,
-        )
-
-        await collect_directory(
-          source_path,
-          destination_path,
-        )
-
-      elif entry.type == "file":
-        print(
-          f"  Reading sandbox file: {source_path}",
-        )
-
-        file_obj = await sandbox.read(
-          source_path,
-        )
-
-        file_contents = file_obj.read()
-
-        print(
-          f"  Read {len(file_contents)} bytes "
-          f"from {source_path}",
-        )
-
-        destination_path.parent.mkdir(
-          parents=True,
-          exist_ok=True,
-        )
-
-        with destination_path.open(
-          "wb",
-        ) as destination:
-          destination.write(
-            file_contents,
-          )
-
-        print(
-          f"  Wrote local file: "
-          f"{destination_path} "
-          f"({destination_path.stat().st_size} bytes)",
-        )
-
-  try:
-    await collect_directory(
-      Path("output"),
-      output_dir,
+    file_obj = await sandbox.read(
+      sandbox_path,
     )
 
-  except Exception as e:
+    file_contents = file_obj.read()
+
     print(
-      f"ERROR collecting sandbox output: "
-      f"{type(e).__name__}: {e}",
+      f"  Read {len(file_contents)} bytes "
+      f"from sandbox.",
     )
-    raise
+
+    with destination_path.open(
+      "wb",
+    ) as destination:
+      destination.write(
+        file_contents,
+      )
+
+    print(
+      f"  Wrote {destination_path} "
+      f"({destination_path.stat().st_size} bytes)",
+    )
 
   print(
     "--- COLLECT SANDBOX OUTPUT DEBUG COMPLETE ---",
