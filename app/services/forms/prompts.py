@@ -15,15 +15,15 @@ static text. Only populate the fields that need values.
 
 All input files are located under:
 
-/workspace/input/
+input/
 
 All completed files must be written under:
 
-/workspace/output/
+output/
 
 Never write completed files anywhere else.
 
-Never modify files under /workspace/input/.
+Never modify files under input/.
 
 You must carefully inspect every input document before modifying it.
 
