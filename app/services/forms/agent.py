@@ -39,174 +39,87 @@ def build_form_agent() -> SandboxAgent:
 
 
 async def run_form_agent(
-  prompt: str,
-  sandbox_client: Any,
-  workspace: Path,
+  form_job: FormJob,
+  input_dir: Path,
   output_dir: Path,
-  db: AsyncSession,
-  company_id: UUID,
-  project_id: UUID | None,
-):
-  agent = build_form_agent()
+) -> dict:
+  print("=== FORM SANDBOX DEBUG START ===")
 
-  workspace = workspace.resolve()
-  input_dir = (workspace / "input").resolve()
-  output_dir = output_dir.resolve()
+  workspace = input_dir.parent
 
-  print("=== SANDBOX CREATE DEBUG START ===")
+  print(
+    f"Host workspace: {workspace}",
+  )
+  print(
+    f"Host input directory: {input_dir}",
+  )
+  print(
+    f"Host output directory: {output_dir}",
+  )
 
-  print(f"Host workspace: {workspace}")
-  print(f"Host input directory: {input_dir}")
-  print(f"Host output directory: {output_dir}")
+  print("--- HOST WORKSPACE FILES ---")
+
+  for path in workspace.rglob("*"):
+    if path.is_file():
+      try:
+        size = path.stat().st_size
+      except Exception:
+        size = "unknown"
+
+      print(
+        f"  file: {path.relative_to(workspace)} "
+        f"({size} bytes)",
+      )
 
   print("--- HOST INPUT FILES ---")
 
-  if input_dir.exists():
-    host_input_entries = list(input_dir.iterdir())
+  input_files = [
+    path
+    for path in input_dir.rglob("*")
+    if path.is_file()
+  ]
 
-    if not host_input_entries:
-      print("  [empty]")
+  if not input_files:
+    print("  [empty]")
 
-    for entry in host_input_entries:
-      if entry.is_file():
-        print(
-          f"  file: {entry.name} "
-          f"({entry.stat().st_size} bytes)",
-        )
-      elif entry.is_dir():
-        print(
-          f"  directory: {entry.name}",
-        )
-  else:
+  for path in input_files:
     print(
-      f"  ERROR: host input directory does not exist: "
-      f"{input_dir}",
+      f"  file: {path.relative_to(input_dir)} "
+      f"({path.stat().st_size} bytes)",
     )
-
-  manifest = Manifest(
-    root="/workspace",
-    entries={
-      "input": LocalDir(
-        src=input_dir,
-      ),
-      "output": Dir(),
-    },
-  )
 
   print("--- SANDBOX MANIFEST ---")
   print("  root: /workspace")
   print("  input: LocalDir")
-  print(f"  input source: {input_dir}")
+  print(
+    f"  input source: {input_dir}",
+  )
   print("  output: Dir")
 
-  print("--- CREATING SANDBOX ---")
-
-  context = FormAgentContext(
-    db=db,
-    company_id=company_id,
-    project_id=project_id,
-  )
-
-  sandbox = await sandbox_client.create(
-    manifest=manifest,
-    options=VercelSandboxClientOptions(
-      allow_s3_credential_exposure=False,
-    ),
-  )
-
-  print("Sandbox created successfully.")
-
-  print("--- SANDBOX INPUT DIRECTORY ---")
+  sandbox = None
 
   try:
-    sandbox_input_entries = await sandbox.ls(
-      Path("input"),
-    )
+    print("--- CREATING SANDBOX ---")
 
-    if not sandbox_input_entries:
-      print("  [empty]")
-
-    for entry in sandbox_input_entries:
-      print(
-        f"  {entry.type}: {entry.name}",
-      )
-
-  except Exception as e:
-    print(
-      f"  ERROR: {e}",
-    )
-
-  print("=== SANDBOX CREATE DEBUG END ===")
-
-  print("Starting form agent...")
-
-  try:
-    result = await Runner.run(
-      agent,
-      prompt,
-      context=context,
-      run_config=RunConfig(
-        sandbox=SandboxRunConfig(
-          session=sandbox,
+    sandbox = await sandbox_client.create(
+      config=SandboxConfig(
+        root=Path("/workspace"),
+        input=LocalDir(
+          source=input_dir,
         ),
+        output=Dir(),
       ),
     )
 
-    print("Form agent completed successfully.")
-
-    await _collect_sandbox_output_files(
-      sandbox,
-      output_dir,
-    )
-
-    print("Sandbox output files collected successfully.")
-
-    return result
-
-  finally:
-    print("Closing sandbox...")
-    await sandbox.aclose()
-    print("Sandbox closed.")
-    print("=== FORM SANDBOX DEBUG END ===")
-
-
-async def _collect_sandbox_output_files(
-  sandbox,
-  output_dir: Path,
-) -> None:
-  print("=== SANDBOX OUTPUT DEBUG START ===")
-
-  print("--- Sandbox workspace root ---")
-
-  try:
-    entries = await sandbox.ls(
-      Path("."),
-    )
-
-    if not entries:
-      print("  [empty]")
-
-    for entry in entries:
-      print(
-        f"  {entry.type}: {entry.name}",
-      )
-
-  except Exception as e:
     print(
-      f"  ERROR: {e}",
+      "Sandbox created successfully.",
     )
 
-  print("--- Sandbox manifest paths ---")
-
-  for path in [
-    Path("input"),
-    Path("output"),
-  ]:
-    print(f"--- {path} ---")
+    print("--- SANDBOX WORKSPACE ROOT ---")
 
     try:
       entries = await sandbox.ls(
-        path,
+        Path("/workspace"),
       )
 
       if not entries:
@@ -222,7 +135,176 @@ async def _collect_sandbox_output_files(
         f"  ERROR: {e}",
       )
 
-  print("=== SANDBOX OUTPUT DEBUG END ===")
+    print("--- SANDBOX INPUT DIRECTORY ---")
+
+    sandbox_input_path = Path(
+      "/workspace/input",
+    )
+
+    try:
+      entries = await sandbox.ls(
+        sandbox_input_path,
+      )
+
+      if not entries:
+        print("  [empty]")
+
+      for entry in entries:
+        print(
+          f"  {entry.type}: {entry.name}",
+        )
+
+    except Exception as e:
+      print(
+        f"  ERROR: {e}",
+      )
+
+    print("--- SANDBOX OUTPUT DIRECTORY BEFORE AGENT ---")
+
+    sandbox_output_path = Path(
+      "/workspace/output",
+    )
+
+    try:
+      entries = await sandbox.ls(
+        sandbox_output_path,
+      )
+
+      if not entries:
+        print("  [empty]")
+
+      for entry in entries:
+        print(
+          f"  {entry.type}: {entry.name}",
+        )
+
+    except Exception as e:
+      print(
+        f"  ERROR: {e}",
+      )
+
+    print(
+      "=== SANDBOX CREATE DEBUG END ===",
+    )
+
+    print("Starting form agent...")
+
+    result = await Runner.run(
+      form_agent,
+      input=(
+        "Process the provided form file. "
+        "The input files are available in the "
+        "/workspace/input directory. "
+        "Place all completed/generated files in "
+        "the /workspace/output directory."
+      ),
+      context={
+        "form_job": form_job,
+      },
+      sandbox=sandbox,
+    )
+
+    print(
+      "Form agent completed successfully.",
+    )
+
+    print("=== SANDBOX POST-AGENT DEBUG START ===")
+
+    print("--- SANDBOX WORKSPACE ROOT ---")
+
+    try:
+      entries = await sandbox.ls(
+        Path("/workspace"),
+      )
+
+      if not entries:
+        print("  [empty]")
+
+      for entry in entries:
+        print(
+          f"  {entry.type}: {entry.name}",
+        )
+
+    except Exception as e:
+      print(
+        f"  ERROR: {e}",
+      )
+
+    print("--- SANDBOX INPUT DIRECTORY ---")
+
+    try:
+      entries = await sandbox.ls(
+        Path("/workspace/input"),
+      )
+
+      if not entries:
+        print("  [empty]")
+
+      for entry in entries:
+        print(
+          f"  {entry.type}: {entry.name}",
+        )
+
+    except Exception as e:
+      print(
+        f"  ERROR: {e}",
+      )
+
+    print("--- SANDBOX OUTPUT DIRECTORY ---")
+
+    try:
+      entries = await sandbox.ls(
+        Path("/workspace/output"),
+      )
+
+      if not entries:
+        print("  [empty]")
+
+      for entry in entries:
+        print(
+          f"  {entry.type}: {entry.name}",
+        )
+
+    except Exception as e:
+      print(
+        f"  ERROR: {e}",
+      )
+
+    print(
+      "=== SANDBOX POST-AGENT DEBUG END ===",
+    )
+
+    await _collect_sandbox_output_files(
+      sandbox,
+      output_dir,
+    )
+
+    return {
+      "result": result,
+    }
+
+  finally:
+    if sandbox is not None:
+      print("Closing sandbox...")
+
+      try:
+        await sandbox.close()
+        print("Sandbox closed.")
+      except Exception as e:
+        print(
+          f"Error closing sandbox: {e}",
+        )
+
+    print(
+      "=== FORM SANDBOX DEBUG END ===",
+    )
+
+
+async def _collect_sandbox_output_files(
+  sandbox,
+  output_dir: Path,
+) -> None:
+  print("=== SANDBOX OUTPUT COLLECTION START ===")
 
   output_dir.mkdir(
     parents=True,
@@ -237,13 +319,30 @@ async def _collect_sandbox_output_files(
       f"Collecting sandbox directory: {sandbox_path}",
     )
 
-    entries = await sandbox.ls(
-      sandbox_path,
-    )
+    try:
+      entries = await sandbox.ls(
+        sandbox_path,
+      )
+    except Exception as e:
+      print(
+        f"ERROR listing sandbox directory "
+        f"{sandbox_path}: {e}",
+      )
+      return
+
+    if not entries:
+      print(
+        f"  [empty]: {sandbox_path}",
+      )
+      return
 
     for entry in entries:
       source_path = sandbox_path / entry.name
       destination_path = local_path / entry.name
+
+      print(
+        f"  {entry.type}: {source_path}",
+      )
 
       if entry.type == "directory":
         destination_path.mkdir(
@@ -257,31 +356,58 @@ async def _collect_sandbox_output_files(
         )
 
       elif entry.type == "file":
-        print(
-          f"Collecting file: {source_path}",
-        )
-
-        file_obj = await sandbox.read(
-          source_path,
-        )
-
-        with destination_path.open(
-          "wb",
-        ) as destination:
-          destination.write(
-            file_obj.read(),
+        try:
+          file_obj = await sandbox.read(
+            source_path,
           )
 
+          with destination_path.open(
+            "wb",
+          ) as destination:
+            destination.write(
+              file_obj.read(),
+            )
+
+          print(
+            f"    -> copied to {destination_path}",
+          )
+
+        except Exception as e:
+          print(
+            f"    ERROR reading {source_path}: {e}",
+          )
+
+  # The sandbox manifest says the sandbox root is /workspace.
+  # Do NOT use Path("output"), because the SDK resolves that
+  # relative path to /vercel/sandbox/output.
+  sandbox_output_path = Path(
+    "/workspace/output",
+  )
+
   try:
-    await collect_directory(
-      Path("output"),
-      output_dir,
+    entries = await sandbox.ls(
+      sandbox_output_path,
     )
+
+    if not entries:
+      print(
+        "Sandbox output directory exists but is empty.",
+      )
+    else:
+      print(
+        f"Sandbox output directory contains "
+        f"{len(entries)} entries.",
+      )
+
+      await collect_directory(
+        sandbox_output_path,
+        output_dir,
+      )
 
   except Exception as e:
     print(
-      f"ERROR collecting sandbox output: {e}",
+      f"Sandbox output directory does not exist "
+      f"or could not be accessed: {e}",
     )
-    raise
 
-  print("Sandbox output files collected successfully.")
+  print("=== SANDBOX OUTPUT COLLECTION END ===")
