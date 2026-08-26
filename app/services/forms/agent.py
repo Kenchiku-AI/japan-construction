@@ -99,6 +99,12 @@ async def run_form_agent(
     )
 
     print("Form agent completed successfully.")
+
+    await _collect_sandbox_output_files(
+      sandbox,
+      output_dir,
+    )
+
     print("Sandbox output files collected successfully.")
 
     return result
