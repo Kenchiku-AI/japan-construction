@@ -7,13 +7,12 @@ from uuid import UUID
 from agents import Runner
 from agents.run import RunConfig
 from agents.sandbox import (
-  Manifest,
   SandboxAgent,
-  SandboxPathGrant,
   SandboxRunConfig,
 )
-from agents.sandbox.entries import LocalDir, Dir
-from agents.extensions.sandbox import VercelSandboxClientOptions
+from agents.extensions.sandbox import (
+  VercelSandboxClientOptions,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.forms.prompts import FORM_AGENT_INSTRUCTIONS
@@ -41,6 +40,101 @@ def build_form_agent() -> SandboxAgent:
   )
 
 
+def _debug_agent_result(result: Any) -> None:
+  print("--- AGENT RESULT DEBUG ---")
+
+  print(
+    f"Result type: {type(result)}",
+  )
+
+  try:
+    print(
+      f"Final output:\n{result.final_output}",
+    )
+  except Exception as e:
+    print(
+      "Could not read final_output: "
+      f"{type(e).__name__}: {e}",
+    )
+
+  try:
+    new_items = result.new_items
+
+    print(
+      f"Result new_items count: "
+      f"{len(new_items)}",
+    )
+
+    for index, item in enumerate(new_items):
+      print(
+        f"--- RESULT ITEM {index} ---",
+      )
+      print(
+        f"Item type: {type(item)}",
+      )
+
+      try:
+        print(
+          f"Item repr: {repr(item)}",
+        )
+      except Exception as e:
+        print(
+          "Could not repr item: "
+          f"{type(e).__name__}: {e}",
+        )
+
+  except Exception as e:
+    print(
+      "Could not inspect result.new_items: "
+      f"{type(e).__name__}: {e}",
+    )
+
+  print("--- AGENT RESULT DEBUG END ---")
+
+
+async def _debug_sandbox_files(
+  sandbox: Any,
+  label: str,
+  max_depth: str = "5",
+) -> None:
+  print(
+    f"--- SANDBOX FILESYSTEM DEBUG: {label} ---",
+  )
+
+  try:
+    find_result = await sandbox.exec(
+      "find",
+      ".",
+      "-maxdepth",
+      max_depth,
+      "-print",
+    )
+
+    print(
+      f"find exit code: {find_result.exit_code}",
+    )
+
+    print(
+      "find stdout:\n"
+      f"{find_result.stdout.decode(errors='replace')}",
+    )
+
+    print(
+      "find stderr:\n"
+      f"{find_result.stderr.decode(errors='replace')}",
+    )
+
+  except Exception as e:
+    print(
+      "Could not inspect sandbox filesystem: "
+      f"{type(e).__name__}: {e}",
+    )
+
+  print(
+    f"--- SANDBOX FILESYSTEM DEBUG END: {label} ---",
+  )
+
+
 async def run_form_agent(
   prompt: str,
   sandbox_client: Any,
@@ -61,7 +155,7 @@ async def run_form_agent(
     )
   except Exception as e:
     print(
-      f"Could not determine OpenAI Agents SDK version: "
+      "Could not determine OpenAI Agents SDK version: "
       f"{type(e).__name__}: {e}",
     )
 
@@ -74,7 +168,7 @@ async def run_form_agent(
     )
   except Exception as e:
     print(
-      f"Could not determine Vercel Python package version: "
+      "Could not determine Vercel Python package version: "
       f"{type(e).__name__}: {e}",
     )
 
@@ -122,7 +216,7 @@ async def run_form_agent(
         )
   else:
     print(
-      f"  ERROR: host input directory does not exist: "
+      "  ERROR: host input directory does not exist: "
       f"{input_dir}",
     )
 
@@ -147,7 +241,7 @@ async def run_form_agent(
     )
   except Exception as e:
     print(
-      f"ERROR creating sandbox: "
+      "ERROR creating sandbox: "
       f"{type(e).__name__}: {e}",
     )
     raise
@@ -186,8 +280,8 @@ async def run_form_agent(
     if mkdir_result.exit_code != 0:
       raise RuntimeError(
         "Failed to create input/output directories "
-        f"inside sandbox. Exit code: "
-        f"{mkdir_result.exit_code}"
+        "inside sandbox. "
+        f"Exit code: {mkdir_result.exit_code}"
       )
 
     print(
@@ -233,12 +327,13 @@ async def run_form_agent(
       uploaded_bytes = uploaded_file.read()
 
       print(
-        f"  Sandbox file size: {len(uploaded_bytes)} bytes",
+        f"  Sandbox file size: "
+        f"{len(uploaded_bytes)} bytes",
       )
 
       if len(uploaded_bytes) != len(file_bytes):
         raise RuntimeError(
-          f"Sandbox upload verification failed for "
+          "Sandbox upload verification failed for "
           f"{host_file.name}: "
           f"host={len(file_bytes)} bytes, "
           f"sandbox={len(uploaded_bytes)} bytes"
@@ -246,9 +341,8 @@ async def run_form_agent(
 
       if uploaded_bytes != file_bytes:
         raise RuntimeError(
-          f"Sandbox upload verification failed for "
-          f"{host_file.name}: "
-          f"contents differ"
+          "Sandbox upload verification failed for "
+          f"{host_file.name}: contents differ"
         )
 
       print(
@@ -264,10 +358,12 @@ async def run_form_agent(
     print(
       f"pwd exit code: {pwd_result.exit_code}",
     )
+
     print(
       "pwd stdout:\n"
       f"{pwd_result.stdout.decode(errors='replace')}",
     )
+
     print(
       "pwd stderr:\n"
       f"{pwd_result.stderr.decode(errors='replace')}",
@@ -284,10 +380,12 @@ async def run_form_agent(
     print(
       f"input ls exit code: {input_ls.exit_code}",
     )
+
     print(
       "input ls stdout:\n"
       f"{input_ls.stdout.decode(errors='replace')}",
     )
+
     print(
       "input ls stderr:\n"
       f"{input_ls.stderr.decode(errors='replace')}",
@@ -304,35 +402,21 @@ async def run_form_agent(
     print(
       f"output ls exit code: {output_ls.exit_code}",
     )
+
     print(
       "output ls stdout:\n"
       f"{output_ls.stdout.decode(errors='replace')}",
     )
+
     print(
       "output ls stderr:\n"
       f"{output_ls.stderr.decode(errors='replace')}",
     )
 
-    print("--- SANDBOX FIND ---")
-
-    find_result = await sandbox.exec(
-      "find",
-      ".",
-      "-maxdepth",
+    await _debug_sandbox_files(
+      sandbox,
+      "BEFORE AGENT",
       "3",
-      "-print",
-    )
-
-    print(
-      f"find exit code: {find_result.exit_code}",
-    )
-    print(
-      "find stdout:\n"
-      f"{find_result.stdout.decode(errors='replace')}",
-    )
-    print(
-      "find stderr:\n"
-      f"{find_result.stderr.decode(errors='replace')}",
     )
 
     print(
@@ -341,59 +425,99 @@ async def run_form_agent(
 
     print("--- STARTING FORM AGENT ---")
 
-    result = await Runner.run(
-      agent,
-      prompt,
-      context=context,
-      run_config=RunConfig(
-        sandbox=SandboxRunConfig(
-          session=sandbox,
-        ),
-      ),
-    )
+    print("--- AGENT PROMPT ---")
+    print(prompt)
+    print("--- AGENT PROMPT END ---")
 
-    print("Form agent runner completed.")
-
-    print("--- AGENT RESULT ---")
     print(
-      f"Result type: {type(result)}",
+      "Starting Runner.run with max_turns=30",
     )
+
+    result = None
 
     try:
-      print(
-        f"Final output:\n{result.final_output}",
+      result = await Runner.run(
+        agent,
+        prompt,
+        context=context,
+        run_config=RunConfig(
+          sandbox=SandboxRunConfig(
+            session=sandbox,
+          ),
+        ),
+        max_turns=30,
       )
+
+      print(
+        "Form agent runner completed successfully.",
+      )
+
+      _debug_agent_result(result)
+
     except Exception as e:
+      print("--- AGENT RUN ERROR ---")
       print(
-        f"Could not read final_output: "
-        f"{type(e).__name__}: {e}",
+        f"Error type: {type(e).__name__}",
       )
+      print(
+        f"Error message: {e}",
+      )
+
+      print(
+        "Agent exception repr: "
+        f"{repr(e)}",
+      )
+
+      print("--- AGENT RUN ERROR END ---")
+
+      print(
+        "Inspecting sandbox after agent exception...",
+      )
+
+      await _debug_sandbox_files(
+        sandbox,
+        "AFTER AGENT EXCEPTION",
+        "5",
+      )
+
+      print(
+        "Inspecting sandbox output directory "
+        "after agent exception...",
+      )
+
+      try:
+        error_output_ls = await sandbox.exec(
+          "ls",
+          "-lah",
+          "output",
+        )
+
+        print(
+          "output ls after exception:\n"
+          f"{error_output_ls.stdout.decode(errors='replace')}",
+        )
+
+        print(
+          "output ls stderr after exception:\n"
+          f"{error_output_ls.stderr.decode(errors='replace')}",
+        )
+
+      except Exception as output_error:
+        print(
+          "Could not inspect output after agent "
+          "exception: "
+          f"{type(output_error).__name__}: "
+          f"{output_error}",
+        )
+
+      raise
 
     print("--- POST-AGENT FILESYSTEM ---")
 
-    post_find_result = await sandbox.exec(
-      "find",
-      ".",
-      "-maxdepth",
+    await _debug_sandbox_files(
+      sandbox,
+      "AFTER AGENT SUCCESS",
       "5",
-      "-type",
-      "f",
-      "-print",
-    )
-
-    print(
-      f"post-agent find exit code: "
-      f"{post_find_result.exit_code}",
-    )
-
-    print(
-      "post-agent files:\n"
-      f"{post_find_result.stdout.decode(errors='replace')}",
-    )
-
-    print(
-      "post-agent find stderr:\n"
-      f"{post_find_result.stderr.decode(errors='replace')}",
     )
 
     print("--- POST-AGENT OUTPUT DIRECTORY ---")
@@ -436,15 +560,23 @@ async def run_form_agent(
     print(
       "--- FORM AGENT / SANDBOX ERROR ---",
     )
+
     print(
       f"Error type: {type(e).__name__}",
     )
+
     print(
       f"Error message: {e}",
     )
+
+    print(
+      f"Error repr: {repr(e)}",
+    )
+
     print(
       "--- FORM AGENT / SANDBOX ERROR END ---",
     )
+
     raise
 
   finally:
@@ -455,12 +587,12 @@ async def run_form_agent(
       print("Sandbox closed.")
     except Exception as e:
       print(
-        f"ERROR closing sandbox: "
+        "ERROR closing sandbox: "
         f"{type(e).__name__}: {e}",
       )
 
     print("=== FORM SANDBOX DEBUG END ===")
-    
+
 
 async def _collect_sandbox_output_files(
   sandbox,
@@ -472,6 +604,7 @@ async def _collect_sandbox_output_files(
   )
 
   print("--- COLLECT SANDBOX OUTPUT DEBUG ---")
+
   print(
     f"Local output directory: {output_dir}",
   )
@@ -539,14 +672,13 @@ async def _collect_sandbox_output_files(
       f"Collecting sandbox file: {sandbox_path}",
     )
 
-    # Safety check: only collect files underneath output/.
     try:
       relative_path = sandbox_path.relative_to(
         Path("output"),
       )
     except ValueError:
       raise RuntimeError(
-        f"Sandbox returned a file outside output/: "
+        "Sandbox returned a file outside output/: "
         f"{sandbox_path}"
       )
 
@@ -571,7 +703,7 @@ async def _collect_sandbox_output_files(
 
     print(
       f"  Read {len(file_contents)} bytes "
-      f"from sandbox.",
+      "from sandbox.",
     )
 
     with destination_path.open(
@@ -581,9 +713,11 @@ async def _collect_sandbox_output_files(
         file_contents,
       )
 
+    final_size = destination_path.stat().st_size
+
     print(
       f"  Wrote {destination_path} "
-      f"({destination_path.stat().st_size} bytes)",
+      f"({final_size} bytes)",
     )
 
   print(

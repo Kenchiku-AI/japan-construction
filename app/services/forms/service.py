@@ -123,9 +123,71 @@ class FormJobService:
             "The form agent did not produce any output files."
           )
 
+        final_output = result.final_output
+
+        logger.info(
+          "Form agent final output for job %s: %s",
+          form_job_id,
+          final_output,
+        )
+
+        agent_report = None
+
+        try:
+          agent_report = json.loads(
+            final_output,
+          )
+
+          if not isinstance(agent_report, dict):
+            raise ValueError(
+              "Agent final output JSON is not an object."
+            )
+
+        except Exception as exc:
+          logger.warning(
+            "Could not parse form agent final output as JSON "
+            "for job %s: %s",
+            form_job_id,
+            exc,
+          )
+
+          agent_report = {
+            "summary": final_output,
+            "completed": True,
+            "files": [
+              f"output/{output_file.filename}"
+              for output_file in output_files
+            ],
+            "missing_data": [],
+            "recommendations": [],
+          }
+
         job.result_json = json.dumps(
           {
-            "output": result.final_output,
+            "output": final_output,
+            "summary": agent_report.get(
+              "summary",
+              "",
+            ),
+            "completed": agent_report.get(
+              "completed",
+              True,
+            ),
+            "files": agent_report.get(
+              "files",
+              [
+                f"output/{output_file.filename}"
+                for output_file in output_files
+              ],
+            ),
+            "missing_data": agent_report.get(
+              "missing_data",
+              [],
+            ),
+            "recommendations": agent_report.get(
+              "recommendations",
+              [],
+            ),
           },
           ensure_ascii=False,
         )
@@ -241,7 +303,9 @@ class FormJobService:
     )
 
     return f"""
-Complete the form files provided in the workspace.
+Complete the Japanese construction-related form task described below.
+
+FORM JOB
 
 Form name:
 {job.name}
@@ -249,14 +313,80 @@ Form name:
 Form description:
 {job.description or "No description provided."}
 
-Input files:
+INPUT FILES
+
+The following input files are available:
+
 {file_list}
 
-Use the Kenchiku tools to retrieve information as necessary.
+TASK
 
-Save all completed documents to:
+Inspect all of the input files and complete the forms according to the
+form job description and the Kenchiku data available through your tools.
+
+This may be a Japanese construction-industry form such as a 協力会社名簿,
+作業員名簿, 労務安全書類, グリーンファイル, construction company
+roster, worker roster, qualification list, safety document, subcontractor
+document, or another construction-related administrative form.
+
+Do not assume the exact type of form. Determine its actual purpose by
+inspecting the document.
+
+IMPORTANT:
+
+- Inspect every input file.
+- Do not modify any file under input/.
+- Use Kenchiku tools when information is needed.
+- Prefer authoritative Kenchiku data.
+- Do not invent information.
+- Do not guess missing values.
+- Preserve existing values unless they need to be changed according to
+  the task.
+- Preserve the original Japanese labels and instructions.
+- Preserve the original layout and formatting as much as reasonably
+  possible.
+- Complete every field that can be populated reliably.
+- Leave fields unresolved when the required information is unavailable or
+  ambiguous.
+- Do not add explanatory English text to the form.
+
+MISSING DATA IS NOT A JOB FAILURE.
+
+If the available Kenchiku data is insufficient to fully complete the form,
+do NOT fail the job.
+
+Instead:
+
+1. Complete every field that can be completed reliably.
+2. Leave unsupported fields unresolved.
+3. Save the resulting document under output/.
+4. In your final JSON result, clearly identify the missing information.
+5. In your final JSON result, recommend the specific Kenchiku data that
+   should be added to make future completion possible.
+
+Do not fabricate people, companies, dates, addresses, qualifications,
+licenses, insurance information, project information, or any other
+factual information.
+
+FINAL RESPONSE
+
+Your final response MUST be valid JSON with this structure:
+
+{{
+  "summary": "Brief description of what you did.",
+  "completed": true,
+  "files": [
+    "output/example.xlsx"
+  ],
+  "missing_data": [],
+  "recommendations": []
+}}
+
+The JSON must accurately describe the work you actually performed.
+
+All completed files MUST be saved under:
 
 output/
 
-Do not invent missing information.
+Do not save the completed documents anywhere else.
 """
