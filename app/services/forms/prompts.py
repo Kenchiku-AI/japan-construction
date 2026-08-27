@@ -90,6 +90,7 @@ Examples include, but are not limited to:
 - 健康診断情報
 - 社会保険加入情報
 - 雇用保険加入情報
+- 労災保険関連情報
 - その他、日本の建設現場で使用される帳票
 
 These are examples only. Always determine the actual meaning of a field
@@ -191,41 +192,343 @@ If information cannot be confidently determined, leave that field
 unresolved rather than inventing a value.
 
 ============================================================
-KENCHIKU DATA
+KENCHIKU DATA MODEL
 ============================================================
 
-Kenchiku data may include:
+Kenchiku data should be understood as a connected graph of entities,
+custom fields, and custom relationships.
 
-- Company information.
-- Project information.
-- Users assigned to the project.
-- Project guests.
-- Company-level custom fields.
-- Project-level custom fields.
-- Custom objects belonging to the company.
-- Fields belonging to custom objects.
-- Relationships between projects and other Kenchiku entities.
-- Relationships between custom objects and other Kenchiku entities.
+The main entity types are:
 
-Custom object definitions describe the type of object.
+- company
+- project
+- user
+- custom_object
 
-The individual custom object's fields contain the actual values for that
-specific object.
+The company is the top-level organization.
 
-When determining information about a specific custom object, use its
-actual field values rather than merely relying on the custom object
-definition.
+A company can have:
+
+- projects
+- users
+- custom objects
+- custom field definitions
+- custom relationships
+- custom relationship definitions
+
+Projects, users, and custom objects can each have custom fields.
+
+Custom relationships explicitly connect two entities.
+
+A custom relationship has:
+
+- a relationship definition
+- a source entity
+- a target entity
+
+The relationship definition explains what the relationship means.
+
+The relationship instance identifies the actual entities connected by that
+relationship.
+
+For example, a relationship definition might mean:
+
+- "現場作業員"
+- "担当者"
+- "協力会社"
+- "所属会社"
+- "現場代理人"
+- "主任技術者"
+
+The relationship instance then identifies the specific user, company,
+project, or custom object participating in that relationship.
+
+Always consider both the relationship definition and the relationship
+instance when interpreting a relationship.
+
+The relationship definition's name and description are especially
+important because they explain the semantic meaning of the relationship.
+
+Do not interpret a relationship merely from its IDs.
+
+============================================================
+PROJECT CONTEXT
+============================================================
+
+When a form job has a project_id, that project is the primary project
+context for the form.
+
+You MUST use that project as the starting point for determining
+project-specific information.
+
+When a project is available:
+
+1. Identify the project.
+2. Examine the project's standard information.
+3. Examine the project's custom fields.
+4. Examine the project's custom relationships.
+5. Follow relevant relationships to connected users, companies, and
+   custom objects.
+6. Examine the custom fields belonging to those related entities.
+7. Use that connected information to determine what should be entered
+   into the form.
+
+Do not treat the company's projects, users, and custom objects as one
+unrelated pool of information.
+
+Prefer entities that are explicitly connected to the relevant project.
+
+For example, if a project has a custom relationship named "現場作業員"
+whose target is a user, those users should be considered workers
+associated with that project.
+
+If a project has a custom relationship named "協力会社" whose target is
+a company, that company should be considered a company associated with
+that project.
+
+If a project has a custom relationship to a custom object, inspect that
+custom object and its custom fields when the object is relevant to the
+form.
+
+Do not assume that every user, company, or custom object belonging to the
+company is relevant to the project.
+
+============================================================
+PROJECT-USER ASSOCIATIONS
+============================================================
+
+Project-to-user associations should currently be understood primarily
+through custom relationships.
+
+Do not assume that a user is associated with a project simply because the
+user belongs to the same company.
+
+When determining which users belong to a project:
+
+1. Examine the project's custom relationships.
+2. Identify relationships whose target or source is a user.
+3. Read the relationship definition name and description.
+4. Determine whether the relationship represents a meaningful association
+   with the project.
+5. Use the connected users and their custom fields when relevant.
+
+For example, if the project has a custom relationship:
+
+Project
+  -> "現場作業員"
+  -> User
+
+then the connected users should be treated as workers associated with
+that project.
+
+Similarly:
+
+Project
+  -> "担当者"
+  -> User
+
+means those users are associated with the project as responsible persons,
+subject to the meaning described by the relationship definition.
+
+Do not require a ProjectUserLink to determine whether a user is relevant
+to a project.
+
+Do not ignore a project-user custom relationship merely because the user
+is not present in a separate project-user association.
+
+============================================================
+CUSTOM FIELDS
+============================================================
+
+Custom field definitions describe what a custom field means.
+
+Custom field values contain the actual data for a specific entity.
+
+Always interpret custom field values using their definitions.
+
+A custom field definition can provide:
+
+- name
+- description
+- entity type
+- data type
+- ordering information
+
+The custom field itself provides the actual stored value.
+
+For example:
+
+Custom field definition:
+  name: "フリガナ"
+  description: "氏名のフリガナ"
+  entity_type: "user"
+
+Custom field:
+  value: "ヤマダ タロウ"
+
+The value should therefore be interpreted as the furigana of the
+specific user to whom that custom field belongs.
+
+Do not treat custom field values as company-wide values.
+
+Always preserve the entity to which a custom field belongs.
+
+A custom field on a project is project information.
+
+A custom field on a user is user information.
+
+A custom field on a custom object is information about that specific
+custom object.
+
+A custom field on a company is company information.
+
+When a custom field definition has a description, use the description to
+understand the intended meaning of the field.
+
+Do not rely solely on the field name when the description provides
+additional context.
+
+============================================================
+CUSTOM OBJECTS
+============================================================
+
+Custom objects represent company-specific entities defined by the
+company.
+
+A custom object definition describes the type of custom object.
+
+An individual custom object represents a specific instance of that type.
+
+Custom object definitions may contain custom field definitions.
+
+Individual custom objects contain the actual custom field values.
+
+When using a custom object:
+
+1. Identify its definition.
+2. Understand what kind of entity it represents.
+3. Examine its custom fields.
+4. Examine relevant custom relationships.
+5. Use the object's actual values rather than assumptions based only on
+   its definition.
+
+For example, if a company has a custom object definition representing
+"協力会社担当者", an individual custom object may represent one specific
+person and contain that person's actual information.
+
+Do not assume all custom objects of the same definition represent the
+same real-world entity.
+
+============================================================
+CUSTOM RELATIONSHIPS
+============================================================
+
+Custom relationships are explicit semantic connections between Kenchiku
+entities.
+
+Supported entity types include:
+
+- company
+- project
+- user
+- custom_object
+
+A relationship definition describes:
+
+- the relationship name
+- the relationship description
+- the source entity type
+- the target entity type
+- the relationship cardinality
+
+A relationship instance identifies:
+
+- the source entity
+- the target entity
+- the relationship definition
+
+Use the relationship definition to understand what the connection means.
+
+Use the relationship instance to determine which specific entities are
+connected.
+
+Do not infer relationships merely because two entities have similar names,
+matching email addresses, similar custom field values, or because they
+belong to the same company.
+
+Explicit relationships should generally be preferred over inferred
+relationships.
+
+When a relevant relationship exists, follow it to the related entity and
+inspect that entity's information.
+
+Relationships may connect:
+
+- project -> user
+- user -> project
+- project -> company
+- project -> custom_object
+- custom_object -> user
+- custom_object -> company
+- custom_object -> project
+- company -> custom_object
+- user -> company
+- and other supported combinations
+
+Pay attention to the direction of the relationship.
+
+The source and target entity types, relationship name, and description
+determine how the relationship should be interpreted.
+
+Do not assume that reversing a relationship always produces the same
+semantic meaning.
+
+============================================================
+DATA SELECTION
+============================================================
+
+When filling a form, use the most specific relevant Kenchiku data
+available.
+
+The general priority is:
+
+1. Information explicitly associated with the relevant project.
+2. Information on entities explicitly connected to that project through
+   meaningful custom relationships.
+3. Custom fields belonging to those relevant entities.
+4. Company-level information when the form requires company information.
+5. Other company data only when there is a clear reason that it applies.
+
+Do not use unrelated project data.
+
+Do not use unrelated user data.
+
+Do not use unrelated custom object data.
+
+Do not use information from another company.
+
+If multiple entities could potentially satisfy a form field, use the
+relationship definition, relationship description, entity type, and
+available field information to determine which entity is relevant.
+
+If the correct entity cannot be determined reliably, leave the field
+unresolved rather than guessing.
+
+============================================================
+AUTHORITATIVE DATA
+============================================================
 
 Prefer authoritative Kenchiku data over assumptions.
 
-Never use information belonging to another company.
+If Kenchiku provides a value, use that value rather than trying to infer
+another value from the form.
 
-Use the company associated with the current form job.
+If multiple Kenchiku values appear to conflict:
 
-If a project is associated with the form job, use that project when
-project-specific information is required.
-
-If project_id is not available, do not invent or assume a project.
+- inspect the relevant entity and relationship context
+- determine whether one value is more specific or authoritative
+- do not silently choose an arbitrary value
+- leave the field unresolved if the conflict cannot be reliably resolved
 
 ============================================================
 JAPANESE FORM CONVENTIONS
@@ -412,7 +715,7 @@ complete important fields:
 
 For example, if a 作業員名簿 requires worker names, dates of birth,
 addresses, qualifications, and insurance information, but the available
-Kenchiku data contains no workers, do not fabricate workers.
+Kenchiku data contains no relevant workers, do not fabricate workers.
 
 Instead, save the form with whatever company/project information can be
 reliably populated and report that worker records and their required
