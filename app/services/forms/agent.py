@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from agents import Runner, ModelSettings
+from agents import Runner
 from agents.run import RunConfig
 from agents.sandbox import (
   SandboxAgent,
@@ -15,39 +15,19 @@ from agents.extensions.sandbox import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.forms.prompts import FORM_AGENT_INSTRUCTIONS
-from app.services.forms.tools import (
-  FormAgentContext,
-  get_form_data,
-  get_company_information,
-  get_project_information,
-  get_custom_object,
+from app.services.forms.prompts import (
+  FORM_AGENT_INSTRUCTIONS,
 )
 
 logger = logging.getLogger(__name__)
 
 
 def build_form_agent() -> SandboxAgent:
-  agent = SandboxAgent(
+  return SandboxAgent(
     name="Kenchiku AI Form Agent",
     instructions=FORM_AGENT_INSTRUCTIONS,
-    tools=[
-      get_form_data,
-      get_company_information,
-      get_project_information,
-      get_custom_object,
-    ],
+    tools=[],
   )
-
-  logger.info(
-    "FORM AGENT REGISTERED TOOLS: %s",
-    [
-      getattr(tool, "name", repr(tool))
-      for tool in agent.tools
-    ],
-  )
-
-  return agent
 
 
 async def run_form_agent(
@@ -62,7 +42,9 @@ async def run_form_agent(
   agent = build_form_agent()
 
   workspace = workspace.resolve()
-  input_dir = (workspace / "input").resolve()
+  input_dir = (
+    workspace / "input"
+  ).resolve()
   output_dir = output_dir.resolve()
 
   host_input_files = []
@@ -82,10 +64,20 @@ async def run_form_agent(
       "No input files were found in the host input directory."
     )
 
-  context = FormAgentContext(
-    db=db,
-    company_id=company_id,
-    project_id=project_id,
+  logger.info(
+    "Starting form agent for company %s, project %s.",
+    company_id,
+    project_id,
+  )
+
+  logger.info(
+    "Prompt already contains the complete Kenchiku company graph. "
+    "No Kenchiku data tools will be used.",
+  )
+
+  logger.info(
+    "Form agent prompt characters: %d",
+    len(prompt),
   )
 
   sandbox = None
@@ -121,7 +113,10 @@ async def run_form_agent(
       )
 
     for host_file in host_input_files:
-      sandbox_path = Path("input") / host_file.name
+      sandbox_path = (
+        Path("input")
+        / host_file.name
+      )
 
       file_bytes = host_file.read_bytes()
 
@@ -159,13 +154,9 @@ async def run_form_agent(
       result = await Runner.run(
         agent,
         prompt,
-        context=context,
         run_config=RunConfig(
           sandbox=SandboxRunConfig(
             session=sandbox,
-          ),
-          model_settings=ModelSettings(
-            tool_choice="required",
           ),
         ),
         max_turns=30,
