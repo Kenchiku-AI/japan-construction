@@ -18,11 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.forms.prompts import FORM_AGENT_INSTRUCTIONS
 from app.services.forms.tools import (
   FormAgentContext,
-  get_company_information,
-  get_custom_object,
   get_form_data,
+  get_company_information,
   get_project_information,
-  get_project_users,
+  get_custom_object,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,11 +32,10 @@ def build_form_agent() -> SandboxAgent:
     name="Kenchiku AI Form Agent",
     instructions=FORM_AGENT_INSTRUCTIONS,
     tools=[
+      get_form_data,
       get_company_information,
       get_project_information,
-      get_project_users,
       get_custom_object,
-      get_form_data,
     ],
   )
 
