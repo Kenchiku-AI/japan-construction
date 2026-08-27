@@ -49,18 +49,25 @@ jobs:
         run: |
           vercel --version
 
-      - name: Authenticate with Vercel Container Registry
+      - name: Authenticate with Vercel
         run: |
           set -e
 
-          echo "Checking Vercel CLI container commands..."
+          echo "Authenticating with Vercel..."
 
-          vercel container --help
-
-          echo "Authenticating with Vercel Container Registry..."
-
-          vercel container login \
+          vercel whoami \
             --token "$VERCEL_TOKEN"
+
+      - name: Authenticate Docker with Vercel Container Registry
+        run: |
+          set -e
+
+          echo "Authenticating Docker with Vercel Container Registry..."
+
+          printf '%s' "$VERCEL_TOKEN" | \
+            docker login vcr.vercel.com \
+              --username "$VERCEL_TEAM_ID" \
+              --password-stdin
 
       - name: Build sandbox image
         run: |
@@ -69,7 +76,8 @@ jobs:
           IMAGE="vcr.vercel.com/${VERCEL_SANDBOX_REPOSITORY}"
 
           echo "Building sandbox image:"
-          echo "$IMAGE:${GITHUB_SHA}"
+          echo "  $IMAGE:${GITHUB_SHA}"
+          echo "  $IMAGE:dev"
 
           docker build \
             --file sandbox/Dockerfile \
@@ -102,6 +110,16 @@ jobs:
 
           docker push "$IMAGE:${GITHUB_SHA}"
           docker push "$IMAGE:dev"
+
+      - name: Verify pushed image
+        run: |
+          set -e
+
+          IMAGE="vcr.vercel.com/${VERCEL_SANDBOX_REPOSITORY}:${GITHUB_SHA}"
+
+          echo "Verifying pushed image..."
+
+          docker pull "$IMAGE"
 
       - name: Deployment summary
         run: |
