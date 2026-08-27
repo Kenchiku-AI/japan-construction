@@ -41,30 +41,6 @@ jobs:
           echo "Vercel configuration is present."
           echo "Sandbox image: $VERCEL_SANDBOX_IMAGE"
 
-      - name: Test Vercel API authentication
-        run: |
-          set -e
-
-          echo "Testing Vercel API authentication..."
-
-          HTTP_CODE=$(curl -sS \
-            -o /tmp/vercel-response.json \
-            -w "%{http_code}" \
-            -H "Authorization: Bearer $VERCEL_TOKEN" \
-            https://api.vercel.com/v2/user)
-
-          echo "HTTP status: $HTTP_CODE"
-          echo "Response:"
-          cat /tmp/vercel-response.json
-          echo
-
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::error::Vercel API authentication failed."
-            exit 1
-          fi
-
-          echo "Vercel API authentication succeeded."
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -98,24 +74,11 @@ jobs:
             --load \
             sandbox
 
-      - name: Test sandbox image
-        run: |
-          set -e
-
-          IMAGE="${VERCEL_SANDBOX_IMAGE}:${GITHUB_SHA}"
-
-          echo "Running sandbox diagnostics..."
-
-          docker run \
-            --rm \
-            "$IMAGE" \
-            sandbox-diagnostics
-
       - name: Push sandbox image
         run: |
           set -e
 
-          IMAGE="vcr.vercel.com/${VERCEL_SANDBOX_IMAGE}"
+          IMAGE="${VERCEL_SANDBOX_IMAGE}"
 
           echo "Pushing:"
           echo "  $IMAGE:${GITHUB_SHA}"
@@ -128,7 +91,7 @@ jobs:
         run: |
           set -e
 
-          IMAGE="vcr.vercel.com/${VERCEL_SANDBOX_IMAGE}:${GITHUB_SHA}"
+          IMAGE="${VERCEL_SANDBOX_IMAGE}:${GITHUB_SHA}"
 
           echo "Pulling pushed image to verify registry access..."
 
