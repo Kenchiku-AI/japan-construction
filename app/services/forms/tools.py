@@ -796,6 +796,12 @@ async def get_company_information(
 ) -> dict[str, Any]:
   """Get the current company and its custom fields."""
 
+  logger.info(
+    "FORM TOOL CALLED: get_company_information company=%s project=%s",
+    ctx.context.company_id,
+    ctx.context.project_id,
+  )
+
   company = await _get_company(
     ctx.context.db,
     ctx.context.company_id,
@@ -820,27 +826,160 @@ async def get_company_information(
 async def get_project_information(
   ctx: RunContextWrapper[FormAgentContext],
 ) -> dict[str, Any]:
-  """Get the project associated with the current form job.
+  """Get the current project, including its custom fields and all custom
+  relationships to users, companies, and custom objects.
 
   Use this when the form job has a project_id.
   """
 
+  logger.info(
+    "FORM TOOL CALLED: get_project_information company=%s project=%s",
+    ctx.context.company_id,
+    ctx.context.project_id,
+  )
+
   if ctx.context.project_id is None:
+    logger.info(
+      "FORM TOOL RESULT: no project is associated with this form."
+    )
+
     return {
       "project": None,
       "message": "No project is associated with this form."
     }
 
+  project_id = ctx.context.project_id
+  company_id = ctx.context.company_id
+
   project = await _get_project(
     ctx.context.db,
-    ctx.context.company_id,
-    ctx.context.project_id,
+    company_id,
+    project_id,
   )
 
   if project is None:
+    logger.warning(
+      "FORM TOOL RESULT: project not found company=%s project=%s",
+      company_id,
+      project_id,
+    )
+
     return {
       "error": "Project not found."
     }
+
+  # Load all entities needed to resolve relationship references.
+  projects = await _get_projects(
+    ctx.context.db,
+    company_id,
+  )
+
+  users = await _get_users(
+    ctx.context.db,
+    company_id,
+  )
+
+  custom_objects = await _get_custom_objects(
+    ctx.context.db,
+    company_id,
+  )
+
+  company_result = await ctx.context.db.execute(
+    select(Company)
+    .where(
+      Company.id == company_id,
+    )
+  )
+
+  company = company_result.scalar_one_or_none()
+
+  if company is None:
+    logger.warning(
+      "FORM TOOL RESULT: company not found company=%s",
+      company_id,
+    )
+
+    return {
+      "error": "Company not found."
+    }
+
+  relationships = await _get_relationships(
+    ctx.context.db,
+    company_id,
+  )
+
+  companies_by_id = {
+    company.id: company,
+  }
+
+  projects_by_id = {
+    project.id: project
+    for project in projects
+  }
+
+  users_by_id = {
+    user.id: user
+    for user in users
+  }
+
+  custom_objects_by_id = {
+    obj.id: obj
+    for obj in custom_objects
+  }
+
+  project_relationships = []
+
+  for relationship in relationships:
+    source_matches = (
+      relationship.source_entity_type
+      == "project"
+      and relationship.source_entity_id == project_id
+    )
+
+    target_matches = (
+      relationship.target_entity_type
+      == "project"
+      and relationship.target_entity_id == project_id
+    )
+
+    if not source_matches and not target_matches:
+      continue
+
+    project_relationships.append(
+      _relationship_dict(
+        relationship,
+        companies=companies_by_id,
+        projects=projects_by_id,
+        users=users_by_id,
+        custom_objects=custom_objects_by_id,
+      )
+    )
+
+  project["relationships"] = project_relationships
+
+  logger.info(
+    "FORM TOOL RESULT: project=%s name=%s custom_fields=%d "
+    "relationships=%d",
+    project_id,
+    project.get("name"),
+    len(project.get("custom_fields", [])),
+    len(project_relationships),
+  )
+
+  for relationship in project_relationships:
+    logger.info(
+      "FORM PROJECT RELATIONSHIP: name=%s description=%s "
+      "source_type=%s source_id=%s source_name=%s "
+      "target_type=%s target_id=%s target_name=%s",
+      relationship.get("name"),
+      relationship.get("description"),
+      relationship.get("source", {}).get("entity_type"),
+      relationship.get("source", {}).get("id"),
+      relationship.get("source", {}).get("name"),
+      relationship.get("target", {}).get("entity_type"),
+      relationship.get("target", {}).get("id"),
+      relationship.get("target", {}).get("name"),
+    )
 
   return project
 
@@ -851,6 +990,13 @@ async def get_custom_object(
   custom_object_id: str,
 ) -> dict[str, Any]:
   """Get a specific custom object, including its definition and custom fields."""
+
+  logger.info(
+    "FORM TOOL CALLED: get_custom_object company=%s project=%s object=%s",
+    ctx.context.company_id,
+    ctx.context.project_id,
+    custom_object_id,
+  )
 
   try:
     object_id = UUID(custom_object_id)
@@ -878,6 +1024,12 @@ async def get_form_data(
   ctx: RunContextWrapper[FormAgentContext],
 ) -> dict[str, Any]:
   """Get the complete Kenchiku data available to this form job."""
+
+  logger.info(
+    "FORM TOOL CALLED: get_form_data company=%s project=%s",
+    ctx.context.company_id,
+    ctx.context.project_id,
+  )
 
   data = await _build_all_company_data(
     ctx.context.db,
@@ -916,10 +1068,17 @@ async def get_form_data(
 
       for relationship in project.get("relationships", []):
         logger.info(
-          "Project relationship: name=%s source=%s target=%s",
+          "FORM PROJECT RELATIONSHIP: name=%s description=%s "
+          "source_type=%s source_id=%s source_name=%s "
+          "target_type=%s target_id=%s target_name=%s",
           relationship.get("name"),
-          relationship.get("source"),
-          relationship.get("target"),
+          relationship.get("description"),
+          relationship.get("source", {}).get("entity_type"),
+          relationship.get("source", {}).get("id"),
+          relationship.get("source", {}).get("name"),
+          relationship.get("target", {}).get("entity_type"),
+          relationship.get("target", {}).get("id"),
+          relationship.get("target", {}).get("name"),
         )
 
   return data

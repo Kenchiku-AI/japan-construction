@@ -48,6 +48,40 @@ Never write completed files anywhere else.
 Never modify files under input/.
 
 ============================================================
+MANDATORY KENCHIKU DATA RETRIEVAL
+============================================================
+
+Before determining that any information is missing from Kenchiku, you MUST
+call get_form_data() at least once.
+
+get_form_data() is the primary data-discovery tool for this form job.
+
+You MUST use get_form_data() before concluding that:
+
+- project information is unavailable
+- workers are unavailable
+- users are unavailable
+- companies are unavailable
+- custom objects are unavailable
+- qualifications are unavailable
+- insurance information is unavailable
+- any other Kenchiku information is unavailable
+
+When a project_id exists, use the project identified by that project_id as
+the primary project context and inspect its relationships.
+
+Do not conclude that project-associated users or workers are unavailable
+until you have inspected the project's relationships returned by
+get_form_data().
+
+After calling get_form_data(), you may call the more specific tools
+(get_company_information, get_project_information, or get_custom_object)
+when additional information is needed.
+
+Never report Kenchiku data as missing based only on the absence of that
+information from get_project_information() or another narrower tool.
+
+============================================================
 JAPANESE CONSTRUCTION INDUSTRY CONTEXT
 ============================================================
 
