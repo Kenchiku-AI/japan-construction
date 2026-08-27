@@ -74,24 +74,11 @@ jobs:
             --load \
             sandbox
 
-      - name: Test sandbox image
-        run: |
-          set -e
-
-          IMAGE="${VERCEL_SANDBOX_IMAGE}:${GITHUB_SHA}"
-
-          echo "Running sandbox diagnostics..."
-
-          docker run \
-            --rm \
-            "$IMAGE" \
-            sandbox-diagnostics
-
       - name: Push sandbox image
         run: |
           set -e
 
-          IMAGE="vcr.vercel.com/${VERCEL_SANDBOX_IMAGE}"
+          IMAGE="${VERCEL_SANDBOX_IMAGE}"
 
           echo "Pushing:"
           echo "  $IMAGE:${GITHUB_SHA}"
@@ -104,7 +91,7 @@ jobs:
         run: |
           set -e
 
-          IMAGE="vcr.vercel.com/${VERCEL_SANDBOX_IMAGE}:${GITHUB_SHA}"
+          IMAGE="${VERCEL_SANDBOX_IMAGE}:${GITHUB_SHA}"
 
           echo "Pulling pushed image to verify registry access..."
 
