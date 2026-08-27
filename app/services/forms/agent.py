@@ -1,5 +1,6 @@
 import io
 import logging
+import inspect
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -19,6 +20,7 @@ from app.services.forms.prompts import (
   FORM_AGENT_INSTRUCTIONS,
 )
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,7 +28,6 @@ def build_form_agent() -> SandboxAgent:
   return SandboxAgent(
     name="Kenchiku AI Form Agent",
     instructions=FORM_AGENT_INSTRUCTIONS,
-    tools=[],
   )
 
 
@@ -80,6 +81,37 @@ async def run_form_agent(
     len(prompt),
   )
 
+  logger.info(
+    "VercelSandboxClientOptions class: %s",
+    VercelSandboxClientOptions,
+  )
+
+  try:
+    logger.info(
+      "VercelSandboxClientOptions signature: %s",
+      inspect.signature(
+        VercelSandboxClientOptions,
+      ),
+    )
+  except Exception:
+    logger.exception(
+      "Could not inspect VercelSandboxClientOptions signature."
+    )
+
+  try:
+    logger.info(
+      "VercelSandboxClientOptions fields: %s",
+      getattr(
+        VercelSandboxClientOptions,
+        "model_fields",
+        None,
+      ),
+    )
+  except Exception:
+    logger.exception(
+      "Could not inspect VercelSandboxClientOptions fields."
+    )
+
   sandbox = None
 
   try:
@@ -91,6 +123,51 @@ async def run_form_agent(
       options=VercelSandboxClientOptions(
         allow_s3_credential_exposure=False,
       ),
+    )
+
+    logger.info(
+      "Vercel sandbox created successfully."
+    )
+
+    diagnostics_result = await sandbox.exec(
+      "sandbox-diagnostics",
+    )
+
+    diagnostics_stdout = (
+      diagnostics_result.stdout.decode(
+        errors="replace",
+      )
+    )
+
+    diagnostics_stderr = (
+      diagnostics_result.stderr.decode(
+        errors="replace",
+      )
+    )
+
+    logger.info(
+      "============================================================"
+    )
+    logger.info(
+      "SANDBOX DIAGNOSTICS"
+    )
+    logger.info(
+      "============================================================"
+    )
+    logger.info(
+      "%s",
+      diagnostics_stdout,
+    )
+
+    if diagnostics_stderr:
+      logger.warning(
+        "Sandbox diagnostics stderr:\n%s",
+        diagnostics_stderr,
+      )
+
+    logger.info(
+      "Sandbox diagnostics exit code: %s",
+      diagnostics_result.exit_code,
     )
 
     mkdir_result = await sandbox.exec(
@@ -159,7 +236,7 @@ async def run_form_agent(
             session=sandbox,
           ),
         ),
-        max_turns=30,
+        max_turns=50,
       )
 
     except Exception:

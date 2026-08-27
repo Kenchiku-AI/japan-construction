@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  echo "Usage: form-verify <file>" >&2
+  exit 1
+fi
+
+FILE="$1"
+
+if [ ! -f "$FILE" ]; then
+  echo "File does not exist: $FILE" >&2
+  exit 1
+fi
+
+EXTENSION="${FILE##*.}"
+EXTENSION="$(printf '%s' "$EXTENSION" | tr '[:upper:]' '[:lower:]')"
+
+echo "Verifying:"
+echo "$FILE"
+echo
+
+case "$EXTENSION" in
+  xls)
+    TEMP_DIR="$(mktemp -d)"
+
+    trap 'rm -rf "$TEMP_DIR"' EXIT
+
+    libreoffice \
+      --headless \
+      --convert-to xlsx \
+      --outdir "$TEMP_DIR" \
+      "$FILE" >/tmp/form-verify.log 2>&1
+
+    CONVERTED="$TEMP_DIR/$(basename "${FILE%.*}").xlsx"
+
+    if [ ! -f "$CONVERTED" ]; then
+      cat /tmp/form-verify.log >&2
+      echo "XLS verification failed." >&2
+      exit 1
+    fi
+
+    python /usr/local/bin/inspect_excel.py "$CONVERTED" \
+      >/dev/null
+
+    echo "XLS verification passed."
+    ;;
+
+  xlsx|xlsm)
+    python /usr/local/bin/inspect_excel.py "$FILE" \
+      >/dev/null
+
+    echo "Spreadsheet verification passed."
+    ;;
+
+  pdf)
+    pdfinfo "$FILE" >/dev/null
+    echo "PDF verification passed."
+    ;;
+
+  docx)
+    python - "$FILE" <<'PY'
+from docx import Document
+import sys
+
+Document(sys.argv[1])
+print("DOCX verification passed.")
+PY
+    ;;
+
+  png|jpg|jpeg|tif|tiff|bmp|webp)
+    identify "$FILE" >/dev/null
+    echo "Image verification passed."
+    ;;
+
+  *)
+    echo "Basic file verification passed."
+    ;;
+esac
