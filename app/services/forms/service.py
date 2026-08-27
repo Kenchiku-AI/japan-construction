@@ -1012,6 +1012,43 @@ Verify:
 10. The input file was not modified.
 11. Formatting and structure were preserved as much as reasonably possible.
 
+------------------------------------------------------------
+VISUAL VERIFICATION
+------------------------------------------------------------
+For spreadsheets, PDFs, images, and other documents where visual layout
+matters, perform visual verification before declaring the task
+completed.
+When possible:
+1. Render the completed document to PDF or images using the available
+   document-processing software.
+2. Inspect the rendered result.
+3. Confirm that text appears in the intended fields.
+4. Confirm that text is not clipped.
+5. Confirm that merged cells remain intact.
+6. Confirm that tables remain aligned.
+7. Confirm that Japanese characters render correctly.
+8. Confirm that important labels and instructions remain visible.
+9. Confirm that existing values were not unintentionally displaced.
+10. Confirm that page breaks and major layout elements remain
+    reasonable.
+11. Confirm that the output is actually usable as the original form.
+For XLS/XLSX forms, pay particular attention to:
+- merged cells
+- row heights
+- column widths
+- hidden rows
+- hidden columns
+- formulas
+- checkboxes
+- print areas
+- page breaks
+- Japanese characters
+- cells containing long names or addresses
+Do not declare the document successfully completed solely because a
+file was created.
+The completed file must be both structurally valid and reasonably
+usable as the original form.
+
 ============================================================
 FINAL RESPONSE
 ============================================================
