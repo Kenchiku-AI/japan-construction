@@ -169,12 +169,9 @@ class FormJobService:
             "recommendations": [],
           }
 
-        job.result_json = json.dumps(
-          {
-            "output": agent_output,
-          },
-          ensure_ascii=False,
-        )
+        job.result_json = {
+          "output": agent_output,
+        }
 
         logger.info(
           "Form agent final output for job %s: %s",
