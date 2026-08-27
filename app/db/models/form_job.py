@@ -11,7 +11,7 @@ from sqlalchemy import (
   String,
   Text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
@@ -94,7 +94,7 @@ class FormJob(Base):
   )
 
   result_json = Column(
-    Text,
+    JSONB,
     nullable=True,
   )
 
