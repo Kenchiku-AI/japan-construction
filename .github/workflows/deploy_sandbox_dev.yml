@@ -41,7 +41,31 @@ jobs:
           echo "Vercel configuration is present."
           echo "Sandbox image: $VERCEL_SANDBOX_IMAGE"
 
-      - name: Install Docker Buildx
+      - name: Test Vercel API authentication
+        run: |
+          set -e
+
+          echo "Testing Vercel API authentication..."
+
+          HTTP_CODE=$(curl -sS \
+            -o /tmp/vercel-response.json \
+            -w "%{http_code}" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            https://api.vercel.com/v2/user)
+
+          echo "HTTP status: $HTTP_CODE"
+          echo "Response:"
+          cat /tmp/vercel-response.json
+          echo
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Vercel API authentication failed."
+            exit 1
+          fi
+
+          echo "Vercel API authentication succeeded."
+
+      - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Authenticate with Vercel Container Registry
@@ -55,26 +79,30 @@ jobs:
               --username "$VERCEL_TEAM_ID" \
               --password-stdin
 
+          echo "Vercel Container Registry authentication succeeded."
+
       - name: Build sandbox image
         run: |
           set -e
 
-          IMAGE="vcr.vercel.com/${VERCEL_SANDBOX_IMAGE}"
+          IMAGE="${VERCEL_SANDBOX_IMAGE}"
 
           echo "Building sandbox image:"
-          echo "$IMAGE:${GITHUB_SHA}"
+          echo "  $IMAGE:${GITHUB_SHA}"
 
-          docker build \
+          docker buildx build \
+            --platform linux/amd64 \
             --file sandbox/Dockerfile \
             --tag "$IMAGE:${GITHUB_SHA}" \
             --tag "$IMAGE:dev" \
+            --load \
             sandbox
 
       - name: Test sandbox image
         run: |
           set -e
 
-          IMAGE="vcr.vercel.com/${VERCEL_SANDBOX_IMAGE}:${GITHUB_SHA}"
+          IMAGE="${VERCEL_SANDBOX_IMAGE}:${GITHUB_SHA}"
 
           echo "Running sandbox diagnostics..."
 
@@ -107,7 +135,7 @@ jobs:
           docker pull "$IMAGE"
 
           echo "Successfully verified:"
-          echo "$IMAGE"
+          echo "  $IMAGE"
 
       - name: Deployment summary
         run: |
