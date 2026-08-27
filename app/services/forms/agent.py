@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from agents import Runner
+from agents import Runner, ModelSettings
 from agents.run import RunConfig
 from agents.sandbox import (
   SandboxAgent,
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def build_form_agent() -> SandboxAgent:
-  return SandboxAgent(
+  agent = SandboxAgent(
     name="Kenchiku AI Form Agent",
     instructions=FORM_AGENT_INSTRUCTIONS,
     tools=[
@@ -38,6 +38,16 @@ def build_form_agent() -> SandboxAgent:
       get_custom_object,
     ],
   )
+
+  logger.info(
+    "FORM AGENT REGISTERED TOOLS: %s",
+    [
+      getattr(tool, "name", repr(tool))
+      for tool in agent.tools
+    ],
+  )
+
+  return agent
 
 
 async def run_form_agent(
@@ -153,6 +163,9 @@ async def run_form_agent(
         run_config=RunConfig(
           sandbox=SandboxRunConfig(
             session=sandbox,
+          ),
+          model_settings=ModelSettings(
+            tool_choice="required",
           ),
         ),
         max_turns=30,
