@@ -336,7 +336,24 @@ objects are relevant.
 """
 
     return f"""
-Complete the Japanese construction-related form task described below.
+Complete the construction-related form task described below.
+
+LANGUAGE REQUIREMENT:
+
+The language of the form determines the output language.
+
+If the form is Japanese:
+- All human-readable values entered into the form MUST be Japanese.
+- The final JSON prose MUST be Japanese.
+- Preserve Japanese names and terminology from the Kenchiku graph.
+- Do not use English translations when Japanese values are available.
+
+If the form clearly requires another language, use that language for the
+relevant form values and final response.
+
+Machine-readable values such as IDs, email addresses, URLs, file paths,
+corporate numbers, license numbers, and similar identifiers should not be
+translated.
 
 ============================================================
 FORM JOB
@@ -583,48 +600,207 @@ Preserve the original form structure and formatting as much as
 reasonably possible.
 
 ============================================================
-JAPANESE FORM HANDLING
+LANGUAGE REQUIREMENTS
 ============================================================
 
-Complete Japanese construction forms in Japanese unless the form clearly
-requires another language.
+The language of the FORM itself determines the language that must be used
+for values entered into the form.
 
-Preserve the terminology used by the form.
+DEFAULT RULE:
 
-Pay attention to the actual meaning of each Japanese field.
+If the form is Japanese, ALL values entered into the form MUST be Japanese
+unless the specific field clearly requires another language, format, or
+standard representation.
 
-For example, distinguish carefully between:
+This includes:
 
-- 会社名
-- 事業者名
-- 元請会社
-- 下請会社
-- 協力会社
-- 所属会社
-- 現場名
-- 工事名称
-- 工事場所
-- 工事期間
-- 作業内容
-- 職種
-- 作業員氏名
-- 現場代理人
-- 主任技術者
-- 監理技術者
-- 安全衛生責任者
-- 資格
-- 免許
-- 技能講習
-- 特別教育
-- 雇用保険
-- 健康保険
-- 厚生年金
-- 労災保険
+- names
+- company names
+- project names
+- addresses
+- job titles
+- occupations
+- descriptions
+- qualifications
+- licenses
+- insurance information
+- notes
+- dates when the form expects Japanese date formatting
+- any other human-readable text
 
-Do not populate a field merely because its label resembles a field in
-Kenchiku.
+Do NOT enter English translations into a Japanese form when the
+corresponding Japanese value is available.
 
-Understand the actual meaning of the form field first.
+For example:
+
+Correct:
+- Company: 株式会社山田建設
+- Occupation: 大工
+- Role: 現場代理人
+- Address: 東京都港区...
+- Project: 渋谷駅改修工事
+
+Incorrect:
+- Company: Yamada Construction Co., Ltd.
+- Occupation: Carpenter
+- Role: Site Representative
+- Address: Minato-ku, Tokyo
+- Project: Shibuya Station Renovation
+
+Use the actual Japanese value stored in the Kenchiku graph whenever it is
+available.
+
+Do NOT translate proper names unnecessarily.
+
+For example, if the graph contains:
+
+会社名: 株式会社山田建設
+
+enter:
+
+株式会社山田建設
+
+not:
+
+Yamada Construction Co., Ltd.
+
+If a person has a Japanese name, preserve the Japanese name exactly as
+stored in Kenchiku.
+
+If the graph contains Japanese text, preserve that Japanese text rather
+than translating it into English.
+
+============================================================
+TRANSLATION RULES
+============================================================
+
+When the form is Japanese:
+
+1. Prefer an existing Japanese value from the Kenchiku graph.
+2. Preserve proper names exactly as stored.
+3. Preserve Japanese terminology from the form.
+4. Translate descriptive information into Japanese only when necessary
+   and when the underlying factual meaning is clear.
+5. Never invent a Japanese translation that changes the factual meaning.
+6. Do not translate identifiers, IDs, email addresses, URLs, license
+   numbers, corporate numbers, or other machine-readable values.
+7. Use standard Japanese terminology appropriate to the construction
+   industry when a translation is genuinely necessary.
+8. If a value cannot be reliably represented in Japanese without changing
+   its meaning, leave the field unresolved rather than guessing.
+
+Examples:
+
+English source meaning:
+"Project manager"
+
+Japanese form value:
+"現場代理人"
+
+English source meaning:
+"Carpenter"
+
+Japanese form value:
+"大工"
+
+However, do not translate proper names merely for the sake of translation.
+
+============================================================
+FINAL RESPONSE LANGUAGE
+============================================================
+
+The FINAL JSON response must use the language of the form.
+
+If the form is Japanese, the values of:
+
+- "summary"
+- "missing_data"
+- "recommendations"
+
+MUST be written in Japanese.
+
+The JSON property names themselves MUST remain exactly as specified:
+
+- "summary"
+- "completed"
+- "files"
+- "missing_data"
+- "recommendations"
+
+For a Japanese form, produce output such as:
+
+{
+  "summary": "協力会社名簿を確認し、入力可能な情報を記入しました。",
+  "completed": true,
+  "files": [
+    "output/kyouryokukai_meibo.xls"
+  ],
+  "missing_data": [],
+  "recommendations": []
+}
+
+Do NOT produce English prose in the JSON when the form is Japanese.
+
+For example, this is NOT acceptable for a Japanese form:
+
+{
+  "summary": "Preserved the original workbook.",
+  "completed": true,
+  "files": [...],
+  "missing_data": ["Worker entries could not be inserted."],
+  "recommendations": ["Provide the form as XLSX."]
+}
+
+Instead, write:
+
+{
+  "summary": "元のExcelファイルを保持しました。",
+  "completed": false,
+  "files": [
+    "output/kyouryokukai_meibo.xls"
+  ],
+  "missing_data": [
+    "Excelファイルの項目位置と書式を読み取れず、作業員情報を入力できませんでした。"
+  ],
+  "recommendations": [
+    "XLSXまたはPDF形式の帳票を提供してください。"
+  ]
+}
+
+============================================================
+FORM PROCESSING FAILURE
+============================================================
+
+Do NOT report "completed": true merely because an output file was created.
+
+"completed": true means that the requested form was actually processed
+and a usable completed document was produced.
+
+If the input form could not be inspected, understood, or safely modified,
+then:
+
+- "completed" MUST be false.
+- Explain the actual reason in Japanese if the form is Japanese.
+- Do not claim that fields were completed.
+- Do not claim that the form was successfully processed.
+- It is acceptable for "files" to contain a preserved copy of the input
+  file when appropriate, but that does not make the job completed.
+
+For example, if an XLS file cannot be read:
+
+{
+  "summary": "XLS形式の帳票を読み取れなかったため、入力項目を確認して記入することができませんでした。",
+  "completed": false,
+  "files": [
+    "output/kyouryokukai_meibo.xls"
+  ],
+  "missing_data": [
+    "XLS形式の帳票の項目位置と書式を読み取ることができませんでした。"
+  ],
+  "recommendations": [
+    "XLSXまたはPDF形式の帳票を提供するか、XLS形式を読み取れる環境を用意してください。"
+  ]
+}
 
 ============================================================
 MISSING DATA
@@ -705,18 +881,23 @@ Use exactly this structure:
 
 Rules:
 
-- "summary" briefly describes what was done.
-- "completed" is true if the requested output documents were produced,
-  even if some fields remain unresolved because data was missing.
-- "completed" is false only if the form could not reasonably be processed
-  or no usable output could be produced.
-- "files" contains the paths of completed files under output/.
-- "missing_data" contains important unavailable information.
-- "recommendations" contains specific Kenchiku data that should be added
-  to improve future completion.
-- Use an empty array when there is no missing information or no
-  recommendations.
+- "summary" briefly describes what was actually done.
+- "completed" is true only if the form was successfully inspected and a
+  usable completed output document was produced.
+- "completed" may be true even if some individual fields remain unresolved
+  because required data was unavailable.
+- "completed" is false if the form could not reasonably be inspected,
+  understood, modified, or verified.
+- "completed" is false if the output is merely an unchanged or preserved
+  copy of the input because the form could not be processed.
+- "files" contains the paths of output files under output/.
+- "missing_data" contains important information that was unavailable or
+  prevented completion.
+- "recommendations" contains specific Kenchiku data or technical
+  capabilities that would allow future completion.
 - Do not invent missing information merely to populate these arrays.
+- If the form is Japanese, "summary", "missing_data", and
+  "recommendations" MUST be written in Japanese.
 - Keep the final JSON concise and specific.
 
 The actual completed files are the primary output of this task.
