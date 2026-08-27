@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+  echo "Usage: form-convert <input> <output-directory>" >&2
+  exit 1
+fi
+
+INPUT="$1"
+OUTPUT_DIR="$2"
+
+if [ ! -f "$INPUT" ]; then
+  echo "Input file does not exist: $INPUT" >&2
+  exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+EXTENSION="${INPUT##*.}"
+EXTENSION="$(printf '%s' "$EXTENSION" | tr '[:upper:]' '[:lower:]')"
+
+case "$EXTENSION" in
+  xls)
+    FORMAT="xlsx"
+    ;;
+
+  xlsx)
+    FORMAT="xls"
+    ;;
+
+  xlsm)
+    FORMAT="xlsx"
+    ;;
+
+  doc)
+    FORMAT="docx"
+    ;;
+
+  docx)
+    FORMAT="pdf"
+    ;;
+
+  ppt)
+    FORMAT="pptx"
+    ;;
+
+  pptx)
+    FORMAT="pdf"
+    ;;
+
+  ods)
+    FORMAT="xlsx"
+    ;;
+
+  *)
+    echo "Unsupported conversion from .$EXTENSION" >&2
+    exit 1
+    ;;
+esac
+
+libreoffice \
+  --headless \
+  --convert-to "$FORMAT" \
+  --outdir "$OUTPUT_DIR" \
+  "$INPUT"
+
+EXPECTED="$OUTPUT_DIR/$(basename "${INPUT%.*}").$FORMAT"
+
+if [ ! -f "$EXPECTED" ]; then
+  echo "Conversion did not produce expected file:"
+  echo "$EXPECTED"
+  exit 1
+fi
+
+echo "$EXPECTED"

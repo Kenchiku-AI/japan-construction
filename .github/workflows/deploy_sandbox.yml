@@ -1,0 +1,114 @@
+name: Prod - Deploy Form Sandbox
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_SANDBOX_REPOSITORY: ${{ secrets.VERCEL_SANDBOX_REPOSITORY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Vercel configuration
+        run: |
+          set -e
+
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::VERCEL_TOKEN is not configured."
+            exit 1
+          fi
+
+          if [ -z "$VERCEL_ORG_ID" ]; then
+            echo "::error::VERCEL_ORG_ID is not configured."
+            exit 1
+          fi
+
+          if [ -z "$VERCEL_SANDBOX_REPOSITORY" ]; then
+            echo "::error::VERCEL_SANDBOX_REPOSITORY is not configured."
+            exit 1
+          fi
+
+          echo "Vercel configuration is present."
+          echo "Sandbox repository: $VERCEL_SANDBOX_REPOSITORY"
+
+      - name: Install Vercel CLI
+        run: |
+          npm install --global vercel@latest
+
+      - name: Check Vercel CLI
+        run: |
+          vercel --version
+
+      - name: Authenticate with Vercel Container Registry
+        run: |
+          set -e
+
+          echo "$VERCEL_TOKEN" | \
+            docker login vcr.vercel.com \
+              --username "$VERCEL_ORG_ID" \
+              --password-stdin
+
+      - name: Build sandbox image
+        run: |
+          set -e
+
+          IMAGE="vcr.vercel.com/${VERCEL_SANDBOX_REPOSITORY}"
+
+          echo "Building sandbox image:"
+          echo "$IMAGE:${GITHUB_SHA}"
+
+          docker build \
+            --file sandbox/Dockerfile \
+            --tag "$IMAGE:${GITHUB_SHA}" \
+            --tag "$IMAGE:prod" \
+            sandbox
+
+      - name: Test sandbox image
+        run: |
+          set -e
+
+          IMAGE="vcr.vercel.com/${VERCEL_SANDBOX_REPOSITORY}:${GITHUB_SHA}"
+
+          echo "Running sandbox diagnostics..."
+
+          docker run \
+            --rm \
+            "$IMAGE" \
+            sandbox-diagnostics
+
+      - name: Push sandbox image
+        run: |
+          set -e
+
+          IMAGE="vcr.vercel.com/${VERCEL_SANDBOX_REPOSITORY}"
+
+          docker push "$IMAGE:${GITHUB_SHA}"
+          docker push "$IMAGE:prod"
+
+      - name: Deployment summary
+        run: |
+          echo "============================================================"
+          echo "Form Sandbox PROD deployment complete"
+          echo "============================================================"
+          echo
+          echo "Repository:"
+          echo "  ${VERCEL_SANDBOX_REPOSITORY}"
+          echo
+          echo "Git SHA:"
+          echo "  ${GITHUB_SHA}"
+          echo
+          echo "Image:"
+          echo "  vcr.vercel.com/${VERCEL_SANDBOX_REPOSITORY}:${GITHUB_SHA}"
+          echo
+          echo "Prod tag:"
+          echo "  vcr.vercel.com/${VERCEL_SANDBOX_REPOSITORY}:prod"

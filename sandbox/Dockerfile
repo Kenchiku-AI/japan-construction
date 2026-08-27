@@ -1,0 +1,50 @@
+FROM python:3.13-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    libreoffice \
+    libreoffice-calc \
+    libreoffice-writer \
+    libreoffice-impress \
+    poppler-utils \
+    imagemagick \
+    tesseract-ocr \
+    tesseract-ocr-jpn \
+    file \
+    unzip \
+    zip \
+    curl \
+    ca-certificates \
+    fonts-noto-cjk \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /tmp/requirements.txt
+
+RUN pip install \
+  -r /tmp/requirements.txt
+
+COPY scripts/form-inspect /usr/local/bin/form-inspect
+COPY scripts/form-convert /usr/local/bin/form-convert
+COPY scripts/form-verify /usr/local/bin/form-verify
+COPY scripts/inspect_excel.py /usr/local/bin/inspect_excel.py
+
+RUN chmod +x \
+  /usr/local/bin/form-inspect \
+  /usr/local/bin/form-convert \
+  /usr/local/bin/form-verify
+
+COPY scripts/sandbox-diagnostics /usr/local/bin/sandbox-diagnostics
+
+RUN chmod +x \
+  /usr/local/bin/form-inspect \
+  /usr/local/bin/form-convert \
+  /usr/local/bin/form-verify \
+  /usr/local/bin/sandbox-diagnostics
+
+WORKDIR /vercel/sandbox
+
+CMD ["bash"]

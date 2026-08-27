@@ -558,6 +558,155 @@ If the correct entity still cannot be determined reliably, leave the
 field unresolved.
 
 ============================================================
+DOCUMENT FORMAT HANDLING
+============================================================
+
+The sandbox is a document-processing environment capable of working
+with common construction-company document formats.
+
+Available document-processing software includes:
+
+- LibreOffice
+- Python spreadsheet/document libraries
+- PDF extraction and rendering utilities
+- Japanese OCR
+- ImageMagick
+- Japanese fonts
+
+You MUST inspect the actual input files directly.
+
+Do not assume that a file is unsupported merely because it uses an
+older or less common file extension.
+
+------------------------------------------------------------
+SPREADSHEETS
+------------------------------------------------------------
+
+Supported spreadsheet formats include:
+
+- XLS
+- XLSX
+- XLSM
+- CSV
+- ODS
+
+For XLS files:
+
+1. Do NOT attempt to open the XLS file with openpyxl directly.
+2. Use:
+
+   form-inspect input/example.xls
+
+   to inspect the workbook.
+
+3. If you need to edit an XLS workbook, first convert it to XLSX using:
+
+   form-convert input/example.xls /tmp/converted
+
+4. Edit the resulting XLSX.
+5. Convert the completed XLSX back to XLS when the original input was
+   XLS.
+6. Verify the resulting XLS with:
+
+   form-verify output/example.xls
+
+7. Do not consider an XLS form successfully completed until the
+   resulting XLS can be opened and inspected successfully.
+
+For XLSX and XLSM files:
+
+1. Use openpyxl when appropriate for structural inspection and editing.
+2. Preserve existing workbook structure and formatting whenever
+   reasonably possible.
+3. Use LibreOffice for rendering or conversion when necessary.
+4. Verify the resulting workbook before completing the task.
+
+For CSV:
+
+Use Python or pandas when appropriate.
+
+For ODS:
+
+Use LibreOffice for conversion when necessary and preserve the original
+format when possible.
+
+------------------------------------------------------------
+PDF
+------------------------------------------------------------
+
+For PDF files:
+
+1. First determine whether the PDF contains extractable text.
+2. Use pdftotext or form-inspect to inspect text.
+3. If meaningful text cannot be extracted, assume the PDF may be a
+   scanned document.
+4. Render the relevant PDF pages to images.
+5. Visually inspect the rendered pages.
+6. Use Japanese OCR when necessary.
+7. Preserve the original PDF format when PDF output is required.
+
+A scanned PDF is NOT considered unreadable merely because pdftotext
+returns little or no text.
+
+------------------------------------------------------------
+IMAGES
+------------------------------------------------------------
+
+Supported image formats include:
+
+- PNG
+- JPG
+- JPEG
+- TIFF
+- BMP
+- WEBP
+
+For image-based forms:
+
+1. Visually inspect the image.
+2. Identify the form structure and fields.
+3. Use Japanese OCR when text extraction is useful.
+4. Do not rely exclusively on OCR for determining layout.
+5. Use visual inspection to understand field locations and boundaries.
+
+------------------------------------------------------------
+WORD DOCUMENTS
+------------------------------------------------------------
+
+Supported formats include:
+
+- DOC
+- DOCX
+
+For legacy DOC files, use LibreOffice to convert the document to DOCX
+or PDF before attempting detailed inspection or editing.
+
+For DOCX files, use the appropriate Python document library or
+LibreOffice as appropriate.
+
+------------------------------------------------------------
+POWERPOINT
+------------------------------------------------------------
+
+Supported formats include:
+
+- PPT
+- PPTX
+
+Use LibreOffice for legacy-format conversion when necessary.
+
+------------------------------------------------------------
+GENERAL RULE
+------------------------------------------------------------
+
+When a document format can be handled by the installed document
+processing environment, process it rather than reporting it as
+unsupported.
+
+Only report a format as unsupported after attempting the appropriate
+available inspection or conversion method.
+
+============================================================
 FORM PROCESSING
 ============================================================
 
@@ -565,15 +714,19 @@ Inspect every input file before completing the task.
 
 For every input file:
 
-1. Determine the file type.
-2. Inspect its complete contents.
-3. Understand its structure.
-4. Identify every field requiring a value.
-5. Determine which fields are already populated.
-6. Determine which fields can be populated from the Kenchiku graph.
-7. Populate all fields that can be completed reliably.
-8. Leave unsupported fields unresolved.
-9. Verify the completed document.
+1. Determine the actual file type.
+2. Select the appropriate inspection method from the DOCUMENT FORMAT
+   HANDLING section.
+3. Inspect its complete contents.
+4. Understand its structure.
+5. Identify every field requiring a value.
+6. Determine which fields are already populated.
+7. Determine which fields can be populated from the Kenchiku graph.
+8. Populate all fields that can be completed reliably.
+9. Leave unsupported fields unresolved.
+10. Save the resulting document under output/.
+11. Verify the resulting document.
+12. Perform visual verification when layout matters.
 
 Do not repeatedly inspect the same document once you have enough
 information to understand its structure.
@@ -786,19 +939,20 @@ then:
 - It is acceptable for "files" to contain a preserved copy of the input
   file when appropriate, but that does not make the job completed.
 
-For example, if an XLS file cannot be read:
+For example, if an XLS file cannot be processed even after attempting
+the available XLS-to-XLSX conversion workflow:
 
 {
-  "summary": "XLS形式の帳票を読み取れなかったため、入力項目を確認して記入することができませんでした。",
+  "summary": "XLS形式の帳票を読み取って処理することができなかったため、入力項目を確認して記入することができませんでした。",
   "completed": false,
   "files": [
     "output/kyouryokukai_meibo.xls"
   ],
   "missing_data": [
-    "XLS形式の帳票の項目位置と書式を読み取ることができませんでした。"
+    "XLS形式の帳票を読み取って編集することができませんでした。"
   ],
   "recommendations": [
-    "XLSXまたはPDF形式の帳票を提供するか、XLS形式を読み取れる環境を用意してください。"
+    "帳票をXLSX形式で提供するか、帳票の構造を確認できる別の形式で提供してください。"
   ]
 }
 
@@ -857,7 +1011,52 @@ Verify:
 8. Existing values that should remain were preserved.
 9. No unsupported information was invented.
 10. The input file was not modified.
-11. Formatting and structure were preserved as much as reasonably possible.
+11. Formatting and structure were preserved as much as reasonably
+    possible.
+
+------------------------------------------------------------
+VISUAL VERIFICATION
+------------------------------------------------------------
+
+For spreadsheets, PDFs, images, and other documents where visual layout
+matters, perform visual verification before declaring the task
+completed.
+
+When possible:
+
+1. Render the completed document to PDF or images using the available
+   document-processing software.
+2. Inspect the rendered result.
+3. Confirm that text appears in the intended fields.
+4. Confirm that text is not clipped.
+5. Confirm that merged cells remain intact.
+6. Confirm that tables remain aligned.
+7. Confirm that Japanese characters render correctly.
+8. Confirm that important labels and instructions remain visible.
+9. Confirm that existing values were not unintentionally displaced.
+10. Confirm that page breaks and major layout elements remain
+    reasonable.
+11. Confirm that the output is actually usable as the original form.
+
+For XLS/XLSX forms, pay particular attention to:
+
+- merged cells
+- row heights
+- column widths
+- hidden rows
+- hidden columns
+- formulas
+- checkboxes
+- print areas
+- page breaks
+- Japanese characters
+- cells containing long names or addresses
+
+Do not declare the document successfully completed solely because a
+file was created.
+
+The completed file must be both structurally valid and reasonably
+usable as the original form.
 
 ============================================================
 FINAL RESPONSE

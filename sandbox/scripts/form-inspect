@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  echo "Usage: form-inspect <file>" >&2
+  exit 1
+fi
+
+FILE="$1"
+
+if [ ! -f "$FILE" ]; then
+  echo "File does not exist: $FILE" >&2
+  exit 1
+fi
+
+TYPE="$(file -b "$FILE")"
+EXTENSION="${FILE##*.}"
+EXTENSION="$(printf '%s' "$EXTENSION" | tr '[:upper:]' '[:lower:]')"
+
+echo "============================================================"
+echo "FILE INSPECTION"
+echo "============================================================"
+echo
+echo "Path:"
+echo "$FILE"
+echo
+echo "Extension:"
+echo ".$EXTENSION"
+echo
+echo "Detected type:"
+echo "$TYPE"
+echo
+
+case "$EXTENSION" in
+  xls|xlsx|xlsm)
+    echo "============================================================"
+    echo "SPREADSHEET STRUCTURE"
+    echo "============================================================"
+    echo
+
+    python /usr/local/bin/inspect_excel.py "$FILE"
+    ;;
+
+  pdf)
+    echo "============================================================"
+    echo "PDF TEXT"
+    echo "============================================================"
+    echo
+
+    pdftotext -layout "$FILE" - || true
+
+    echo
+    echo "============================================================"
+    echo "PDF METADATA"
+    echo "============================================================"
+    echo
+
+    pdfinfo "$FILE" || true
+    ;;
+
+  docx)
+    echo "============================================================"
+    echo "DOCX CONTENT"
+    echo "============================================================"
+    echo
+
+    python - "$FILE" <<'PY'
+from pathlib import Path
+from docx import Document
+import json
+import sys
+
+path = Path(sys.argv[1])
+document = Document(path)
+
+paragraphs = [
+  paragraph.text
+  for paragraph in document.paragraphs
+  if paragraph.text.strip()
+]
+
+tables = []
+
+for table in document.tables:
+  rows = []
+
+  for row in table.rows:
+    rows.append([
+      cell.text
+      for cell in row.cells
+    ])
+
+  tables.append(rows)
+
+print(
+  json.dumps(
+    {
+      "paragraphs": paragraphs,
+      "tables": tables,
+    },
+    ensure_ascii=False,
+    indent=2,
+  )
+)
+PY
+    ;;
+
+  doc)
+    echo "Legacy DOC format detected."
+    echo "Use form-convert to convert it to DOCX or PDF."
+    ;;
+
+  png|jpg|jpeg|tif|tiff|bmp|webp)
+    echo "============================================================"
+    echo "IMAGE INFORMATION"
+    echo "============================================================"
+    echo
+
+    identify "$FILE" || true
+
+    echo
+    echo "============================================================"
+    echo "OCR"
+    echo "============================================================"
+    echo
+
+    tesseract \
+      "$FILE" \
+      stdout \
+      -l jpn+eng \
+      --psm 6 \
+      2>/dev/null || true
+    ;;
+
+  csv)
+    echo "============================================================"
+    echo "CSV CONTENT"
+    echo "============================================================"
+    echo
+
+    python - "$FILE" <<'PY'
+import csv
+import json
+import sys
+
+path = sys.argv[1]
+
+with open(
+  path,
+  "r",
+  encoding="utf-8-sig",
+  newline="",
+) as file:
+  reader = csv.reader(file)
+  rows = list(reader)
+
+print(
+  json.dumps(
+    {
+      "rows": rows,
+      "row_count": len(rows),
+    },
+    ensure_ascii=False,
+    indent=2,
+  )
+)
+PY
+    ;;
+
+  *)
+    echo "No specialized inspector exists for .$EXTENSION."
+    echo
+    echo "Use file-specific conversion or inspection utilities."
+    ;;
+esac
