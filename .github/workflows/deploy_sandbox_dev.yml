@@ -12,7 +12,7 @@ jobs:
 
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN_DEV }}
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID_DEV }}
+      VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID_DEV }}
       VERCEL_SANDBOX_REPOSITORY: ${{ secrets.VERCEL_SANDBOX_REPOSITORY_DEV }}
 
     steps:
@@ -28,8 +28,8 @@ jobs:
             exit 1
           fi
 
-          if [ -z "$VERCEL_ORG_ID" ]; then
-            echo "::error::VERCEL_ORG_ID_DEV is not configured."
+          if [ -z "$VERCEL_TEAM_ID" ]; then
+            echo "::error::VERCEL_TEAM_ID_DEV is not configured."
             exit 1
           fi
 
@@ -55,7 +55,7 @@ jobs:
 
           echo "$VERCEL_TOKEN" | \
             docker login vcr.vercel.com \
-              --username "$VERCEL_ORG_ID" \
+              --username "$VERCEL_TEAM_ID" \
               --password-stdin
 
       - name: Build sandbox image
