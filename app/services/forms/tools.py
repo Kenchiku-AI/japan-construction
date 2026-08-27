@@ -451,7 +451,7 @@ def _relationship_dict(
   definition = relationship.definition
 
   source = _entity_reference(
-    relationship.source_entity_type,
+    _enum_value(relationship.source_entity_type),
     relationship.source_entity_id,
     companies=companies,
     projects=projects,
@@ -460,7 +460,7 @@ def _relationship_dict(
   )
 
   target = _entity_reference(
-    relationship.target_entity_type,
+    _enum_value(relationship.target_entity_type),
     relationship.target_entity_id,
     companies=companies,
     projects=projects,
@@ -877,32 +877,49 @@ async def get_custom_object(
 async def get_form_data(
   ctx: RunContextWrapper[FormAgentContext],
 ) -> dict[str, Any]:
-  """Get the complete Kenchiku data available to this form job.
+  """Get the complete Kenchiku data available to this form job."""
 
-  Returns all information for the current company, including:
-
-  - Company information and custom fields.
-  - Every project belonging to the company.
-  - Every company user.
-  - Every custom object belonging to the company.
-  - Custom fields on every project, user, and custom object.
-  - All actual custom relationship instances.
-  - Human-readable information about the entities on both sides of
-    every relationship.
-  - All custom relationship definitions, including their names,
-    descriptions, entity types, custom object types, and cardinality.
-
-  IMPORTANT:
-
-  Project/user associations are represented by custom relationships.
-  Do not rely on ProjectUserLink or ProjectGuestLink.
-
-  If a form job has a project_id, that project is the project that the
-  form is associated with. Use its relationships to identify users,
-  companies, and other entities associated with that specific project.
-  """
-
-  return await _build_all_company_data(
+  data = await _build_all_company_data(
     ctx.context.db,
     ctx.context.company_id,
   )
+
+  logger.info(
+    "Form agent data: company=%s project=%s projects=%d users=%d "
+    "custom_objects=%d relationship_definitions=%d",
+    ctx.context.company_id,
+    ctx.context.project_id,
+    len(data.get("projects", [])),
+    len(data.get("users", [])),
+    len(data.get("custom_objects", [])),
+    len(data.get("relationship_definitions", [])),
+  )
+
+  if ctx.context.project_id:
+    project_id = str(ctx.context.project_id)
+
+    project = next(
+      (
+        project
+        for project in data.get("projects", [])
+        if project["id"] == project_id
+      ),
+      None,
+    )
+
+    if project:
+      logger.info(
+        "Form agent project %s has %d relationships",
+        project_id,
+        len(project.get("relationships", [])),
+      )
+
+      for relationship in project.get("relationships", []):
+        logger.info(
+          "Project relationship: name=%s source=%s target=%s",
+          relationship.get("name"),
+          relationship.get("source"),
+          relationship.get("target"),
+        )
+
+  return data
