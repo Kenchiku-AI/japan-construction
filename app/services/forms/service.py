@@ -13,6 +13,7 @@ from app.db.models.form_job import (
   FormJobStatus,
 )
 from app.services.forms.agent import run_form_agent
+from app.services.forms.company_graph import build_company_graph
 from app.services.forms.sandbox import get_form_sandbox_client
 from app.services.forms.storage import FormStorage
 
@@ -96,7 +97,7 @@ class FormJobService:
           input_dir,
         )
 
-        prompt = self._build_prompt(
+        prompt = await self._build_prompt(
           job,
           input_files,
         )
@@ -296,7 +297,7 @@ class FormJobService:
 
     return files
 
-  def _build_prompt(
+  async def _build_prompt(
     self,
     job: FormJob,
     input_files: list[Path],
@@ -307,10 +308,39 @@ class FormJobService:
       for path in input_files
     )
 
+    company_graph = await build_company_graph(
+      db=self.db,
+      company_id=job.company_id,
+      project_id=job.project_id,
+    )
+
+    project_context = ""
+
+    if job.project_id is not None:
+      project_context = f"""
+============================================================
+PRIMARY PROJECT
+============================================================
+
+Primary project database ID:
+
+{job.project_id}
+
+The project with this ID is the primary project for this form job.
+
+The Kenchiku graph identifies it with [PRIMARY PROJECT].
+
+Start entity selection from this project and follow its explicit
+relationships when determining which users, companies, and custom
+objects are relevant.
+"""
+
     return f"""
 Complete the Japanese construction-related form task described below.
 
+============================================================
 FORM JOB
+============================================================
 
 Form name:
 {job.name}
@@ -318,64 +348,350 @@ Form name:
 Form description:
 {job.description or "No description provided."}
 
+============================================================
 INPUT FILES
+============================================================
 
-The following input files are available:
+The following input files are available inside the sandbox:
 
 {file_list}
 
-TASK
+You MUST inspect the input files directly.
 
-Inspect all of the input files and complete the forms according to the
-form job description and the Kenchiku data available through your tools.
+============================================================
+KENCHIKU DATA GRAPH
+============================================================
 
-This may be a Japanese construction-industry form such as a 協力会社名簿,
-作業員名簿, 労務安全書類, グリーンファイル, construction company
-roster, worker roster, qualification list, safety document, subcontractor
-document, or another construction-related administrative form.
+The complete Kenchiku company data graph is included below.
 
-Do not assume the exact type of form. Determine its actual purpose by
-inspecting the document.
+This graph was generated directly from the Kenchiku database before
+this agent run.
 
-IMPORTANT:
+The graph is authoritative.
 
-- Inspect every input file.
-- Do not modify any file under input/.
-- Use Kenchiku tools when information is needed.
-- Prefer authoritative Kenchiku data.
-- Do not invent information.
-- Do not guess missing values.
-- Preserve existing values unless they need to be changed according to
-  the task.
-- Preserve the original Japanese labels and instructions.
-- Preserve the original layout and formatting as much as reasonably
-  possible.
-- Complete every field that can be populated reliably.
-- Leave fields unresolved when the required information is unavailable or
-  ambiguous.
-- Do not add explanatory English text to the form.
+DO NOT attempt to retrieve Kenchiku company, project, user, custom
+object, custom field, or relationship data through tools.
 
-MISSING DATA IS NOT A JOB FAILURE.
+There are no Kenchiku data tools available to this agent.
 
-If the available Kenchiku data is insufficient to fully complete the form,
-do NOT fail the job.
+Use the graph below as the source of truth.
 
-Instead:
+{company_graph}
 
-1. Complete every field that can be completed reliably.
+{project_context}
+
+============================================================
+HOW TO USE THE GRAPH
+============================================================
+
+The graph contains:
+
+1. Company information.
+2. Project information.
+3. User information.
+4. Custom object definitions.
+5. Custom object instances.
+6. Custom field definitions.
+7. Custom field values.
+8. Custom relationship definitions.
+9. Custom relationship instances.
+
+Each entity has a stable short graph ID:
+
+C-XXXXXXXX = company
+P-XXXXXXXX = project
+U-XXXXXXXX = user
+O-XXXXXXXX = custom object
+
+These IDs allow you to connect information across the graph.
+
+For example:
+
+P-12345678 --[現場作業員]--> U-87654321
+
+means that the project P-12345678 is explicitly related to user
+U-87654321 through the relationship 現場作業員.
+
+The relationship definition explains the semantic meaning of that
+relationship.
+
+============================================================
+ENTITY SELECTION
+============================================================
+
+When deciding which Kenchiku entity should provide a form value:
+
+1. Start with the primary project when one is provided.
+2. Examine relationships directly connected to that project.
+3. Determine the semantic meaning of each relationship from the
+   relationship definition.
+4. Follow relevant relationships to users, companies, and custom
+   objects.
+5. Read the custom fields on those entities.
+6. Use company information when company-level information is required.
+7. Use the entity's own fields and relationships to determine whether
+   it actually matches the form field.
+
+Do NOT assume that every entity belonging to the company is relevant
+to the current project.
+
+============================================================
+RELATIONSHIP RULES
+============================================================
+
+Relationships are explicit application data.
+
+Relationship direction matters.
+
+An outgoing relationship means:
+
+A --[RELATIONSHIP]--> B
+
+A is the source and B is the target.
+
+An incoming relationship means:
+
+A <--[RELATIONSHIP]-- B
+
+B is the source and A is the target.
+
+The graph may show the same relationship under both connected entities
+so that it can be discovered from either side.
+
+Always use the actual source and target shown in the relationship edge
+index when interpreting direction.
+
+Do not infer relationships from:
+
+- shared company
+- similar names
+- matching email addresses
+- similar custom field values
+- proximity in the graph
+- the fact that two users belong to the same company
+- the fact that two entities appear in the same section
+
+Only explicit relationships establish an association.
+
+============================================================
+CUSTOM FIELD RULES
+============================================================
+
+Custom field definitions explain what a custom field means.
+
+A custom field value belongs only to the entity where the value is
+shown.
+
+For example:
+
+FIELD:
+フリガナ
+
+Meaning:
+氏名のフリガナ
+
+USER:
+U-12345678
+
+Custom fields:
+フリガナ: ヤマダ タロウ
+
+means that ヤマダ タロウ is the furigana value for that specific user.
+
+Do not transfer a custom field value from one entity to another.
+
+============================================================
+DATA ACCURACY
+============================================================
+
+Never fabricate information.
+
+Never guess missing factual values.
+
+If a required value cannot be determined reliably from the graph or
+the input document, leave the form field unresolved.
+
+Do not invent:
+
+- names
+- addresses
+- phone numbers
+- dates
+- qualifications
+- license numbers
+- insurance information
+- project information
+- company information
+- employment information
+- registration numbers
+- identification numbers
+- any other factual information
+
+If multiple entities could satisfy a field, use:
+
+1. primary project context
+2. explicit relationship semantics
+3. entity type
+4. custom field meaning
+5. form context
+
+to determine the correct entity.
+
+If the correct entity still cannot be determined reliably, leave the
+field unresolved.
+
+============================================================
+FORM PROCESSING
+============================================================
+
+Inspect every input file before completing the task.
+
+For every input file:
+
+1. Determine the file type.
+2. Inspect its complete contents.
+3. Understand its structure.
+4. Identify every field requiring a value.
+5. Determine which fields are already populated.
+6. Determine which fields can be populated from the Kenchiku graph.
+7. Populate all fields that can be completed reliably.
+8. Leave unsupported fields unresolved.
+9. Verify the completed document.
+
+Do not repeatedly inspect the same document once you have enough
+information to understand its structure.
+
+============================================================
+EXISTING VALUES
+============================================================
+
+Preserve existing values.
+
+Do not overwrite an existing value unless the task specifically
+requires a different value.
+
+Do not delete:
+
+- labels
+- headers
+- instructions
+- tables
+- footers
+- static explanatory text
+
+Preserve the original form structure and formatting as much as
+reasonably possible.
+
+============================================================
+JAPANESE FORM HANDLING
+============================================================
+
+Complete Japanese construction forms in Japanese unless the form clearly
+requires another language.
+
+Preserve the terminology used by the form.
+
+Pay attention to the actual meaning of each Japanese field.
+
+For example, distinguish carefully between:
+
+- 会社名
+- 事業者名
+- 元請会社
+- 下請会社
+- 協力会社
+- 所属会社
+- 現場名
+- 工事名称
+- 工事場所
+- 工事期間
+- 作業内容
+- 職種
+- 作業員氏名
+- 現場代理人
+- 主任技術者
+- 監理技術者
+- 安全衛生責任者
+- 資格
+- 免許
+- 技能講習
+- 特別教育
+- 雇用保険
+- 健康保険
+- 厚生年金
+- 労災保険
+
+Do not populate a field merely because its label resembles a field in
+Kenchiku.
+
+Understand the actual meaning of the form field first.
+
+============================================================
+MISSING DATA
+============================================================
+
+Missing data is NOT a job failure.
+
+If information is unavailable:
+
+1. Complete everything that can be completed reliably.
 2. Leave unsupported fields unresolved.
 3. Save the resulting document under output/.
-4. In your final JSON result, clearly identify the missing information.
-5. In your final JSON result, recommend the specific Kenchiku data that
-   should be added to make future completion possible.
+4. Report the missing information in the final JSON.
+5. Recommend specific Kenchiku data that would allow future completion.
 
-Do not fabricate people, companies, dates, addresses, qualifications,
-licenses, insurance information, project information, or any other
-factual information.
+Do not use placeholders such as:
 
+N/A
+不明
+未定
+なし
+
+unless the form specifically calls for such a value.
+
+============================================================
+OUTPUT
+============================================================
+
+All completed documents MUST be written under:
+
+output/
+
+Never write completed documents elsewhere.
+
+Never modify files under input/.
+
+Preserve the original file format whenever possible.
+
+============================================================
+VERIFICATION
+============================================================
+
+Before finishing, verify every output document individually.
+
+Verify:
+
+1. The file exists under output/.
+2. The file can be opened/read.
+3. The expected file was created.
+4. Intended fields were populated.
+5. Values are in the correct locations.
+6. Japanese text is appropriate.
+7. Existing labels and instructions remain intact.
+8. Existing values that should remain were preserved.
+9. No unsupported information was invented.
+10. The input file was not modified.
+11. Formatting and structure were preserved as much as reasonably possible.
+
+============================================================
 FINAL RESPONSE
+============================================================
 
-Your final response MUST be valid JSON with this structure:
+Your final response MUST be valid JSON.
+
+Do not wrap the JSON in Markdown.
+
+Use exactly this structure:
 
 {{
   "summary": "Brief description of what you did.",
@@ -387,11 +703,21 @@ Your final response MUST be valid JSON with this structure:
   "recommendations": []
 }}
 
-The JSON must accurately describe the work you actually performed.
+Rules:
 
-All completed files MUST be saved under:
+- "summary" briefly describes what was done.
+- "completed" is true if the requested output documents were produced,
+  even if some fields remain unresolved because data was missing.
+- "completed" is false only if the form could not reasonably be processed
+  or no usable output could be produced.
+- "files" contains the paths of completed files under output/.
+- "missing_data" contains important unavailable information.
+- "recommendations" contains specific Kenchiku data that should be added
+  to improve future completion.
+- Use an empty array when there is no missing information or no
+  recommendations.
+- Do not invent missing information merely to populate these arrays.
+- Keep the final JSON concise and specific.
 
-output/
-
-Do not save the completed documents anywhere else.
+The actual completed files are the primary output of this task.
 """
