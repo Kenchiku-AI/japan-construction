@@ -12,7 +12,7 @@ jobs:
 
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID_DEV }}
+      VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
       VERCEL_SANDBOX_IMAGE: ${{ secrets.VERCEL_SANDBOX_IMAGE_DEV }}
 
     steps:
@@ -29,7 +29,7 @@ jobs:
           fi
 
           if [ -z "$VERCEL_TEAM_ID" ]; then
-            echo "::error::VERCEL_TEAM_ID_DEV is not configured."
+            echo "::error::VERCEL_TEAM_ID is not configured."
             exit 1
           fi
 
