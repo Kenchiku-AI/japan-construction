@@ -6,6 +6,7 @@ from importlib.metadata import distributions, version
 from pathlib import Path
 from typing import Any
 from uuid import UUID
+from vercel import Sandbox
 
 from agents import Runner
 from agents.run import RunConfig
@@ -43,6 +44,30 @@ async def run_form_agent(
   company_id: UUID,
   project_id: UUID | None,
 ):
+  logger.info(
+    "Vercel Sandbox class: %s",
+    Sandbox,
+  )
+
+  logger.info(
+    "Vercel Sandbox constructor/signature: %s",
+    inspect.signature(Sandbox),
+  )
+
+  logger.info(
+    "Vercel Sandbox methods: %s",
+    [
+      name
+      for name in dir(Sandbox)
+      if not name.startswith("_")
+    ],
+  )
+
+  logger.info(
+    "vercel package version: %s",
+    version("vercel"),
+  )
+
   agent = build_form_agent()
 
   workspace = workspace.resolve()
