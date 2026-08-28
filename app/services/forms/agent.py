@@ -127,7 +127,7 @@ async def run_form_agent(
       "output",
     )
 
-    if mkdir_result.return_code != 0:
+    if mkdir_result.returncode != 0:
       stderr_raw = getattr(mkdir_result, "stderr", b"")
       stderr = (
         stderr_raw.decode(errors="replace") 
@@ -136,7 +136,7 @@ async def run_form_agent(
       )
       raise RuntimeError(
         "Failed to create input/output directories inside sandbox. "
-        f"Exit status: {mkdir_result.return_code}. Error: {stderr}"
+        f"Exit status: {mkdir_result.returncode}. Error: {stderr}"
       )
 
     for host_file in host_input_files:
