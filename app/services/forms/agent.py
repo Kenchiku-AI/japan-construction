@@ -41,17 +41,6 @@ async def run_form_agent(
   company_id: UUID,
   project_id: UUID | None,
 ):
-  try:
-    logger.info(
-      "SNAPSHOT MODULE: %s",
-      inspect.getsource(snapshot_module)
-    )
-  except Exception:
-    logger.exception(
-      "Could not inspect SNAPSHOT MODULE."
-    )
-
-
   agent = build_form_agent()
 
   workspace = workspace.resolve()
@@ -225,10 +214,15 @@ async def run_form_agent(
   finally:
     if sandbox is not None:
       try:
-        await sandbox.aclose()
+        await sandbox.delete()
+
+        logger.info(
+          "Vercel sandbox deleted successfully."
+        )
+
       except Exception:
         logger.exception(
-          "Error closing form agent sandbox.",
+          "Error deleting form agent sandbox.",
         )
 
 
