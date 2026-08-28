@@ -131,13 +131,6 @@ async def run_form_agent(
       stderr = mkdir_result.stderr.decode(errors="replace") if mkdir_result.stderr else "Unknown Error"
       raise RuntimeError(f"Failed folder setup. Error: {stderr}")
 
-      raise RuntimeError(
-        "Failed to create input/output directories "
-        "inside sandbox. "
-        f"Exit code: {mkdir_result.exit_code}. "
-        f"Error: {stderr}"
-      )
-
     for host_file in host_input_files:
       sandbox_path = (
         Path("input")
