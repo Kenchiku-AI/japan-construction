@@ -1,28 +1,21 @@
 import io
 import logging
-import inspect
-import os
-from importlib.metadata import distributions, version
 from pathlib import Path
 from typing import Any
 from uuid import UUID
-from vercel.sandbox import Sandbox
 
 from agents import Runner
 from agents.run import RunConfig
 from agents.sandbox import (
+  BaseSandboxSession,
   SandboxAgent,
   SandboxRunConfig,
 )
-import agents.sandbox.snapshot as snapshot_module
-from agents.extensions.sandbox import (
-  VercelSandboxClientOptions,
-)
 from sqlalchemy.ext.asyncio import AsyncSession
+from vercel.sandbox import Sandbox
 
-from app.services.forms.prompts import (
-  FORM_AGENT_INSTRUCTIONS,
-)
+from app.core.config import settings
+from app.services.forms.prompts import FORM_AGENT_INSTRUCTIONS
 
 
 logger = logging.getLogger(__name__)
@@ -37,63 +30,12 @@ def build_form_agent() -> SandboxAgent:
 
 async def run_form_agent(
   prompt: str,
-  sandbox_client: Any,
   workspace: Path,
   output_dir: Path,
   db: AsyncSession,
   company_id: UUID,
   project_id: UUID | None,
 ):
-  logger.info(
-    "Vercel Sandbox class: %s",
-    Sandbox,
-  )
-
-  logger.info(
-    "Vercel Sandbox constructor/signature: %s",
-    inspect.signature(Sandbox),
-  )
-
-  logger.info(
-    "Vercel Sandbox methods: %s",
-    [
-      name
-      for name in dir(Sandbox)
-      if not name.startswith("_")
-    ],
-  )
-
-  logger.info(
-    "vercel package version: %s",
-    version("vercel"),
-  )
-
-  try:
-    logger.info(
-      "Vercel Sandbox.create signature: %s",
-      inspect.signature(
-        Sandbox.create,
-      ),
-    )
-  except Exception:
-    logger.exception(
-      "Could not inspect Sandbox.create signature."
-    )
-
-  try:
-    logger.info(
-      "Vercel Sandbox.create annotations: %s",
-      getattr(
-        Sandbox.create,
-        "__annotations__",
-        None,
-      ),
-    )
-  except Exception:
-    logger.exception(
-      "Could not inspect Sandbox.create annotations."
-    )
-
   agent = build_form_agent()
 
   workspace = workspace.resolve()
@@ -126,23 +68,34 @@ async def run_form_agent(
   )
 
   sandbox = None
+  sandbox_session = None
 
   try:
     logger.info(
-      "Creating sandbox for form agent.",
+      "Creating Vercel sandbox for form agent."
     )
 
-    sandbox = await sandbox_client.create(
-      options=VercelSandboxClientOptions(
-        allow_s3_credential_exposure=False,
-      ),
+    sandbox = Sandbox.create(
+      image=settings.VERCEL_SANDBOX_IMAGE,
+      timeout=270000,
+      project_id=settings.VERCEL_PROJECT_ID,
+      team_id=settings.VERCEL_TEAM_ID,
     )
 
     logger.info(
-      "Vercel sandbox created successfully."
+      "Vercel sandbox created successfully: %s",
+      sandbox.sandbox_id,
     )
 
-    mkdir_result = await sandbox.exec(
+    sandbox_session = VercelSandboxSessionAdapter(
+      sandbox,
+    )
+
+    logger.info(
+      "Vercel sandbox wrapped in OpenAI BaseSandboxSession adapter."
+    )
+
+    mkdir_result = await sandbox_session.exec(
       "mkdir",
       "-p",
       "input",
@@ -169,13 +122,13 @@ async def run_form_agent(
 
       file_bytes = host_file.read_bytes()
 
-      await sandbox.write(
-        sandbox_path,
-        io.BytesIO(file_bytes),
+      await sandbox_session.write_file(
+        str(sandbox_path),
+        file_bytes,
       )
 
-      uploaded_file = await sandbox.read(
-        sandbox_path,
+      uploaded_file = await sandbox_session.read_file(
+        str(sandbox_path),
       )
 
       uploaded_bytes = uploaded_file.read()
@@ -199,7 +152,7 @@ async def run_form_agent(
       len(host_input_files),
     )
 
-    check_result = await sandbox.exec(
+    check_result = await sandbox_session.exec(
       "sh",
       "-lc",
       "echo '=== sandbox identity ==='; "
@@ -216,71 +169,68 @@ async def run_form_agent(
 
     logger.info(
       "Sandbox environment check:\n%s",
-      check_result.stdout.decode(errors="replace"),
+      check_result.stdout.decode(
+        errors="replace",
+      ),
     )
 
     if check_result.stderr:
       logger.info(
         "Sandbox environment check stderr:\n%s",
-        check_result.stderr.decode(errors="replace"),
-      )
-
-    try:
-      result = await Runner.run(
-        agent,
-        prompt,
-        run_config=RunConfig(
-          sandbox=SandboxRunConfig(
-            session=sandbox,
-          ),
+        check_result.stderr.decode(
+          errors="replace",
         ),
-        max_turns=50,
       )
 
-    except Exception:
-      logger.exception(
-        "Form agent execution failed.",
-      )
-      raise
+    result = await Runner.run(
+      agent,
+      prompt,
+      run_config=RunConfig(
+        sandbox=SandboxRunConfig(
+          session=sandbox_session,
+        ),
+      ),
+      max_turns=50,
+    )
 
     logger.info(
-      "Form agent execution completed successfully.",
+      "Form agent execution completed successfully."
     )
 
     await _collect_sandbox_output_files(
-      sandbox,
+      sandbox_session,
       output_dir,
     )
 
     logger.info(
-      "Sandbox output files collected successfully.",
+      "Sandbox output files collected successfully."
     )
 
     return result
 
   except Exception:
     logger.exception(
-      "Form agent / sandbox processing failed.",
+      "Form agent / sandbox processing failed."
     )
     raise
 
   finally:
-    if sandbox is not None:
+    if sandbox_session is not None:
       try:
-        await sandbox_client.delete(sandbox)
+        await sandbox_session.close()
 
         logger.info(
-          "Vercel sandbox deleted successfully.",
+          "Vercel sandbox closed successfully."
         )
 
       except Exception:
         logger.exception(
-          "Error deleting form agent sandbox.",
+          "Error closing form agent sandbox."
         )
 
 
 async def _collect_sandbox_output_files(
-  sandbox,
+  sandbox_session: BaseSandboxSession,
   output_dir: Path,
 ) -> None:
   output_dir.mkdir(
@@ -288,7 +238,7 @@ async def _collect_sandbox_output_files(
     exist_ok=True,
   )
 
-  find_result = await sandbox.exec(
+  find_result = await sandbox_session.exec(
     "find",
     "output",
     "-type",
@@ -318,7 +268,7 @@ async def _collect_sandbox_output_files(
 
   if not sandbox_files:
     logger.warning(
-      "Sandbox output directory contains no files.",
+      "Sandbox output directory contains no files."
     )
 
     return
@@ -352,8 +302,8 @@ async def _collect_sandbox_output_files(
       exist_ok=True,
     )
 
-    file_obj = await sandbox.read(
-      sandbox_path,
+    file_obj = await sandbox_session.read_file(
+      str(sandbox_path),
     )
 
     file_contents = file_obj.read()
@@ -364,3 +314,51 @@ async def _collect_sandbox_output_files(
       destination.write(
         file_contents,
       )
+
+
+class VercelSandboxSessionAdapter(
+  BaseSandboxSession,
+):
+  def __init__(
+    self,
+    sandbox: Sandbox,
+  ):
+    self.sandbox = sandbox
+
+  async def exec(
+    self,
+    command: str,
+    *args: str,
+  ):
+    result = self.sandbox.run_command(
+      command,
+      list(args),
+    )
+
+    return result
+
+  async def write_file(
+    self,
+    path: str,
+    content: str | bytes,
+  ):
+    if isinstance(content, str):
+      content = content.encode()
+
+    self.sandbox.write_files(
+      [
+        {
+          "path": path,
+          "content": content,
+        }
+      ]
+    )
+
+  async def read_file(
+    self,
+    path: str,
+  ):
+    return self.sandbox.read_file(path)
+
+  async def close(self):
+    self.sandbox.stop()

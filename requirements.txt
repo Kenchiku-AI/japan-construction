@@ -26,4 +26,5 @@ stripe
 
 Pillow
 
-openai-agents[vercel]
+openai-agents
+vercel
