@@ -14,7 +14,6 @@ from app.db.models.form_job import (
 )
 from app.services.forms.agent import run_form_agent
 from app.services.forms.company_graph import build_company_graph
-from app.services.forms.sandbox import get_form_sandbox_client
 from app.services.forms.storage import FormStorage
 
 logger = logging.getLogger(__name__)
@@ -102,11 +101,8 @@ class FormJobService:
           input_files,
         )
 
-        sandbox_client = get_form_sandbox_client()
-
         result = await run_form_agent(
           prompt=prompt,
-          sandbox_client=sandbox_client,
           workspace=workspace,
           output_dir=output_dir,
           db=self.db,
