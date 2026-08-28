@@ -88,16 +88,28 @@ async def run_form_agent(
       inspect.signature(sb.create_sandbox),
     )
 
-    # sandbox = await sb.create_sandbox(
-    #   image=settings.VERCEL_SANDBOX_IMAGE,
-    #   project_id=settings.VERCEL_PROJECT_ID,
-    # )
-
-    sandbox = await sb.create_sandbox()
+    sandbox = await sb.create_sandbox(
+      image=settings.VERCEL_SANDBOX_IMAGE,
+      project_id=settings.VERCEL_PROJECT_ID,
+    )
 
     logger.info(
-      "Vercel sandbox created successfully: %s",
-      sandbox.sandbox_id,
+      "Vercel sandbox created successfully. type=%s",
+      type(sandbox),
+    )
+
+    logger.info(
+      "Vercel sandbox object repr: %r",
+      sandbox,
+    )
+
+    logger.info(
+      "Vercel sandbox public attributes: %s",
+      [
+        attr
+        for attr in dir(sandbox)
+        if not attr.startswith("_")
+      ],
     )
 
     sandbox_session = VercelSandboxSessionAdapter(
