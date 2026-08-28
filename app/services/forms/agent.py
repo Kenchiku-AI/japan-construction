@@ -11,6 +11,7 @@ from agents.sandbox import (
   SandboxAgent,
   SandboxRunConfig,
 )
+import agents.sandbox.snapshot as snapshot_module
 from agents.extensions.sandbox import (
   VercelSandboxClientOptions,
 )
@@ -40,6 +41,17 @@ async def run_form_agent(
   company_id: UUID,
   project_id: UUID | None,
 ):
+  try:
+    logger.info(
+      "SNAPSHOT MODULE: %s",
+      inspect.getsource(snapshot_module)
+    )
+  except Exception:
+    logger.exception(
+      "Could not inspect SNAPSHOT MODULE."
+    )
+
+
   agent = build_form_agent()
 
   workspace = workspace.resolve()
@@ -71,91 +83,12 @@ async def run_form_agent(
     project_id,
   )
 
-  logger.info(
-    "Prompt already contains the complete Kenchiku company graph. "
-    "No Kenchiku data tools will be used.",
-  )
-
-  logger.info(
-    "Form agent prompt characters: %d",
-    len(prompt),
-  )
-
-  logger.info(
-    "VercelSandboxClientOptions class: %s",
-    VercelSandboxClientOptions,
-  )
-
-  try:
-    logger.info(
-      "VercelSandboxClientOptions signature: %s",
-      inspect.signature(
-        VercelSandboxClientOptions,
-      ),
-    )
-  except Exception:
-    logger.exception(
-      "Could not inspect VercelSandboxClientOptions signature."
-    )
-
-  try:
-    logger.info(
-      "VercelSandboxClientOptions fields: %s",
-      getattr(
-        VercelSandboxClientOptions,
-        "model_fields",
-        None,
-      ),
-    )
-  except Exception:
-    logger.exception(
-      "Could not inspect VercelSandboxClientOptions fields."
-    )
-
   sandbox = None
 
   try:
     logger.info(
       "Creating sandbox for form agent.",
     )
-
-    logger.info(
-      "VercelSandboxClient class: %s",
-      type(sandbox_client),
-    )
-
-    logger.info(
-      "VercelSandboxClient methods: %s",
-      [
-        name
-        for name in dir(sandbox_client)
-        if not name.startswith("_")
-      ],
-    )
-
-    try:
-      logger.info(
-        "VercelSandboxClient.create signature: %s",
-        inspect.signature(
-          sandbox_client.create,
-        ),
-      )
-    except Exception:
-      logger.exception(
-        "Could not inspect sandbox_client.create signature."
-      )
-
-    try:
-      logger.info(
-        "VercelSandboxClient.create source:\n%s",
-        inspect.getsource(
-          sandbox_client.create,
-        ),
-      )
-    except Exception:
-      logger.exception(
-        "Could not inspect sandbox_client.create source."
-      )
 
     sandbox = await sandbox_client.create(
       options=VercelSandboxClientOptions(
