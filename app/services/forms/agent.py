@@ -119,6 +119,44 @@ async def run_form_agent(
       "Creating sandbox for form agent.",
     )
 
+    logger.info(
+      "VercelSandboxClient class: %s",
+      type(sandbox_client),
+    )
+
+    logger.info(
+      "VercelSandboxClient methods: %s",
+      [
+        name
+        for name in dir(sandbox_client)
+        if not name.startswith("_")
+      ],
+    )
+
+    try:
+      logger.info(
+        "VercelSandboxClient.create signature: %s",
+        inspect.signature(
+          sandbox_client.create,
+        ),
+      )
+    except Exception:
+      logger.exception(
+        "Could not inspect sandbox_client.create signature."
+      )
+
+    try:
+      logger.info(
+        "VercelSandboxClient.create source:\n%s",
+        inspect.getsource(
+          sandbox_client.create,
+        ),
+      )
+    except Exception:
+      logger.exception(
+        "Could not inspect sandbox_client.create source."
+      )
+
     sandbox = await sandbox_client.create(
       options=VercelSandboxClientOptions(
         allow_s3_credential_exposure=False,
@@ -185,6 +223,32 @@ async def run_form_agent(
       "Starting form agent with %d input file(s).",
       len(host_input_files),
     )
+
+    check_result = await sandbox.exec(
+      "sh",
+      "-lc",
+      "echo '=== sandbox identity ==='; "
+      "pwd; "
+      "echo '=== scripts ==='; "
+      "ls -la /workspace/scripts 2>&1 || true; "
+      "echo '=== PATH ==='; "
+      "echo \"$PATH\"; "
+      "echo '=== form commands ==='; "
+      "command -v form-convert 2>&1 || true; "
+      "command -v form-inspect 2>&1 || true; "
+      "command -v form-verify 2>&1 || true",
+    )
+
+    logger.info(
+      "Sandbox environment check:\n%s",
+      check_result.stdout.decode(errors="replace"),
+    )
+
+    if check_result.stderr:
+      logger.info(
+        "Sandbox environment check stderr:\n%s",
+        check_result.stderr.decode(errors="replace"),
+      )
 
     try:
       result = await Runner.run(
