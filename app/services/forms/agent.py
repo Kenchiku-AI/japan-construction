@@ -1,6 +1,7 @@
 import io
 import logging
 import inspect
+import os
 from importlib.metadata import distributions, version
 from pathlib import Path
 from typing import Any
