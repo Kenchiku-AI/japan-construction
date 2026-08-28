@@ -83,7 +83,9 @@ async def run_form_agent(
     )
 
     sandbox = await sb.create_sandbox(
-      image=settings.VERCEL_SANDBOX_IMAGE
+      image=settings.VERCEL_SANDBOX_IMAGE,
+      project_id=settings.VERCEL_PROJECT_ID,
+      team_id=settings.VERCEL_TEAM_ID,
     )
 
     logger.info(
