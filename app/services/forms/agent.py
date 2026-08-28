@@ -128,9 +128,8 @@ async def run_form_agent(
     )
 
     if mkdir_result.exit_code != 0:
-      stderr = mkdir_result.stderr.decode(
-        errors="replace",
-      )
+      stderr = mkdir_result.stderr.decode(errors="replace") if mkdir_result.stderr else "Unknown Error"
+      raise RuntimeError(f"Failed folder setup. Error: {stderr}")
 
       raise RuntimeError(
         "Failed to create input/output directories "
@@ -355,7 +354,7 @@ class VercelSandboxSessionAdapter(
     command: str,
     *args: str,
   ):
-    result = await self.sandbox.run_command(
+    result = await self.sandbox.run_process(
       command,
       list(args),
     )
@@ -370,20 +369,17 @@ class VercelSandboxSessionAdapter(
     if isinstance(content, str):
       content = content.encode()
 
-    await self.sandbox.write_files(
-      [
-        {
-          "path": path,
-          "content": content,
-        }
-      ]
-    )
+    await self.sandbox.fs.write(path, content)
 
-  async def read_file(
-    self,
-    path: str,
-  ):
-    return await self.sandbox.read_file(path)
+  async def read_file(self, path: str):
+    class FileReaderAdapter:
+      def __init__(self, data: bytes):
+        self.data = data
+      def read(self) -> bytes:
+        return self.data
+
+    file_bytes = await self.sandbox.fs.read(path)
+    return FileReaderAdapter(file_bytes)
 
   async def close(self):
     await self.sandbox.stop()
