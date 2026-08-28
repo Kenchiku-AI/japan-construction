@@ -321,7 +321,7 @@ class VercelSandboxSessionAdapter(
 ):
   def __init__(
     self,
-    sandbox: Sandbox,
+    sandbox: vercel.sandbox.Sandbox,
   ):
     self.sandbox = sandbox
 
