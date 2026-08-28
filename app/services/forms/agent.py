@@ -1,6 +1,5 @@
 import io
 import logging
-import vercel
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -13,6 +12,7 @@ from agents.sandbox import (
 )
 from agents.sandbox.session import SandboxSession
 from sqlalchemy.ext.asyncio import AsyncSession
+from vercel import sandbox as sb
 
 from app.core.config import settings
 from app.services.forms.prompts import FORM_AGENT_INSTRUCTIONS
@@ -75,7 +75,7 @@ async def run_form_agent(
       "Creating Vercel sandbox for form agent."
     )
 
-    sandbox = await vercel.sandbox.create_sandbox(
+    sandbox = await sb.create_sandbox(
       token=settings.VERCEL_TOKEN,
       timeout=270000,
       project_id=settings.VERCEL_PROJECT_ID,
@@ -321,7 +321,7 @@ class VercelSandboxSessionAdapter(
 ):
   def __init__(
     self,
-    sandbox: vercel.sandbox.Sandbox,
+    sandbox: sb.Sandbox,
   ):
     self.sandbox = sandbox
 
