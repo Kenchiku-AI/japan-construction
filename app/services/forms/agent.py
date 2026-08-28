@@ -214,10 +214,10 @@ async def run_form_agent(
   finally:
     if sandbox is not None:
       try:
-        await sandbox.delete()
+        await sandbox_client.delete(sandbox)
 
         logger.info(
-          "Vercel sandbox deleted successfully."
+          "Vercel sandbox deleted successfully.",
         )
 
       except Exception:
