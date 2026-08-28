@@ -6,7 +6,7 @@ from importlib.metadata import distributions, version
 from pathlib import Path
 from typing import Any
 from uuid import UUID
-from vercel import Sandbox
+from vercel.sandbox import Sandbox
 
 from agents import Runner
 from agents.run import RunConfig
