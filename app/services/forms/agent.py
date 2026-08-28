@@ -7,10 +7,10 @@ from uuid import UUID
 from agents import Runner
 from agents.run import RunConfig
 from agents.sandbox import (
-  BaseSandboxSession,
   SandboxAgent,
   SandboxRunConfig,
 )
+from agents.sandbox.session import SandboxSession
 from sqlalchemy.ext.asyncio import AsyncSession
 from vercel.sandbox import Sandbox
 
@@ -93,7 +93,7 @@ async def run_form_agent(
     )
 
     logger.info(
-      "Vercel sandbox wrapped in OpenAI BaseSandboxSession adapter."
+      "Vercel sandbox wrapped in OpenAI SandboxSession adapter."
     )
 
     mkdir_result = await sandbox_session.exec(
@@ -231,7 +231,7 @@ async def run_form_agent(
 
 
 async def _collect_sandbox_output_files(
-  sandbox_session: BaseSandboxSession,
+  sandbox_session: SandboxSession,
   output_dir: Path,
 ) -> None:
   output_dir.mkdir(
@@ -318,7 +318,7 @@ async def _collect_sandbox_output_files(
 
 
 class VercelSandboxSessionAdapter(
-  BaseSandboxSession,
+  SandboxSession,
 ):
   def __init__(
     self,
