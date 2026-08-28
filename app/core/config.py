@@ -23,8 +23,9 @@ class Settings(BaseSettings):
   ALGORITHM: str = "HS256"
   WEB_CLIENT_URL: str = "http://localhost:3000"
   VERCEL_PROJECT_ID: str
-  VERCEL_TEAM_ID: str
   VERCEL_SANDBOX_IMAGE: str
+  VERCEL_TEAM_ID: str
+  VERCEL_TOKEN: str
 
   @field_validator("*", mode="before")
   @classmethod
