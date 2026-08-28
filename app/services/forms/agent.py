@@ -12,7 +12,7 @@ from agents.sandbox import (
 )
 from agents.sandbox.session import SandboxSession
 from sqlalchemy.ext.asyncio import AsyncSession
-from vercel.sandbox import Sandbox
+from vercel.sandbox.aio import AsyncSandbox
 
 from app.core.config import settings
 from app.services.forms.prompts import FORM_AGENT_INSTRUCTIONS
@@ -75,9 +75,8 @@ async def run_form_agent(
       "Creating Vercel sandbox for form agent."
     )
 
-    sandbox = await Sandbox.create(
+    sandbox = await AsyncSandbox.create(
       token=settings.VERCEL_TOKEN,
-      image=settings.VERCEL_SANDBOX_IMAGE,
       timeout=270000,
       project_id=settings.VERCEL_PROJECT_ID,
       team_id=settings.VERCEL_TEAM_ID,
@@ -331,7 +330,7 @@ class VercelSandboxSessionAdapter(
     command: str,
     *args: str,
   ):
-    result = self.sandbox.run_command(
+    result = await self.sandbox.run_command(
       command,
       list(args),
     )
@@ -346,7 +345,7 @@ class VercelSandboxSessionAdapter(
     if isinstance(content, str):
       content = content.encode()
 
-    self.sandbox.write_files(
+    await self.sandbox.write_files(
       [
         {
           "path": path,
@@ -359,7 +358,7 @@ class VercelSandboxSessionAdapter(
     self,
     path: str,
   ):
-    return self.sandbox.read_file(path)
+    return await self.sandbox.read_file(path)
 
   async def close(self):
-    self.sandbox.stop()
+    await self.sandbox.stop()
