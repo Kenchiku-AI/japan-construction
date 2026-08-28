@@ -94,7 +94,22 @@ async def run_form_agent(
     )
 
     logger.info(
-      "Vercel sandbox created successfully",
+      "Vercel sandbox created successfully. type=%s",
+      type(sandbox),
+    )
+
+    logger.info(
+      "Vercel sandbox object repr: %r",
+      sandbox,
+    )
+
+    logger.info(
+      "Vercel sandbox public attributes: %s",
+      [
+        attr
+        for attr in dir(sandbox)
+        if not attr.startswith("_")
+      ],
     )
 
     sandbox_session = VercelSandboxSessionAdapter(
