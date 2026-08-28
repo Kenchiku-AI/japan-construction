@@ -1,3 +1,4 @@
+import inspect
 import io
 import logging
 from pathlib import Path
@@ -82,11 +83,17 @@ async def run_form_agent(
       settings.VERCEL_TEAM_ID,
     )
 
-    sandbox = await sb.create_sandbox(
-      image=settings.VERCEL_SANDBOX_IMAGE,
-      project_id=settings.VERCEL_PROJECT_ID,
-      team_id=settings.VERCEL_TEAM_ID,
+    logger.info(
+      "create_sandbox signature: %s",
+      inspect.signature(sb.create_sandbox),
     )
+
+    # sandbox = await sb.create_sandbox(
+    #   image=settings.VERCEL_SANDBOX_IMAGE,
+    #   project_id=settings.VERCEL_PROJECT_ID,
+    # )
+
+    sandbox = await sb.create_sandbox()
 
     logger.info(
       "Vercel sandbox created successfully: %s",
