@@ -1,6 +1,7 @@
 import io
 import logging
 import inspect
+from importlib.metadata import distributions, version
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -83,6 +84,198 @@ async def run_form_agent(
       options=VercelSandboxClientOptions(
         allow_s3_credential_exposure=False,
       ),
+    )
+
+    logger.info(
+      "============================================================",
+    )
+    logger.info(
+      "OPENAI AGENTS / VERCEL SANDBOX DIAGNOSTICS",
+    )
+    logger.info(
+      "============================================================",
+    )
+
+    # Installed OpenAI Agents SDK version
+    try:
+      agents_version = version("openai-agents")
+
+      logger.info(
+        "openai-agents installed version: %s",
+        agents_version,
+      )
+
+    except Exception:
+      logger.exception(
+        "Could not determine installed openai-agents version.",
+      )
+
+    # Package location
+    try:
+      import agents
+
+      logger.info(
+        "agents package location: %s",
+        agents.__file__,
+      )
+
+      logger.info(
+        "agents.__version__: %s",
+        getattr(
+          agents,
+          "__version__",
+          "not defined",
+        ),
+      )
+
+    except Exception:
+      logger.exception(
+        "Could not inspect agents package.",
+      )
+
+    # Vercel extension version, if separately installed
+    try:
+      logger.info(
+        "Installed distributions containing 'vercel' or 'sandbox': %s",
+        [
+          (
+            dist.metadata.get("Name"),
+            dist.version,
+          )
+          for dist in distributions()
+          if (
+            "vercel" in (dist.metadata.get("Name") or "").lower()
+            or "sandbox" in (dist.metadata.get("Name") or "").lower()
+          )
+        ],
+      )
+
+    except Exception:
+      logger.exception(
+        "Could not inspect installed distributions.",
+      )
+
+    # Environment configuration relevant to Vercel Sandbox
+    logger.info(
+      "VERCEL_PROJECT_ID present: %s",
+      bool(os.getenv("VERCEL_PROJECT_ID")),
+    )
+
+    logger.info(
+      "VERCEL_TEAM_ID present: %s",
+      bool(os.getenv("VERCEL_TEAM_ID")),
+    )
+
+    logger.info(
+      "VERCEL_TOKEN present: %s",
+      bool(os.getenv("VERCEL_TOKEN")),
+    )
+
+    logger.info(
+      "VERCEL_OIDC_TOKEN present: %s",
+      bool(os.getenv("VERCEL_OIDC_TOKEN")),
+    )
+
+    logger.info(
+      "VERCEL_SANDBOX_IMAGE: %s",
+      os.getenv("VERCEL_SANDBOX_IMAGE"),
+    )
+
+    # Client internals
+    logger.info(
+      "VercelSandboxClient class: %s",
+      type(sandbox_client),
+    )
+
+    logger.info(
+      "VercelSandboxClient backend_id: %s",
+      getattr(
+        sandbox_client,
+        "backend_id",
+        None,
+      ),
+    )
+
+    logger.info(
+      "VercelSandboxClient _project_id: %s",
+      getattr(
+        sandbox_client,
+        "_project_id",
+        None,
+      ),
+    )
+
+    logger.info(
+      "VercelSandboxClient _team_id: %s",
+      getattr(
+        sandbox_client,
+        "_team_id",
+        None,
+      ),
+    )
+
+    # Client constructor signature
+    try:
+      logger.info(
+        "VercelSandboxClient constructor signature: %s",
+        inspect.signature(
+          type(sandbox_client),
+        ),
+      )
+
+    except Exception:
+      logger.exception(
+        "Could not inspect VercelSandboxClient constructor.",
+      )
+
+    # Options available to us
+    logger.info(
+      "VercelSandboxClientOptions signature: %s",
+      inspect.signature(
+        VercelSandboxClientOptions,
+      ),
+    )
+
+    logger.info(
+      "VercelSandboxClientOptions fields: %s",
+      getattr(
+        VercelSandboxClientOptions,
+        "model_fields",
+        None,
+      ),
+    )
+
+    # Look for image-related attributes/methods on the client/options
+    try:
+      client_image_members = [
+        name
+        for name in dir(sandbox_client)
+        if "image" in name.lower()
+      ]
+
+      option_image_members = [
+        name
+        for name in dir(VercelSandboxClientOptions)
+        if "image" in name.lower()
+      ]
+
+      logger.info(
+        "VercelSandboxClient image-related members: %s",
+        client_image_members,
+      )
+
+      logger.info(
+        "VercelSandboxClientOptions image-related members: %s",
+        option_image_members,
+      )
+
+    except Exception:
+      logger.exception(
+        "Could not inspect image-related members.",
+      )
+
+    logger.info(
+      "============================================================",
     )
 
     logger.info(
