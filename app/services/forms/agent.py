@@ -129,47 +129,6 @@ async def run_form_agent(
       "Vercel sandbox created successfully."
     )
 
-    diagnostics_result = await sandbox.exec(
-      "sandbox-diagnostics",
-    )
-
-    diagnostics_stdout = (
-      diagnostics_result.stdout.decode(
-        errors="replace",
-      )
-    )
-
-    diagnostics_stderr = (
-      diagnostics_result.stderr.decode(
-        errors="replace",
-      )
-    )
-
-    logger.info(
-      "============================================================"
-    )
-    logger.info(
-      "SANDBOX DIAGNOSTICS"
-    )
-    logger.info(
-      "============================================================"
-    )
-    logger.info(
-      "%s",
-      diagnostics_stdout,
-    )
-
-    if diagnostics_stderr:
-      logger.warning(
-        "Sandbox diagnostics stderr:\n%s",
-        diagnostics_stderr,
-      )
-
-    logger.info(
-      "Sandbox diagnostics exit code: %s",
-      diagnostics_result.exit_code,
-    )
-
     mkdir_result = await sandbox.exec(
       "mkdir",
       "-p",

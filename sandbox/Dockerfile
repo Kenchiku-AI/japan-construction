@@ -37,14 +37,6 @@ RUN chmod +x \
   /usr/local/bin/form-convert \
   /usr/local/bin/form-verify
 
-COPY scripts/sandbox-diagnostics /usr/local/bin/sandbox-diagnostics
-
-RUN chmod +x \
-  /usr/local/bin/form-inspect \
-  /usr/local/bin/form-convert \
-  /usr/local/bin/form-verify \
-  /usr/local/bin/sandbox-diagnostics
-
 WORKDIR /vercel/sandbox
 
 CMD ["bash"]
