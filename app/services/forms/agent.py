@@ -75,7 +75,7 @@ async def run_form_agent(
       "Creating Vercel sandbox for form agent."
     )
 
-    sandbox = Sandbox.create(
+    sandbox = await Sandbox.create(
       token=settings.VERCEL_TOKEN,
       image=settings.VERCEL_SANDBOX_IMAGE,
       timeout=270000,
