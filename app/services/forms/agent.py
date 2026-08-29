@@ -200,7 +200,7 @@ async def run_form_agent(
     else:
       stdout_str = str(stdout_raw)
 
-            logger.info("Sandbox environment check:\n%s", stdout_str)
+    logger.info("Sandbox environment check:\n%s", stdout_str)
 
     stderr_raw = getattr(check_result, "stderr", "")
     if stderr_raw:
