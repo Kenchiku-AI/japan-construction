@@ -192,20 +192,24 @@ async def run_form_agent(
       "command -v form-verify 2>&1 || true",
     )
 
-    logger.info(
-      "Sandbox environment check:\n%s",
-      check_result.stdout.decode(
-        errors="replace",
-      ),
-    )
+    stdout_raw = getattr(check_result, "stdout", "")
+    if isinstance(stdout_raw, bytes):
+      stdout_str = stdout_raw.decode(errors="replace")
+    elif stdout_raw is None:
+      stdout_str = "No output text returned."
+    else:
+      stdout_str = str(stdout_raw)
 
-    if check_result.stderr:
-      logger.info(
-        "Sandbox environment check stderr:\n%s",
-        check_result.stderr.decode(
-          errors="replace",
-        ),
+            logger.info("Sandbox environment check:\n%s", stdout_str)
+
+    stderr_raw = getattr(check_result, "stderr", "")
+    if stderr_raw:
+      stderr_str = (
+        stderr_raw.decode(errors="replace") 
+        if isinstance(stderr_raw, bytes) 
+        else str(stderr_raw)
       )
+      logger.info("Sandbox environment check stderr:\n%s", stderr_str)
 
     result = await Runner.run(
       agent,
