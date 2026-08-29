@@ -367,19 +367,20 @@ class VercelSandboxSessionAdapter(
     path: str,
     content: str | bytes,
   ):
-    if isinstance(content, str):
-      content = content.encode()
-
-    await self.sandbox.fs.write(path, content)
+    if isinstance(content, bytes):
+      await self.sandbox.fs.write_bytes(path, content)
+    else:
+      await self.sandbox.fs.write_text(path, content)
 
   async def read_file(self, path: str):
+    file_bytes = await self.sandbox.fs.read_bytes(path)
+
     class FileReaderAdapter:
       def __init__(self, data: bytes):
         self.data = data
       def read(self) -> bytes:
         return self.data
 
-    file_bytes = await self.sandbox.fs.read(path)
     return FileReaderAdapter(file_bytes)
 
   async def close(self):
