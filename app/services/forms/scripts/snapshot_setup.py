@@ -60,7 +60,11 @@ async def provision_dependencies(session) -> None:
 
   logger.info("Installing system + python dependencies ...")
 
-  result = await session.exec(INSTALL_COMMAND, shell=True)
+  result = await session.exec(
+    "sh",
+    "-lc",
+    INSTALL_COMMAND,
+  )
 
   stdout = result.stdout.decode(errors="replace")
   stderr = result.stderr.decode(errors="replace")
