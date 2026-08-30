@@ -14,6 +14,8 @@ SCRIPT_FILES = [
 ]
 
 INSTALL_COMMAND = """
+export PATH="/home/vercel-sandbox/.local/bin:$PATH"
+
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
@@ -35,6 +37,7 @@ pip3 install --no-cache-dir --break-system-packages openpyxl python-docx
 chmod +x /home/vercel-sandbox/.local/bin/form-convert
 chmod +x /home/vercel-sandbox/.local/bin/form-inspect
 chmod +x /home/vercel-sandbox/.local/bin/form-verify
+chmod +x /home/vercel-sandbox/.local/bin/inspect_excel.py
 
 echo "=== install complete ==="
 command -v form-convert
@@ -48,31 +51,33 @@ async def provision_dependencies(session) -> None:
   """Uploads form-convert/inspect/verify + inspect_excel.py and installs
   every system/python dependency they need. Raises on any failure."""
 
+  bin_dir = "/home/vercel-sandbox/.local/bin"
+
+  mkdir_result = await session.exec("mkdir", "-p", bin_dir)
+
+  if mkdir_result.exit_code != 0:
+    stderr = mkdir_result.stderr.decode(errors="replace")
+    raise RuntimeError(f"Failed to create {bin_dir}: {stderr}")
+
   for filename in SCRIPT_FILES:
     local_path = SCRIPTS_DIR / filename
     workspace_path = Path("scripts") / filename
 
-    logger.info(
-      "Uploading %s -> %s",
-      local_path,
-      workspace_path,
-    )
+    logger.info("Uploading %s -> %s", local_path, workspace_path)
 
     data = local_path.read_bytes()
 
-    await session.write(
-      workspace_path,
-      io.BytesIO(data),
-    )
+    await session.write(workspace_path, io.BytesIO(data))
 
     result = await session.exec(
       "cp",
       str(workspace_path),
-      f"/home/vercel-sandbox/.local/bin/{filename}",
+      f"{bin_dir}/{filename}",
     )
 
     if result.exit_code != 0:
       stderr = result.stderr.decode(errors="replace")
+      raise RuntimeError(f"Failed to install {filename}: {stderr}")
 
       raise RuntimeError(
         f"Failed to install {filename}: {stderr}"
