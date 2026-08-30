@@ -87,10 +87,8 @@ def get_form_agent_snapshot() -> RemoteSnapshot:
   )
 
 
-def get_form_sandbox_client(
-  snapshot_client: S3SnapshotClient | None = None,
-) -> VercelSandboxClient:
-  snapshot_client = snapshot_client or build_snapshot_client()
+def get_form_sandbox_client() -> VercelSandboxClient:
+  snapshot_client = build_snapshot_client()
 
   dependencies = Dependencies().bind_value(
     SNAPSHOT_CLIENT_DEPENDENCY_KEY,

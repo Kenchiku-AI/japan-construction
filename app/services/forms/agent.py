@@ -112,11 +112,6 @@ async def run_form_agent(
       await provision_dependencies(sandbox)
 
       try:
-        logger.info(
-          "VercelSandboxClient.__init__ signature: %s",
-          inspect.signature(sandbox.snapshot),
-        )
-
         await sandbox.snapshot()
 
         logger.info(
