@@ -10,8 +10,7 @@ from agents import Runner
 from agents.run import RunConfig
 from agents.sandbox import (
   SandboxAgent,
-  SandboxRunConfig,
-  VercelSandboxClientOptions
+  SandboxRunConfig
 )
 from agents.extensions.sandbox import (
   VercelSandboxClientOptions,
