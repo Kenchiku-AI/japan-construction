@@ -14,7 +14,6 @@ from app.db.models.form_job import (
 )
 from app.services.forms.agent import run_form_agent
 from app.services.forms.company_graph import build_company_graph
-from app.services.forms.sandbox import get_form_sandbox_client
 from app.services.forms.storage import FormStorage
 
 logger = logging.getLogger(__name__)
@@ -102,11 +101,8 @@ class FormJobService:
           input_files,
         )
 
-        sandbox_client = get_form_sandbox_client()
-
         result = await run_form_agent(
           prompt=prompt,
-          sandbox_client=sandbox_client,
           workspace=workspace,
           output_dir=output_dir,
           db=self.db,
@@ -882,35 +878,35 @@ The JSON property names themselves MUST remain exactly as specified:
 
 For a Japanese form, produce output such as:
 
-{
+{{
   "summary": "協力会社名簿を確認し、入力可能な情報を記入しました。",
   "completed": true,
   "files": [
-    "output/kyouryokukai_meibo.xls"
+    "output/kyouryukai_meibo.xls"
   ],
   "missing_data": [],
   "recommendations": []
-}
+}}
 
 Do NOT produce English prose in the JSON when the form is Japanese.
 
 For example, this is NOT acceptable for a Japanese form:
 
-{
+{{
   "summary": "Preserved the original workbook.",
   "completed": true,
   "files": [...],
   "missing_data": ["Worker entries could not be inserted."],
   "recommendations": ["Provide the form as XLSX."]
-}
+}}
 
 Instead, write:
 
-{
+{{
   "summary": "元のExcelファイルを保持しました。",
   "completed": false,
   "files": [
-    "output/kyouryokukai_meibo.xls"
+    "output/kyouryukai_meibo.xls"
   ],
   "missing_data": [
     "Excelファイルの項目位置と書式を読み取れず、作業員情報を入力できませんでした。"
@@ -918,7 +914,7 @@ Instead, write:
   "recommendations": [
     "XLSXまたはPDF形式の帳票を提供してください。"
   ]
-}
+}}
 
 ============================================================
 FORM PROCESSING FAILURE
@@ -939,22 +935,21 @@ then:
 - It is acceptable for "files" to contain a preserved copy of the input
   file when appropriate, but that does not make the job completed.
 
-For example, if an XLS file cannot be processed even after attempting
-the available XLS-to-XLSX conversion workflow:
+For example, if an XLS file cannot be read:
 
-{
-  "summary": "XLS形式の帳票を読み取って処理することができなかったため、入力項目を確認して記入することができませんでした。",
+{{
+  "summary": "XLS形式の帳票を読み取れなかったため、入力項目を確認して記入することができませんでした。",
   "completed": false,
   "files": [
-    "output/kyouryokukai_meibo.xls"
+    "output/kyouryukai_meibo.xls"
   ],
   "missing_data": [
-    "XLS形式の帳票を読み取って編集することができませんでした。"
+    "XLS形式の帳票の項目位置と書式を読み取ることができませんでした。"
   ],
   "recommendations": [
-    "帳票をXLSX形式で提供するか、帳票の構造を確認できる別の形式で提供してください。"
+    "XLSXまたはPDF形式の帳票を提供するか、XLS形式を読み取れる環境を用意してください。"
   ]
-}
+}}
 
 ============================================================
 MISSING DATA
@@ -1011,19 +1006,15 @@ Verify:
 8. Existing values that should remain were preserved.
 9. No unsupported information was invented.
 10. The input file was not modified.
-11. Formatting and structure were preserved as much as reasonably
-    possible.
+11. Formatting and structure were preserved as much as reasonably possible.
 
 ------------------------------------------------------------
 VISUAL VERIFICATION
 ------------------------------------------------------------
-
 For spreadsheets, PDFs, images, and other documents where visual layout
 matters, perform visual verification before declaring the task
 completed.
-
 When possible:
-
 1. Render the completed document to PDF or images using the available
    document-processing software.
 2. Inspect the rendered result.
@@ -1037,9 +1028,7 @@ When possible:
 10. Confirm that page breaks and major layout elements remain
     reasonable.
 11. Confirm that the output is actually usable as the original form.
-
 For XLS/XLSX forms, pay particular attention to:
-
 - merged cells
 - row heights
 - column widths
@@ -1051,10 +1040,8 @@ For XLS/XLSX forms, pay particular attention to:
 - page breaks
 - Japanese characters
 - cells containing long names or addresses
-
 Do not declare the document successfully completed solely because a
 file was created.
-
 The completed file must be both structurally valid and reasonably
 usable as the original form.
 
