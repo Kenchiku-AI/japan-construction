@@ -25,7 +25,7 @@ from app.services.forms.sandbox import (
   build_snapshot_client,
   get_form_agent_snapshot,
 )
-from app.services.forms.snapshot_setup import provision_dependencies
+from app.services.forms.scripts.snapshot_setup import provision_dependencies
 
 
 logger = logging.getLogger(__name__)
