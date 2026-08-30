@@ -85,10 +85,12 @@ async def run_form_agent(
 
   snapshot_client = build_snapshot_client()
 
-  snapshot_exists = await asyncio.to_thread(
-    snapshot_client.exists,
-    FORM_AGENT_SNAPSHOT_ID,
-  )
+  # snapshot_exists = await asyncio.to_thread(
+  #   snapshot_client.exists,
+  #   FORM_AGENT_SNAPSHOT_ID,
+  # )
+
+  snapshot_exists = False
 
   sandbox = None
 
@@ -111,7 +113,12 @@ async def run_form_agent(
       await provision_dependencies(sandbox)
 
       try:
-        await sandbox.snapshot()
+        snapshot_id = await sandbox.snapshot()
+
+        logger.info(
+          "Snapshot persisted successfully. Snapshot ID: %r",
+          snapshot_id,
+        )
 
         logger.info(
           "Snapshot persisted. Store this ID: %r",
@@ -143,13 +150,13 @@ async def run_form_agent(
     check_result = await sandbox.exec(
       "sh", "-lc",
       """
-    set -x
-    ls -la /usr/local/bin
-    echo "PATH=$PATH"
-    command -v form-convert
-    command -v form-inspect
-    command -v form-verify
-    """,
+set -x
+ls -la /usr/local/bin
+echo "PATH=$PATH"
+command -v form-convert
+command -v form-inspect
+command -v form-verify
+      """,
     )
 
     stdout = check_result.stdout.decode(errors="replace")
