@@ -248,27 +248,11 @@ async def patch_user(
         detail="Cannot assign admin role",
       )
 
-    if is_own_account:
-      pass
-
-    else:
-      if current_user.company_id != user.company_id:
-        raise HTTPException(
-          status_code=status.HTTP_403_FORBIDDEN,
-          detail="Managers can only manage users in their company",
-        )
-
-      non_role_fields = {
-        key: value
-        for key, value in update_data.items()
-        if key != "role"
-      }
-
-      if non_role_fields:
-        raise HTTPException(
-          status_code=status.HTTP_403_FORBIDDEN,
-          detail="Managers can only update the role of other users",
-        )
+    if current_user.company_id != user.company_id:
+      raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Managers can only manage users in their company",
+      )
 
   elif current_user.role == "user":
 
