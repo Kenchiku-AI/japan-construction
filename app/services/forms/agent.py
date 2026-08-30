@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import inspect
@@ -10,6 +11,7 @@ from agents.run import RunConfig
 from agents.sandbox import (
   SandboxAgent,
   SandboxRunConfig,
+  VercelSandboxClientOptions
 )
 from agents.extensions.sandbox import (
   VercelSandboxClientOptions,
@@ -19,6 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.forms.prompts import (
   FORM_AGENT_INSTRUCTIONS,
 )
+from app.services.forms.sandbox import (
+  FORM_AGENT_SNAPSHOT_ID,
+  build_snapshot_client,
+  get_form_agent_snapshot,
+)
+from app.services.forms.snapshot_setup import provision_dependencies
 
 
 logger = logging.getLogger(__name__)
@@ -72,110 +80,87 @@ async def run_form_agent(
   )
 
   logger.info(
-    "Prompt already contains the complete Kenchiku company graph. "
-    "No Kenchiku data tools will be used.",
-  )
-
-  logger.info(
     "Form agent prompt characters: %d",
     len(prompt),
   )
 
-  logger.info(
-    "VercelSandboxClientOptions class: %s",
-    VercelSandboxClientOptions,
+  snapshot_client = build_snapshot_client()
+
+  snapshot_exists = await asyncio.to_thread(
+    snapshot_client.exists,
+    FORM_AGENT_SNAPSHOT_ID,
   )
-
-  try:
-    logger.info(
-      "VercelSandboxClientOptions signature: %s",
-      inspect.signature(
-        VercelSandboxClientOptions,
-      ),
-    )
-  except Exception:
-    logger.exception(
-      "Could not inspect VercelSandboxClientOptions signature."
-    )
-
-  try:
-    logger.info(
-      "VercelSandboxClientOptions fields: %s",
-      getattr(
-        VercelSandboxClientOptions,
-        "model_fields",
-        None,
-      ),
-    )
-  except Exception:
-    logger.exception(
-      "Could not inspect VercelSandboxClientOptions fields."
-    )
 
   sandbox = None
 
   try:
-    logger.info(
-      "Creating sandbox for form agent.",
-    )
-
-    sandbox = await sandbox_client.create(
-      options=VercelSandboxClientOptions(
-        allow_s3_credential_exposure=False,
-      ),
-    )
-
-    logger.info(
-      "Vercel sandbox created successfully."
-    )
-
-    diagnostics_result = await sandbox.exec(
-      "sandbox-diagnostics",
-    )
-
-    diagnostics_stdout = (
-      diagnostics_result.stdout.decode(
-        errors="replace",
-      )
-    )
-
-    diagnostics_stderr = (
-      diagnostics_result.stderr.decode(
-        errors="replace",
-      )
-    )
-
-    logger.info(
-      "============================================================"
-    )
-    logger.info(
-      "SANDBOX DIAGNOSTICS"
-    )
-    logger.info(
-      "============================================================"
-    )
-    logger.info(
-      "%s",
-      diagnostics_stdout,
-    )
-
-    if diagnostics_stderr:
+    if not snapshot_exists:
       logger.warning(
-        "Sandbox diagnostics stderr:\n%s",
-        diagnostics_stderr,
+        "Snapshot %r not found in S3. Bootstrapping it now from this "
+        "run's sandbox -- this run will take longer than usual.",
+        FORM_AGENT_SNAPSHOT_ID,
       )
 
-    logger.info(
-      "Sandbox diagnostics exit code: %s",
-      diagnostics_result.exit_code,
+      sandbox = await sandbox_client.create(
+        snapshot=get_form_agent_snapshot(),
+        options=VercelSandboxClientOptions(
+          allow_s3_credential_exposure=False,
+          timeout_ms=600_000,
+        ),
+      )
+
+      await provision_dependencies(sandbox)
+
+      try:
+        logger.info(
+          "VercelSandboxClient.__init__ signature: %s",
+          inspect.signature(sandbox.snapshot),
+        )
+
+        await sandbox.snapshot()
+
+        logger.info(
+          "Snapshot persisted. Store this ID: %r",
+          FORM_AGENT_SNAPSHOT_ID,
+        )
+      except AttributeError:
+        logger.exception(
+          "sandbox.snapshot() does not exist on this SDK version -- "
+          "dependencies were installed but NOT persisted. This run's "
+          "sandbox will still be used below, but every future run will "
+          "re-bootstrap until this is fixed."
+        )
+    else:
+      logger.info(
+        "Creating sandbox for form agent from snapshot %r.",
+        FORM_AGENT_SNAPSHOT_ID,
+      )
+
+      sandbox = await sandbox_client.create(
+        snapshot=get_form_agent_snapshot(),
+        options=VercelSandboxClientOptions(
+          allow_s3_credential_exposure=False,
+          timeout_ms=300_000,
+        ),
+      )
+
+      logger.info("Vercel sandbox created successfully from snapshot.")
+
+    check_result = await sandbox.exec(
+      "sh", "-lc",
+      "command -v form-convert && command -v form-inspect && command -v form-verify",
     )
 
-    mkdir_result = await sandbox.exec(
-      "mkdir",
-      "-p",
-      "input",
-      "output",
-    )
+    if check_result.exit_code != 0:
+      logger.error(
+        "form-convert/inspect/verify not found. stderr: %s",
+        check_result.stderr.decode(errors="replace"),
+      )
+      raise RuntimeError(
+        "Sandbox dependencies missing after creation/provisioning."
+      )
+
+    mkdir_result = await sandbox.exec("mkdir", "-p", "input", "output")
 
     if mkdir_result.exit_code != 0:
       stderr = mkdir_result.stderr.decode(
