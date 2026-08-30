@@ -142,14 +142,31 @@ async def run_form_agent(
 
     check_result = await sandbox.exec(
       "sh", "-lc",
-      "command -v form-convert && command -v form-inspect && command -v form-verify",
+      """
+    set -x
+    ls -la /usr/local/bin
+    echo "PATH=$PATH"
+    command -v form-convert
+    command -v form-inspect
+    command -v form-verify
+    """,
     )
 
-    if check_result.exit_code != 0:
-      logger.error(
-        "form-convert/inspect/verify not found. stderr: %s",
-        check_result.stderr.decode(errors="replace"),
+    stdout = check_result.stdout.decode(errors="replace")
+    stderr = check_result.stderr.decode(errors="replace")
+
+    logger.info(
+      "Sandbox dependency check stdout:\n%s",
+      stdout,
+    )
+
+    if stderr:
+      logger.warning(
+        "Sandbox dependency check stderr:\n%s",
+        stderr,
       )
+
+    if check_result.exit_code != 0:
       raise RuntimeError(
         "Sandbox dependencies missing after creation/provisioning."
       )
