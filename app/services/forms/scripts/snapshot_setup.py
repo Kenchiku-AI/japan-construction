@@ -4,7 +4,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "scripts"
+SCRIPTS_DIR = Path(__file__).resolve().parent
 
 SCRIPT_FILES = [
   "form-convert",
