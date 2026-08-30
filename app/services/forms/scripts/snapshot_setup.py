@@ -32,9 +32,9 @@ apt-get install -y --no-install-recommends \\
 
 pip3 install --no-cache-dir --break-system-packages openpyxl python-docx
 
-chmod +x /usr/local/bin/form-convert
-chmod +x /usr/local/bin/form-inspect
-chmod +x /usr/local/bin/form-verify
+chmod +x /home/vercel-sandbox/.local/bin/form-convert
+chmod +x /home/vercel-sandbox/.local/bin/form-inspect
+chmod +x /home/vercel-sandbox/.local/bin/form-verify
 
 echo "=== install complete ==="
 command -v form-convert
@@ -50,13 +50,33 @@ async def provision_dependencies(session) -> None:
 
   for filename in SCRIPT_FILES:
     local_path = SCRIPTS_DIR / filename
-    dest_path = Path("/usr/local/bin") / filename
+    workspace_path = Path("scripts") / filename
 
-    logger.info("Uploading %s -> %s", local_path, dest_path)
+    logger.info(
+      "Uploading %s -> %s",
+      local_path,
+      workspace_path,
+    )
 
     data = local_path.read_bytes()
 
-    await session.write(dest_path, io.BytesIO(data))
+    await session.write(
+      workspace_path,
+      io.BytesIO(data),
+    )
+
+    result = await session.exec(
+      "cp",
+      str(workspace_path),
+      f"/home/vercel-sandbox/.local/bin/{filename}",
+    )
+
+    if result.exit_code != 0:
+      stderr = result.stderr.decode(errors="replace")
+
+      raise RuntimeError(
+        f"Failed to install {filename}: {stderr}"
+      )
 
   logger.info("Installing system + python dependencies ...")
 
