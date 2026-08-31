@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Bump this whenever scripts/ or the installed system packages change,
 # so job runs never silently pick up a stale snapshot.
-FORM_AGENT_SNAPSHOT_ID = "form-agent-snapshot-v3"
+FORM_AGENT_SNAPSHOT_ID = "form-agent-snapshot-v4"
 
 SNAPSHOT_CLIENT_DEPENDENCY_KEY = "kenchiku.form_agent.s3_snapshot_client"
 
@@ -34,6 +34,27 @@ class S3SnapshotClient:
       snapshot_id,
     )
 
+    data.seek(0)
+
+    import tarfile
+
+    with tarfile.open(fileobj=data, mode="r:*") as tar:
+      names = tar.getnames()
+
+    logger.info(
+      "Snapshot %r contains %d workspace entries.",
+      snapshot_id,
+      len(names),
+    )
+
+    for name in names[:50]:
+      logger.info(
+        "Snapshot entry: %s",
+        name,
+      )
+
+    data.seek(0)
+
     self._s3.upload_fileobj(
       data,
       self._bucket,
@@ -46,12 +67,23 @@ class S3SnapshotClient:
     )
 
   def download(self, snapshot_id: str) -> io.IOBase:
+    logger.info(
+      "S3SnapshotClient.download() called for snapshot %r",
+      snapshot_id,
+    )
+
     buffer = io.BytesIO()
 
     self._s3.download_fileobj(
       self._bucket,
       self._object_key(snapshot_id),
       buffer,
+    )
+
+    logger.info(
+      "S3SnapshotClient.download() downloaded %d bytes for snapshot %r",
+      buffer.tell(),
+      snapshot_id,
     )
 
     buffer.seek(0)

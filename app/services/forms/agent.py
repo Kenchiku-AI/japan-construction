@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import inspect
+import tarfile
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -135,6 +136,30 @@ async def run_form_agent(
 
       workspace_stream = await sandbox.persist_workspace()
 
+      workspace_stream.seek(0)
+
+      with tarfile.open(fileobj=workspace_stream, mode="r:*") as tar:
+        names = tar.getnames()
+
+      logger.info(
+        "Persisted workspace contains %d entries.",
+        len(names),
+      )
+
+      for name in names:
+        if (
+          "form-convert" in name
+          or "openpyxl" in name
+          or "boto3" in name
+          or ".local" in name
+        ):
+          logger.info(
+            "SNAPSHOT MATCH: %s",
+            name,
+          )
+
+      workspace_stream.seek(0)
+
       logger.info(
         "persist_workspace() returned %s",
         type(workspace_stream).__name__,
@@ -251,8 +276,6 @@ echo "=== PRE-SNAPSHOT DONE ==="
           runtime="python3.13",
         ),
       )
-
-      logger.info("Vercel sandbox created successfully from snapshot.")
 
     check_result = await sandbox.exec(
       "sh", "-lc",
