@@ -38,11 +38,12 @@ id
 echo "=== pwd ==="
 pwd
 
-echo "=== python3 / pip3 ==="
+echo "=== python3 ==="
 command -v python3
 python3 --version
-command -v pip3
-pip3 --version
+
+echo "=== pip availability (module, not standalone binary) ==="
+python3 -m pip --version 2>&1 || echo "pip module not available -- will bootstrap via ensurepip"
 
 echo "=== CLOUDCONVERT_API_KEY configured? ==="
 if [ -n "${CLOUDCONVERT_API_KEY:-}" ]; then
@@ -67,7 +68,12 @@ set -euo pipefail
 
 export PATH="{bin_dir}:$PATH"
 
-pip3 install --no-cache-dir {packages}
+echo "=== bootstrapping pip if needed ==="
+python3 -m ensurepip --upgrade 2>&1 || echo "ensurepip not needed/available, continuing"
+python3 -m pip install --upgrade pip
+
+echo "=== installing packages ==="
+python3 -m pip install --no-cache-dir {packages}
 
 echo "=== checking which packages actually installed ==="
 python3 -c "
