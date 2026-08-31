@@ -94,7 +94,7 @@ try:
 except Exception as exc:
     print('Could not determine site-packages:', exc)
 
-mods = {
+mods = {{
     'openpyxl': 'openpyxl',
     'xlrd': 'xlrd',
     'python-docx': 'docx',
@@ -106,26 +106,25 @@ mods = {
     'Pillow': 'PIL',
     'boto3': 'boto3',
     'httpx': 'httpx',
-}
+}}
 
 for pkg, mod in mods.items():
     try:
         imported = importlib.import_module(mod)
-        print(f'OK   {pkg} -> {getattr(imported, \"__file__\", \"unknown\")}')
+        print(f'OK   {{pkg}} -> {{getattr(imported, "__file__", "unknown")}}')
     except Exception as exc:
-        print(f'MISSING {pkg}: {type(exc).__name__}: {exc}')
+        print(f'MISSING {{pkg}}: {{type(exc).__name__}}: {{exc}}')
 "
 
-chmod +x {bin_dir}/form-convert
-chmod +x {bin_dir}/form-inspect
-chmod +x {bin_dir}/form-verify
-chmod +x {bin_dir}/inspect_excel.py
-
 echo "=== install complete ==="
+
 command -v form-convert
 command -v form-inspect
 command -v form-verify
-""".format(bin_dir=BIN_DIR, packages=" ".join(PIP_PACKAGES))
+""".format(
+  bin_dir=BIN_DIR,
+  packages=" ".join(PIP_PACKAGES),
+)
 
 
 async def _run_and_log(session, label: str, *cmd: str):
