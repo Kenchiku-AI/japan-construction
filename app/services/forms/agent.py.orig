@@ -133,17 +133,11 @@ async def run_form_agent(
 
       await provision_dependencies(sandbox)
 
-      workspace_stream = await sandbox.persist_workspace()
-
-      logger.info(
-        "persist_workspace() returned %s",
-        type(workspace_stream).__name__,
-      )
-
       logger.info(
         "Running final pre-snapshot dependency verification."
       )
 
+<<<<<<< HEAD
       pre_snapshot_check = await sandbox.exec(
   "sh",
   "-lc",
@@ -237,6 +231,14 @@ echo "=== PRE-SNAPSHOT DONE ==="
         raise RuntimeError(
           "Pre-snapshot dependency verification failed."
         )
+=======
+      workspace_stream = await sandbox.persist_workspace()
+
+      logger.info(
+        "persist_workspace() returned %s",
+        type(workspace_stream).__name__,
+      )
+>>>>>>> main
     else:
       logger.info(
         "Creating sandbox for form agent from snapshot %r.",
