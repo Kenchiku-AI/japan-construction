@@ -112,19 +112,16 @@ mods = {{
 for pkg, mod in mods.items():
     try:
         imported = importlib.import_module(mod)
-        print(
-            "OK   {} -> {}".format(
-                pkg,
-                getattr(imported, "__file__", "unknown"),
-            )
-        )
+        location = getattr(imported, "__file__", "unknown")
+        print("OK   " + pkg + " -> " + str(location))
     except Exception as exc:
         print(
-            "MISSING {}: {{}}: {{}}".format(
-                pkg,
-                type(exc).__name__,
-                exc,
-            )
+            "MISSING "
+            + pkg
+            + ": "
+            + type(exc).__name__
+            + ": "
+            + str(exc)
         )
 '
 
