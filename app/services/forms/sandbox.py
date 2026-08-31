@@ -1,6 +1,7 @@
 import io
 import logging
 import inspect
+import tarfile
 from typing import Any
 
 from agents.extensions.sandbox import VercelSandboxClient
@@ -35,8 +36,6 @@ class S3SnapshotClient:
     )
 
     data.seek(0)
-
-    import tarfile
 
     with tarfile.open(fileobj=data, mode="r:*") as tar:
       names = tar.getnames()
