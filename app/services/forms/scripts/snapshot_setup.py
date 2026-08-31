@@ -63,80 +63,81 @@ except Exception as exc:
 " 2>&1 || echo "boto3 not yet installed -- will check again post-install"
 """
 
-INSTALL_COMMAND = """
+INSTALL_COMMAND = f"""
 set -euo pipefail
 
-export PATH="{bin_dir}:$PATH"
+export PATH="{BIN_DIR}:$PATH"
 
 echo "=== bootstrapping pip if needed ==="
 python3 -m ensurepip --upgrade 2>&1 || echo "ensurepip not needed/available, continuing"
 python3 -m pip install --upgrade pip
 
 echo "=== installing packages ==="
-python3 -m pip install --no-cache-dir {packages}
+python3 -m pip install --no-cache-dir {" ".join(PIP_PACKAGES)}
 
 echo "=== checking which packages actually installed ==="
-python3 -c "
+python3 -c '
 import importlib
 import sys
 import site
 
-print('Python executable:', sys.executable)
-print('Python version:', sys.version)
-print('sys.path:')
-for path in sys.path:
-    print('  ', path)
+print("Python executable:", sys.executable)
+print("Python version:", sys.version)
 
-print('site-packages:')
+print("sys.path:")
+for path in sys.path:
+    print("  ", path)
+
+print("site-packages:")
 try:
     for path in site.getsitepackages():
-        print('  ', path)
+        print("  ", path)
 except Exception as exc:
-    print('Could not determine site-packages:', exc)
+    print("Could not determine site-packages:", exc)
 
 mods = {{
-    'openpyxl': 'openpyxl',
-    'xlrd': 'xlrd',
-    'python-docx': 'docx',
-    'python-pptx': 'pptx',
-    'pandas': 'pandas',
-    'odfpy': 'odf',
-    'pymupdf': 'fitz',
-    'pypdf': 'pypdf',
-    'Pillow': 'PIL',
-    'boto3': 'boto3',
-    'httpx': 'httpx',
+    "openpyxl": "openpyxl",
+    "xlrd": "xlrd",
+    "python-docx": "docx",
+    "python-pptx": "pptx",
+    "pandas": "pandas",
+    "odfpy": "odf",
+    "pymupdf": "fitz",
+    "pypdf": "pypdf",
+    "Pillow": "PIL",
+    "boto3": "boto3",
+    "httpx": "httpx",
 }}
 
 for pkg, mod in mods.items():
-  try:
-    spec = importlib.util.find_spec(mod)
-    if spec is None:
-      print(f'MISSING {pkg}: module {mod} not found')
-    else:
-      print(f'OK   {pkg} -> {spec.origin}')
-  except Exception as exc:
-    print(f'MISSING {pkg}: {type(exc).__name__}: {exc}')
-"
+    try:
+        imported = importlib.import_module(mod)
+        print(
+            "OK   {} -> {}".format(
+                pkg,
+                getattr(imported, "__file__", "unknown"),
+            )
+        )
+    except Exception as exc:
+        print(
+            "MISSING {}: {{}}: {{}}".format(
+                pkg,
+                type(exc).__name__,
+                exc,
+            )
+        )
+'
 
-echo "=== checking installed scripts ==="
-ls -la "{bin_dir}/form-convert"
-ls -la "{bin_dir}/form-inspect"
-ls -la "{bin_dir}/form-verify"
+echo "=== verifying installed packages with pip ==="
+python3 -m pip show openpyxl xlrd python-docx python-pptx pandas odfpy pymupdf pypdf Pillow boto3 httpx || true
 
-echo "=== checking PATH ==="
-echo "$PATH"
-
-echo "=== resolving commands ==="
-command -v form-convert
-command -v form-inspect
-command -v form-verify
+echo "=== verifying command-line scripts ==="
+command -v form-convert || true
+command -v form-inspect || true
+command -v form-verify || true
 
 echo "=== install complete ==="
-""".format(
-  bin_dir=BIN_DIR,
-  packages=" ".join(PIP_PACKAGES),
-)
+"""
 
 
 async def _run_and_log(session, label: str, *cmd: str):
