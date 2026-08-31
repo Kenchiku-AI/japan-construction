@@ -109,18 +109,30 @@ mods = {{
 }}
 
 for pkg, mod in mods.items():
-    try:
-        imported = importlib.import_module(mod)
-        print(f'OK   {{pkg}} -> {{getattr(imported, "__file__", "unknown")}}')
-    except Exception as exc:
-        print(f'MISSING {{pkg}}: {{type(exc).__name__}}: {{exc}}')
+  try:
+    spec = importlib.util.find_spec(mod)
+    if spec is None:
+      print(f'MISSING {pkg}: module {mod} not found')
+    else:
+      print(f'OK   {pkg} -> {spec.origin}')
+  except Exception as exc:
+    print(f'MISSING {pkg}: {type(exc).__name__}: {exc}')
 "
 
-echo "=== install complete ==="
+echo "=== checking installed scripts ==="
+ls -la "{bin_dir}/form-convert"
+ls -la "{bin_dir}/form-inspect"
+ls -la "{bin_dir}/form-verify"
 
+echo "=== checking PATH ==="
+echo "$PATH"
+
+echo "=== resolving commands ==="
 command -v form-convert
 command -v form-inspect
 command -v form-verify
+
+echo "=== install complete ==="
 """.format(
   bin_dir=BIN_DIR,
   packages=" ".join(PIP_PACKAGES),
@@ -170,15 +182,41 @@ async def provision_dependencies(session) -> None:
       f'pwd; ls -la "{workspace_path}" 2>&1 || echo "NOT FOUND at {workspace_path}"',
     )
     if check.exit_code != 0:
-      raise RuntimeError(f"Uploaded file {filename} not found at expected path {workspace_path}")
+      raise RuntimeError(
+        f"Uploaded file {filename} not found at expected path {workspace_path}"
+      )
 
-    result = await session.exec("cp", str(workspace_path), f"{BIN_DIR}/{filename}")
+    result = await session.exec(
+      "cp",
+      str(workspace_path),
+      f"{BIN_DIR}/{filename}",
+    )
     if result.exit_code != 0:
       stderr = result.stderr.decode(errors="replace")
       raise RuntimeError(f"Failed to install {filename}: {stderr}")
 
+  # Make the executable form scripts actually executable.
+  chmod_result = await session.exec(
+    "chmod",
+    "+x",
+    f"{BIN_DIR}/form-convert",
+    f"{BIN_DIR}/form-inspect",
+    f"{BIN_DIR}/form-verify",
+  )
+  if chmod_result.exit_code != 0:
+    stderr = chmod_result.stderr.decode(errors="replace")
+    raise RuntimeError(f"Failed to make form scripts executable: {stderr}")
+
   logger.info("Installing python dependencies ...")
 
-  result = await _run_and_log(session, "install", "sh", "-lc", INSTALL_COMMAND)
+  result = await _run_and_log(
+    session,
+    "install",
+    "sh",
+    "-lc",
+    INSTALL_COMMAND,
+  )
   if result.exit_code != 0:
-    raise RuntimeError(f"Dependency install failed with exit code {result.exit_code}")
+    raise RuntimeError(
+      f"Dependency install failed with exit code {result.exit_code}"
+    )
