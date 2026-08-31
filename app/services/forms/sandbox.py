@@ -1,6 +1,7 @@
 import io
 import logging
 import inspect
+import tarfile
 from typing import Any
 
 from agents.extensions.sandbox import VercelSandboxClient
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 # Bump this whenever scripts/ or the installed system packages change,
 # so job runs never silently pick up a stale snapshot.
-FORM_AGENT_SNAPSHOT_ID = "form-agent-snapshot-v3"
+FORM_AGENT_SNAPSHOT_ID = "form-agent-snapshot-v4"
 
 SNAPSHOT_CLIENT_DEPENDENCY_KEY = "kenchiku.form_agent.s3_snapshot_client"
 
@@ -34,6 +35,64 @@ class S3SnapshotClient:
       snapshot_id,
     )
 
+    # Make sure we're reading from the beginning.
+    data.seek(0)
+
+    tar_bytes = data.read()
+
+    logger.info(
+      "SNAPSHOT UPLOAD TAR: snapshot=%r bytes=%d",
+      snapshot_id,
+      len(tar_bytes),
+    )
+
+    try:
+      with tarfile.open(
+        fileobj=io.BytesIO(tar_bytes),
+        mode="r:*",
+      ) as tar:
+        names = tar.getnames()
+
+        logger.info(
+          "SNAPSHOT UPLOAD TAR: snapshot=%r entries=%d",
+          snapshot_id,
+          len(names),
+        )
+
+        for name in names[:100]:
+          logger.info(
+            "SNAPSHOT UPLOAD TAR ENTRY: %s",
+            name,
+          )
+
+        important_names = [
+          name
+          for name in names
+          if any(
+            target in name
+            for target in (
+              "form-convert",
+              "form-inspect",
+              "form-verify",
+              "inspect_excel.py",
+              ".local",
+            )
+          )
+        ]
+
+        logger.info(
+          "SNAPSHOT UPLOAD IMPORTANT ENTRIES: %s",
+          important_names,
+        )
+
+    except Exception:
+      logger.exception(
+        "Could not inspect snapshot tar before S3 upload.",
+      )
+
+    # Rewind because we consumed the stream above.
+    data.seek(0)
+
     self._s3.upload_fileobj(
       data,
       self._bucket,
@@ -45,14 +104,101 @@ class S3SnapshotClient:
       snapshot_id,
     )
 
+    # Verify exactly what S3 received.
+    metadata = self._s3.head_object(
+      Bucket=self._bucket,
+      Key=self._object_key(snapshot_id),
+    )
+
+    logger.info(
+      "SNAPSHOT S3 AFTER UPLOAD: snapshot=%r "
+      "key=%r ContentLength=%s ETag=%s LastModified=%s",
+      snapshot_id,
+      self._object_key(snapshot_id),
+      metadata.get("ContentLength"),
+      metadata.get("ETag"),
+      metadata.get("LastModified"),
+    )
+
   def download(self, snapshot_id: str) -> io.IOBase:
+    key = self._object_key(snapshot_id)
+
+    metadata = self._s3.head_object(
+      Bucket=self._bucket,
+      Key=key,
+    )
+
+    logger.info(
+      "SNAPSHOT S3 BEFORE DOWNLOAD: snapshot=%r "
+      "key=%r ContentLength=%s ETag=%s LastModified=%s",
+      snapshot_id,
+      key,
+      metadata.get("ContentLength"),
+      metadata.get("ETag"),
+      metadata.get("LastModified"),
+    )
+
     buffer = io.BytesIO()
 
     self._s3.download_fileobj(
       self._bucket,
-      self._object_key(snapshot_id),
+      key,
       buffer,
     )
+
+    downloaded_bytes = buffer.getvalue()
+
+    logger.info(
+      "SNAPSHOT DOWNLOAD COMPLETE: snapshot=%r bytes=%d "
+      "S3_ContentLength=%s",
+      snapshot_id,
+      len(downloaded_bytes),
+      metadata.get("ContentLength"),
+    )
+
+    try:
+      with tarfile.open(
+        fileobj=io.BytesIO(downloaded_bytes),
+        mode="r:*",
+      ) as tar:
+        names = tar.getnames()
+
+        logger.info(
+          "SNAPSHOT DOWNLOAD TAR: snapshot=%r entries=%d",
+          snapshot_id,
+          len(names),
+        )
+
+        for name in names[:100]:
+          logger.info(
+            "SNAPSHOT DOWNLOAD TAR ENTRY: %s",
+            name,
+          )
+
+        important_names = [
+          name
+          for name in names
+          if any(
+            target in name
+            for target in (
+              "form-convert",
+              "form-inspect",
+              "form-verify",
+              "inspect_excel.py",
+              ".local",
+            )
+          )
+        ]
+
+        logger.info(
+          "SNAPSHOT DOWNLOAD IMPORTANT ENTRIES: %s",
+          important_names,
+        )
+
+    except Exception:
+      logger.exception(
+        "Could not inspect downloaded snapshot tar.",
+      )
 
     buffer.seek(0)
 

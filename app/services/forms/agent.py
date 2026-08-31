@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import inspect
+import tarfile
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -135,10 +136,59 @@ async def run_form_agent(
 
       workspace_stream = await sandbox.persist_workspace()
 
+      workspace_stream.seek(0)
+
+      persisted_bytes = workspace_stream.read()
+
       logger.info(
-        "persist_workspace() returned %s",
-        type(workspace_stream).__name__,
+        "PERSISTED WORKSPACE: bytes=%d",
+        len(persisted_bytes),
       )
+
+      try:
+        with tarfile.open(
+          fileobj=io.BytesIO(persisted_bytes),
+          mode="r:*",
+        ) as tar:
+          names = tar.getnames()
+
+          logger.info(
+            "PERSISTED WORKSPACE TAR: entries=%d",
+            len(names),
+          )
+
+          for name in names[:100]:
+            logger.info(
+              "PERSISTED WORKSPACE TAR ENTRY: %s",
+              name,
+            )
+
+          important_names = [
+            name
+            for name in names
+            if any(
+              target in name
+              for target in (
+                "form-convert",
+                "form-inspect",
+                "form-verify",
+                "inspect_excel.py",
+                ".local",
+              )
+            )
+          ]
+
+          logger.info(
+            "PERSISTED WORKSPACE IMPORTANT ENTRIES: %s",
+            important_names,
+          )
+
+      except Exception:
+        logger.exception(
+          "Could not inspect persisted workspace tar.",
+        )
+
+      workspace_stream.seek(0)
 
       logger.info(
         "Running final pre-snapshot dependency verification."
@@ -251,8 +301,6 @@ echo "=== PRE-SNAPSHOT DONE ==="
           runtime="python3.13",
         ),
       )
-
-      logger.info("Vercel sandbox created successfully from snapshot.")
 
     check_result = await sandbox.exec(
       "sh", "-lc",
