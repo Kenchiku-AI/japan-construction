@@ -47,6 +47,9 @@ async def run_form_agent(
   company_id: UUID,
   project_id: UUID | None,
 ):
+  print("***** SANDBOX CLIENT *****")
+  print([m for m in dir(sandbox_client) if not m.startswith("_")])
+
   agent = build_form_agent()
 
   workspace = workspace.resolve()
@@ -110,6 +113,9 @@ async def run_form_agent(
           runtime="python3.13",
         ),
       )
+
+      print("***** SESSION *****")
+      print([m for m in dir(sandbox) if not m.startswith("_")])
 
       await provision_dependencies(sandbox)
 
