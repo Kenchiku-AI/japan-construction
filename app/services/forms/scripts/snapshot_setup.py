@@ -78,7 +78,23 @@ python3 -m pip install --no-cache-dir {packages}
 echo "=== checking which packages actually installed ==="
 python3 -c "
 import importlib
-mods = {{
+import sys
+import site
+
+print('Python executable:', sys.executable)
+print('Python version:', sys.version)
+print('sys.path:')
+for path in sys.path:
+    print('  ', path)
+
+print('site-packages:')
+try:
+    for path in site.getsitepackages():
+        print('  ', path)
+except Exception as exc:
+    print('Could not determine site-packages:', exc)
+
+mods = {
     'openpyxl': 'openpyxl',
     'xlrd': 'xlrd',
     'python-docx': 'docx',
@@ -90,13 +106,14 @@ mods = {{
     'Pillow': 'PIL',
     'boto3': 'boto3',
     'httpx': 'httpx',
-}}
+}
+
 for pkg, mod in mods.items():
     try:
-        importlib.import_module(mod)
-        print(f'OK   {{pkg}}')
-    except ImportError as exc:
-        print(f'MISSING {{pkg}}: {{exc}}')
+        imported = importlib.import_module(mod)
+        print(f'OK   {pkg} -> {getattr(imported, \"__file__\", \"unknown\")}')
+    except Exception as exc:
+        print(f'MISSING {pkg}: {type(exc).__name__}: {exc}')
 "
 
 chmod +x {bin_dir}/form-convert

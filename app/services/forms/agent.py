@@ -31,61 +31,6 @@ from app.services.forms.scripts.snapshot_setup import provision_dependencies
 logger = logging.getLogger(__name__)
 
 
-def _log_sandbox_capabilities(logger, sandbox) -> None:
-  """One-time diagnostic: logs everything available on the sandbox/session
-  object so we can find the real snapshot/persistence API instead of
-  guessing. Safe to leave in -- wrapped so it never breaks the run."""
-
-  try:
-    obj_type = type(sandbox)
-    logger.info("Sandbox object type: %s.%s", obj_type.__module__, obj_type.__qualname__)
-
-    all_members = [m for m in dir(sandbox) if not m.startswith("_")]
-    logger.info("Sandbox object members: %s", all_members)
-
-    # Anything that looks snapshot/persistence/state related gets a closer look.
-    keywords = ("snapshot", "persist", "state", "serialize", "resume", "save", "id")
-    interesting = [m for m in all_members if any(k in m.lower() for k in keywords)]
-
-    for name in interesting:
-      try:
-        attr = getattr(sandbox, name)
-      except Exception as exc:
-        logger.info("  %s -> could not access: %r", name, exc)
-        continue
-
-      if callable(attr):
-        try:
-          signature = inspect.signature(attr)
-        except (TypeError, ValueError):
-          signature = "(signature unavailable)"
-        logger.info("  %s%s  [callable]", name, signature)
-      else:
-        # Careful: don't dump huge/sensitive values, just type + short repr
-        value_repr = repr(attr)
-        if len(value_repr) > 200:
-          value_repr = value_repr[:200] + "...(truncated)"
-        logger.info("  %s = %s  [%s]", name, value_repr, type(attr).__name__)
-
-    # Also check the underlying wrapped object, if this is a wrapper --
-    # _VercelSandboxSessionWrapper suggests there's a real client/session
-    # object underneath that might expose more than the wrapper does.
-    for inner_attr_name in ("session", "_session", "client", "_client", "sandbox", "_sandbox"):
-      if hasattr(sandbox, inner_attr_name):
-        inner = getattr(sandbox, inner_attr_name)
-        inner_type = type(inner)
-        logger.info(
-          "Found inner object '%s': %s.%s -- members: %s",
-          inner_attr_name,
-          inner_type.__module__,
-          inner_type.__qualname__,
-          [m for m in dir(inner) if not m.startswith("_")],
-        )
-
-  except Exception as exc:
-    logger.warning("Sandbox capability introspection itself failed: %r", exc)
-
-
 def build_form_agent() -> SandboxAgent:
   return SandboxAgent(
     name="Kenchiku AI Form Agent",
@@ -188,26 +133,102 @@ async def run_form_agent(
 
       await provision_dependencies(sandbox)
 
-      _log_sandbox_capabilities(logger, sandbox)
+      logger.info(
+        "Running final pre-snapshot dependency verification."
+      )
 
-      try:
-        snapshot_id = await sandbox.snapshot()
+      pre_snapshot_check = await sandbox.exec(
+  "sh",
+  "-lc",
+  """
+set -x
 
-        logger.info(
-          "Snapshot persisted successfully. Snapshot ID: %r",
-          snapshot_id,
-        )
+echo "=== PRE-SNAPSHOT IDENTITY ==="
+whoami
+id
+pwd
 
-        logger.info(
-          "Snapshot persisted. Store this ID: %r",
-          FORM_AGENT_SNAPSHOT_ID,
-        )
-      except AttributeError:
-        logger.exception(
-          "sandbox.snapshot() does not exist on this SDK version -- "
-          "dependencies were installed but NOT persisted. This run's "
-          "sandbox will still be used below, but every future run will "
-          "re-bootstrap until this is fixed."
+echo "=== PRE-SNAPSHOT PATH ==="
+echo "$PATH"
+
+echo "=== PRE-SNAPSHOT SCRIPT FILES ==="
+ls -la /home/vercel-sandbox/.local/bin 2>&1 || true
+
+echo "=== PRE-SNAPSHOT PYTHON ==="
+python3 --version
+python3 -m pip --version
+
+echo "=== PRE-SNAPSHOT IMPORT CHECK ==="
+python3 - <<'PY'
+import importlib
+import sys
+
+mods = [
+  "openpyxl",
+  "xlrd",
+  "docx",
+  "pptx",
+  "pandas",
+  "odf",
+  "fitz",
+  "pypdf",
+  "PIL",
+  "boto3",
+  "httpx",
+]
+
+print("Python:", sys.executable)
+
+for mod in mods:
+  try:
+    imported = importlib.import_module(mod)
+    print(
+      "OK",
+      mod,
+      getattr(imported, "__file__", "unknown"),
+    )
+  except Exception as exc:
+    print(
+      "MISSING",
+      mod,
+      type(exc).__name__,
+      exc,
+    )
+PY
+
+echo "=== PRE-SNAPSHOT SCRIPT SEARCH ==="
+find /home/vercel-sandbox /usr/local/bin \
+  -type f \
+  \\( \
+    -name "form-convert" -o \
+    -name "form-inspect" -o \
+    -name "form-verify" -o \
+    -name "inspect_excel.py" \
+  \\) \
+  -print 2>/dev/null || true
+
+echo "=== PRE-SNAPSHOT DONE ==="
+        """,
+      )
+
+      logger.info(
+        "Pre-snapshot verification exit code: %s",
+        pre_snapshot_check.exit_code,
+      )
+
+      logger.info(
+        "Pre-snapshot verification stdout:\n%s",
+        pre_snapshot_check.stdout.decode(errors="replace"),
+      )
+
+      logger.info(
+        "Pre-snapshot verification stderr:\n%s",
+        pre_snapshot_check.stderr.decode(errors="replace"),
+      )
+
+      if pre_snapshot_check.exit_code != 0:
+        raise RuntimeError(
+          "Pre-snapshot dependency verification failed."
         )
     else:
       logger.info(
@@ -230,11 +251,122 @@ async def run_form_agent(
       "sh", "-lc",
       """
 set -x
-ls -la /usr/local/bin
-echo "PATH=$PATH"
-command -v form-convert
-command -v form-inspect
-command -v form-verify
+
+echo "=== IDENTITY ==="
+whoami
+id
+pwd
+
+echo "=== PATH ==="
+echo "$PATH"
+
+echo "=== HOME ==="
+echo "HOME=$HOME"
+
+echo "=== PYTHON ==="
+command -v python3 || true
+python3 --version || true
+
+echo "=== PIP ==="
+python3 -m pip --version || true
+
+echo "=== EXPECTED SCRIPT DIRECTORY ==="
+ls -la /home/vercel-sandbox/.local/bin 2>&1 || true
+
+echo "=== EXPECTED SCRIPTS ==="
+for f in \
+  /home/vercel-sandbox/.local/bin/form-convert \
+  /home/vercel-sandbox/.local/bin/form-inspect \
+  /home/vercel-sandbox/.local/bin/form-verify \
+  /home/vercel-sandbox/.local/bin/inspect_excel.py
+do
+  if [ -f "$f" ]; then
+    echo "FOUND: $f"
+    ls -l "$f"
+  else
+    echo "MISSING: $f"
+  fi
+done
+
+echo "=== SEARCH FOR OUR SCRIPTS ==="
+find /home /tmp /workspace /app /usr/local/bin \
+  -type f \
+  \\( \
+    -name "form-convert" -o \
+    -name "form-inspect" -o \
+    -name "form-verify" -o \
+    -name "inspect_excel.py" \
+  \\) \
+  -print 2>/dev/null || true
+
+echo "=== PYTHON PACKAGES ==="
+python3 - <<'PY'
+import importlib
+
+mods = {
+  "openpyxl": "openpyxl",
+  "xlrd": "xlrd",
+  "python-docx": "docx",
+  "python-pptx": "pptx",
+  "pandas": "pandas",
+  "odfpy": "odf",
+  "pymupdf": "fitz",
+  "pypdf": "pypdf",
+  "Pillow": "PIL",
+  "boto3": "boto3",
+  "httpx": "httpx",
+}
+
+for package, module in mods.items():
+  try:
+    imported = importlib.import_module(module)
+    print(f"OK      {package} -> {getattr(imported, '__file__', 'unknown')}")
+  except Exception as exc:
+    print(f"MISSING {package} -> {type(exc).__name__}: {exc}")
+PY
+
+echo "=== PYTHON SITE-PACKAGES ==="
+python3 - <<'PY'
+import site
+import sys
+
+print("sys.executable:", sys.executable)
+print("sys.path:")
+for path in sys.path:
+  print("  ", path)
+
+print("site-packages:")
+try:
+  for path in site.getsitepackages():
+    print("  ", path)
+except Exception as exc:
+  print("ERROR:", exc)
+
+try:
+  print("user-site:", site.getusersitepackages())
+except Exception as exc:
+  print("user-site ERROR:", exc)
+PY
+
+echo "=== PIP PACKAGE LIST ==="
+python3 -m pip list 2>&1 || true
+
+echo "=== COMMAND LOOKUP WITH EXPECTED PATH ==="
+export PATH="/home/vercel-sandbox/.local/bin:$PATH"
+
+command -v form-convert || true
+command -v form-inspect || true
+command -v form-verify || true
+
+echo "=== DIRECT EXECUTION TEST ==="
+/home/vercel-sandbox/.local/bin/form-convert --help 2>&1 || true
+/home/vercel-sandbox/.local/bin/form-inspect --help 2>&1 || true
+/home/vercel-sandbox/.local/bin/form-verify --help 2>&1 || true
+
+echo "=== FILESYSTEM ROOTS ==="
+ls -la / 2>&1 || true
+
+echo "=== DONE ==="
       """,
     )
 
@@ -253,8 +385,10 @@ command -v form-verify
       )
 
     if check_result.exit_code != 0:
-      raise RuntimeError(
-        "Sandbox dependencies missing after creation/provisioning."
+      logger.warning(
+        "Sandbox dependency diagnostic returned exit code %s. "
+        "Continuing so the full diagnostic output can be inspected.",
+        check_result.exit_code,
       )
 
     mkdir_result = await sandbox.exec("mkdir", "-p", "input", "output")
