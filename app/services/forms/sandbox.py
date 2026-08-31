@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Bump this whenever scripts/ or the installed system packages change,
 # so job runs never silently pick up a stale snapshot.
-FORM_AGENT_SNAPSHOT_ID = "form-agent-snapshot-v1"
+FORM_AGENT_SNAPSHOT_ID = "form-agent-snapshot-v2"
 
 SNAPSHOT_CLIENT_DEPENDENCY_KEY = "kenchiku.form_agent.s3_snapshot_client"
 
@@ -29,10 +29,20 @@ class S3SnapshotClient:
     self._s3 = boto3.client("s3")
 
   def upload(self, snapshot_id: str, data: io.IOBase) -> None:
+    logger.info(
+      "S3SnapshotClient.upload() called for snapshot %r",
+      snapshot_id,
+    )
+
     self._s3.upload_fileobj(
       data,
       self._bucket,
       self._object_key(snapshot_id),
+    )
+
+    logger.info(
+      "S3SnapshotClient.upload() completed for snapshot %r",
+      snapshot_id,
     )
 
   def download(self, snapshot_id: str) -> io.IOBase:
