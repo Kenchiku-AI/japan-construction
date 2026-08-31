@@ -293,8 +293,35 @@ echo "=== PRE-SNAPSHOT DONE ==="
         FORM_AGENT_SNAPSHOT_ID,
       )
 
+
+      snapshot = get_form_agent_snapshot()
+
+      logger.info(
+        "CREATING SANDBOX WITH SNAPSHOT: "
+        "type=%s id=%r client_dependency_key=%r",
+        type(snapshot).__name__,
+        snapshot.id,
+        snapshot.client_dependency_key,
+      )
+
+      logger.info(
+        "VERCEL CLIENT ATTRIBUTES: %s",
+        [
+          name
+          for name in dir(sandbox_client)
+          if "snapshot" in name.lower()
+          or "depend" in name.lower()
+          or "workspace" in name.lower()
+        ],
+      )
+
+      logger.info(
+        "VERCEL CLIENT TYPE: %s",
+        type(sandbox_client),
+      )
+
       sandbox = await sandbox_client.create(
-        snapshot=get_form_agent_snapshot(),
+        snapshot=snapshot,
         options=VercelSandboxClientOptions(
           allow_s3_credential_exposure=False,
           timeout_ms=300_000,
