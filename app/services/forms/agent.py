@@ -102,9 +102,6 @@ async def run_form_agent(
   company_id: UUID,
   project_id: UUID | None,
 ):
-  print("***** SANDBOX CLIENT *****")
-  print([m for m in dir(sandbox_client) if not m.startswith("_")])
-
   agent = build_form_agent()
 
   workspace = workspace.resolve()
@@ -169,8 +166,27 @@ async def run_form_agent(
         ),
       )
 
-      print("***** SESSION *****")
-      print([m for m in dir(sandbox) if not m.startswith("_")])
+      for name in (
+        "persist_workspace",
+        "hydrate_workspace",
+        "aclose",
+      ):
+        attr = getattr(sandbox, name, None)
+
+        if attr is None:
+          continue
+
+        try:
+          logger.info(
+            "Sandbox.%s%s",
+            name,
+            inspect.signature(attr),
+          )
+        except (TypeError, ValueError):
+          logger.info(
+            "Sandbox.%s (signature unavailable)",
+            name,
+          )
 
       await provision_dependencies(sandbox)
 
