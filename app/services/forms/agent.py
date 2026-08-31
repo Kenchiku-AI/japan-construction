@@ -138,32 +138,57 @@ async def run_form_agent(
 
       workspace_stream.seek(0)
 
-      with tarfile.open(fileobj=workspace_stream, mode="r:*") as tar:
-        names = tar.getnames()
+      persisted_bytes = workspace_stream.read()
 
       logger.info(
-        "Persisted workspace contains %d entries.",
-        len(names),
+        "PERSISTED WORKSPACE: bytes=%d",
+        len(persisted_bytes),
       )
 
-      for name in names:
-        if (
-          "form-convert" in name
-          or "openpyxl" in name
-          or "boto3" in name
-          or ".local" in name
-        ):
+      try:
+        with tarfile.open(
+          fileobj=io.BytesIO(persisted_bytes),
+          mode="r:*",
+        ) as tar:
+          names = tar.getnames()
+
           logger.info(
-            "SNAPSHOT MATCH: %s",
-            name,
+            "PERSISTED WORKSPACE TAR: entries=%d",
+            len(names),
           )
 
-      workspace_stream.seek(0)
+          for name in names[:100]:
+            logger.info(
+              "PERSISTED WORKSPACE TAR ENTRY: %s",
+              name,
+            )
 
-      logger.info(
-        "persist_workspace() returned %s",
-        type(workspace_stream).__name__,
-      )
+          important_names = [
+            name
+            for name in names
+            if any(
+              target in name
+              for target in (
+                "form-convert",
+                "form-inspect",
+                "form-verify",
+                "inspect_excel.py",
+                ".local",
+              )
+            )
+          ]
+
+          logger.info(
+            "PERSISTED WORKSPACE IMPORTANT ENTRIES: %s",
+            important_names,
+          )
+
+      except Exception:
+        logger.exception(
+          "Could not inspect persisted workspace tar.",
+        )
+
+      workspace_stream.seek(0)
 
       logger.info(
         "Running final pre-snapshot dependency verification."

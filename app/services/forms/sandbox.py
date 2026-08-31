@@ -30,28 +30,69 @@ class S3SnapshotClient:
     self._s3 = boto3.client("s3")
 
   def upload(self, snapshot_id: str, data: io.IOBase) -> None:
+    import tarfile
+
     logger.info(
       "S3SnapshotClient.upload() called for snapshot %r",
       snapshot_id,
     )
 
+    # Make sure we're reading from the beginning.
     data.seek(0)
 
-    with tarfile.open(fileobj=data, mode="r:*") as tar:
-      names = tar.getnames()
+    tar_bytes = data.read()
 
     logger.info(
-      "Snapshot %r contains %d workspace entries.",
+      "SNAPSHOT UPLOAD TAR: snapshot=%r bytes=%d",
       snapshot_id,
-      len(names),
+      len(tar_bytes),
     )
 
-    for name in names[:50]:
-      logger.info(
-        "Snapshot entry: %s",
-        name,
+    try:
+      with tarfile.open(
+        fileobj=io.BytesIO(tar_bytes),
+        mode="r:*",
+      ) as tar:
+        names = tar.getnames()
+
+        logger.info(
+          "SNAPSHOT UPLOAD TAR: snapshot=%r entries=%d",
+          snapshot_id,
+          len(names),
+        )
+
+        for name in names[:100]:
+          logger.info(
+            "SNAPSHOT UPLOAD TAR ENTRY: %s",
+            name,
+          )
+
+        important_names = [
+          name
+          for name in names
+          if any(
+            target in name
+            for target in (
+              "form-convert",
+              "form-inspect",
+              "form-verify",
+              "inspect_excel.py",
+              ".local",
+            )
+          )
+        ]
+
+        logger.info(
+          "SNAPSHOT UPLOAD IMPORTANT ENTRIES: %s",
+          important_names,
+        )
+
+    except Exception:
+      logger.exception(
+        "Could not inspect snapshot tar before S3 upload.",
       )
 
+    # Rewind because we consumed the stream above.
     data.seek(0)
 
     self._s3.upload_fileobj(
@@ -65,25 +106,103 @@ class S3SnapshotClient:
       snapshot_id,
     )
 
-  def download(self, snapshot_id: str) -> io.IOBase:
+    # Verify exactly what S3 received.
+    metadata = self._s3.head_object(
+      Bucket=self._bucket,
+      Key=self._object_key(snapshot_id),
+    )
+
     logger.info(
-      "S3SnapshotClient.download() called for snapshot %r",
+      "SNAPSHOT S3 AFTER UPLOAD: snapshot=%r "
+      "key=%r ContentLength=%s ETag=%s LastModified=%s",
       snapshot_id,
+      self._object_key(snapshot_id),
+      metadata.get("ContentLength"),
+      metadata.get("ETag"),
+      metadata.get("LastModified"),
+    )
+
+  def download(self, snapshot_id: str) -> io.IOBase:
+    import tarfile
+
+    key = self._object_key(snapshot_id)
+
+    metadata = self._s3.head_object(
+      Bucket=self._bucket,
+      Key=key,
+    )
+
+    logger.info(
+      "SNAPSHOT S3 BEFORE DOWNLOAD: snapshot=%r "
+      "key=%r ContentLength=%s ETag=%s LastModified=%s",
+      snapshot_id,
+      key,
+      metadata.get("ContentLength"),
+      metadata.get("ETag"),
+      metadata.get("LastModified"),
     )
 
     buffer = io.BytesIO()
 
     self._s3.download_fileobj(
       self._bucket,
-      self._object_key(snapshot_id),
+      key,
       buffer,
     )
 
+    downloaded_bytes = buffer.getvalue()
+
     logger.info(
-      "S3SnapshotClient.download() downloaded %d bytes for snapshot %r",
-      buffer.tell(),
+      "SNAPSHOT DOWNLOAD COMPLETE: snapshot=%r bytes=%d "
+      "S3_ContentLength=%s",
       snapshot_id,
+      len(downloaded_bytes),
+      metadata.get("ContentLength"),
     )
+
+    try:
+      with tarfile.open(
+        fileobj=io.BytesIO(downloaded_bytes),
+        mode="r:*",
+      ) as tar:
+        names = tar.getnames()
+
+        logger.info(
+          "SNAPSHOT DOWNLOAD TAR: snapshot=%r entries=%d",
+          snapshot_id,
+          len(names),
+        )
+
+        for name in names[:100]:
+          logger.info(
+            "SNAPSHOT DOWNLOAD TAR ENTRY: %s",
+            name,
+          )
+
+        important_names = [
+          name
+          for name in names
+          if any(
+            target in name
+            for target in (
+              "form-convert",
+              "form-inspect",
+              "form-verify",
+              "inspect_excel.py",
+              ".local",
+            )
+          )
+        ]
+
+        logger.info(
+          "SNAPSHOT DOWNLOAD IMPORTANT ENTRIES: %s",
+          important_names,
+        )
+
+    except Exception:
+      logger.exception(
+        "Could not inspect downloaded snapshot tar.",
+      )
 
     buffer.seek(0)
 
