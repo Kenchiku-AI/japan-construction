@@ -140,12 +140,10 @@ async def run_form_agent(
 
   snapshot_client = build_snapshot_client()
 
-  # snapshot_exists = await asyncio.to_thread(
-  #   snapshot_client.exists,
-  #   FORM_AGENT_SNAPSHOT_ID,
-  # )
-
-  snapshot_exists = False
+  snapshot_exists = await asyncio.to_thread(
+    snapshot_client.exists,
+    FORM_AGENT_SNAPSHOT_ID,
+  )
 
   sandbox = None
 
