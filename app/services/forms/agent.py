@@ -192,25 +192,12 @@ async def run_form_agent(
 
       _log_sandbox_capabilities(logger, sandbox)
 
-      try:
-        snapshot_id = await sandbox.snapshot()
+      workspace_stream = await sandbox.persist_workspace()
 
-        logger.info(
-          "Snapshot persisted successfully. Snapshot ID: %r",
-          snapshot_id,
-        )
-
-        logger.info(
-          "Snapshot persisted. Store this ID: %r",
-          FORM_AGENT_SNAPSHOT_ID,
-        )
-      except AttributeError:
-        logger.exception(
-          "sandbox.snapshot() does not exist on this SDK version -- "
-          "dependencies were installed but NOT persisted. This run's "
-          "sandbox will still be used below, but every future run will "
-          "re-bootstrap until this is fixed."
-        )
+      logger.info(
+        "persist_workspace() returned %s",
+        type(workspace_stream).__name__,
+      )
     else:
       logger.info(
         "Creating sandbox for form agent from snapshot %r.",

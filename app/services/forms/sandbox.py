@@ -29,10 +29,20 @@ class S3SnapshotClient:
     self._s3 = boto3.client("s3")
 
   def upload(self, snapshot_id: str, data: io.IOBase) -> None:
+    logger.info(
+      "S3SnapshotClient.upload() called for snapshot %r",
+      snapshot_id,
+    )
+
     self._s3.upload_fileobj(
       data,
       self._bucket,
       self._object_key(snapshot_id),
+    )
+
+    logger.info(
+      "S3SnapshotClient.upload() completed for snapshot %r",
+      snapshot_id,
     )
 
   def download(self, snapshot_id: str) -> io.IOBase:
