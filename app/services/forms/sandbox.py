@@ -246,9 +246,30 @@ def get_form_agent_snapshot() -> RemoteSnapshot:
 def get_form_sandbox_client() -> VercelSandboxClient:
   snapshot_client = build_snapshot_client()
 
+  logger.info(
+    "BUILD SNAPSHOT CLIENT: type=%s id=%s",
+    type(snapshot_client).__name__,
+    id(snapshot_client),
+  )
+
   dependencies = Dependencies().bind_value(
     SNAPSHOT_CLIENT_DEPENDENCY_KEY,
     snapshot_client,
   )
 
-  return VercelSandboxClient(dependencies=dependencies)
+  logger.info(
+    "BUILD VERCEL SANDBOX CLIENT: dependency_key=%r",
+    SNAPSHOT_CLIENT_DEPENDENCY_KEY,
+  )
+
+  client = VercelSandboxClient(
+    dependencies=dependencies,
+  )
+
+  logger.info(
+    "BUILD VERCEL SANDBOX CLIENT COMPLETE: type=%s id=%s",
+    type(client).__name__,
+    id(client),
+  )
+
+  return client
