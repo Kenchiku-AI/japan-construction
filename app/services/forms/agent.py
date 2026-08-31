@@ -31,6 +31,61 @@ from app.services.forms.scripts.snapshot_setup import provision_dependencies
 logger = logging.getLogger(__name__)
 
 
+def _log_sandbox_capabilities(logger, sandbox) -> None:
+  """One-time diagnostic: logs everything available on the sandbox/session
+  object so we can find the real snapshot/persistence API instead of
+  guessing. Safe to leave in -- wrapped so it never breaks the run."""
+
+  try:
+    obj_type = type(sandbox)
+    logger.info("Sandbox object type: %s.%s", obj_type.__module__, obj_type.__qualname__)
+
+    all_members = [m for m in dir(sandbox) if not m.startswith("_")]
+    logger.info("Sandbox object members: %s", all_members)
+
+    # Anything that looks snapshot/persistence/state related gets a closer look.
+    keywords = ("snapshot", "persist", "state", "serialize", "resume", "save", "id")
+    interesting = [m for m in all_members if any(k in m.lower() for k in keywords)]
+
+    for name in interesting:
+      try:
+        attr = getattr(sandbox, name)
+      except Exception as exc:
+        logger.info("  %s -> could not access: %r", name, exc)
+        continue
+
+      if callable(attr):
+        try:
+          signature = inspect.signature(attr)
+        except (TypeError, ValueError):
+          signature = "(signature unavailable)"
+        logger.info("  %s%s  [callable]", name, signature)
+      else:
+        # Careful: don't dump huge/sensitive values, just type + short repr
+        value_repr = repr(attr)
+        if len(value_repr) > 200:
+          value_repr = value_repr[:200] + "...(truncated)"
+        logger.info("  %s = %s  [%s]", name, value_repr, type(attr).__name__)
+
+    # Also check the underlying wrapped object, if this is a wrapper --
+    # _VercelSandboxSessionWrapper suggests there's a real client/session
+    # object underneath that might expose more than the wrapper does.
+    for inner_attr_name in ("session", "_session", "client", "_client", "sandbox", "_sandbox"):
+      if hasattr(sandbox, inner_attr_name):
+        inner = getattr(sandbox, inner_attr_name)
+        inner_type = type(inner)
+        logger.info(
+          "Found inner object '%s': %s.%s -- members: %s",
+          inner_attr_name,
+          inner_type.__module__,
+          inner_type.__qualname__,
+          [m for m in dir(inner) if not m.startswith("_")],
+        )
+
+  except Exception as exc:
+    logger.warning("Sandbox capability introspection itself failed: %r", exc)
+
+
 def build_form_agent() -> SandboxAgent:
   return SandboxAgent(
     name="Kenchiku AI Form Agent",
@@ -118,6 +173,8 @@ async def run_form_agent(
       print([m for m in dir(sandbox) if not m.startswith("_")])
 
       await provision_dependencies(sandbox)
+
+      _log_sandbox_capabilities(logger, sandbox)
 
       try:
         snapshot_id = await sandbox.snapshot()
