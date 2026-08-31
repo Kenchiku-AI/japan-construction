@@ -1,176 +1,176 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
+"""
+form-inspect <file>
 
-set -euo pipefail
+Prints a structural/content inspection of a document. OCR uses AWS
+Textract (boto3) -- requires AWS credentials reachable from the
+sandbox with textract:DetectDocumentText.
+"""
 
-if [ "$#" -ne 1 ]; then
-  echo "Usage: form-inspect <file>" >&2
-  exit 1
-fi
-
-FILE="$1"
-
-if [ ! -f "$FILE" ]; then
-  echo "File does not exist: $FILE" >&2
-  exit 1
-fi
-
-TYPE="$(file -b "$FILE")"
-EXTENSION="${FILE##*.}"
-EXTENSION="$(printf '%s' "$EXTENSION" | tr '[:upper:]' '[:lower:]')"
-
-echo "============================================================"
-echo "FILE INSPECTION"
-echo "============================================================"
-echo
-echo "Path:"
-echo "$FILE"
-echo
-echo "Extension:"
-echo ".$EXTENSION"
-echo
-echo "Detected type:"
-echo "$TYPE"
-echo
-
-case "$EXTENSION" in
-  xls|xlsx|xlsm)
-    echo "============================================================"
-    echo "SPREADSHEET STRUCTURE"
-    echo "============================================================"
-    echo
-
-    python /usr/local/bin/inspect_excel.py "$FILE"
-    ;;
-
-  pdf)
-    echo "============================================================"
-    echo "PDF TEXT"
-    echo "============================================================"
-    echo
-
-    pdftotext -layout "$FILE" - || true
-
-    echo
-    echo "============================================================"
-    echo "PDF METADATA"
-    echo "============================================================"
-    echo
-
-    pdfinfo "$FILE" || true
-    ;;
-
-  docx)
-    echo "============================================================"
-    echo "DOCX CONTENT"
-    echo "============================================================"
-    echo
-
-    python - "$FILE" <<'PY'
-from pathlib import Path
-from docx import Document
-import json
-import sys
-
-path = Path(sys.argv[1])
-document = Document(path)
-
-paragraphs = [
-  paragraph.text
-  for paragraph in document.paragraphs
-  if paragraph.text.strip()
-]
-
-tables = []
-
-for table in document.tables:
-  rows = []
-
-  for row in table.rows:
-    rows.append([
-      cell.text
-      for cell in row.cells
-    ])
-
-  tables.append(rows)
-
-print(
-  json.dumps(
-    {
-      "paragraphs": paragraphs,
-      "tables": tables,
-    },
-    ensure_ascii=False,
-    indent=2,
-  )
-)
-PY
-    ;;
-
-  doc)
-    echo "Legacy DOC format detected."
-    echo "Use form-convert to convert it to DOCX or PDF."
-    ;;
-
-  png|jpg|jpeg|tif|tiff|bmp|webp)
-    echo "============================================================"
-    echo "IMAGE INFORMATION"
-    echo "============================================================"
-    echo
-
-    identify "$FILE" || true
-
-    echo
-    echo "============================================================"
-    echo "OCR"
-    echo "============================================================"
-    echo
-
-    tesseract \
-      "$FILE" \
-      stdout \
-      -l jpn+eng \
-      --psm 6 \
-      2>/dev/null || true
-    ;;
-
-  csv)
-    echo "============================================================"
-    echo "CSV CONTENT"
-    echo "============================================================"
-    echo
-
-    python - "$FILE" <<'PY'
 import csv
 import json
+import subprocess
 import sys
+from pathlib import Path
 
-path = sys.argv[1]
+import fitz  # PyMuPDF
+from PIL import Image
 
-with open(
-  path,
-  "r",
-  encoding="utf-8-sig",
-  newline="",
-) as file:
-  reader = csv.reader(file)
-  rows = list(reader)
+INSPECT_EXCEL_PATH = "/home/vercel-sandbox/.local/bin/inspect_excel.py"
 
-print(
-  json.dumps(
-    {
-      "rows": rows,
-      "row_count": len(rows),
-    },
-    ensure_ascii=False,
-    indent=2,
+
+def run_ocr(image_bytes: bytes) -> str:
+  import boto3
+
+  client = boto3.client("textract")
+  response = client.detect_document_text(Document={"Bytes": image_bytes})
+
+  return "\n".join(
+    block["Text"]
+    for block in response.get("Blocks", [])
+    if block["BlockType"] == "LINE"
   )
-)
-PY
-    ;;
 
-  *)
-    echo "No specialized inspector exists for .$EXTENSION."
-    echo
-    echo "Use file-specific conversion or inspection utilities."
-    ;;
-esac
+
+def inspect_spreadsheet(path: Path) -> None:
+  result = subprocess.run(
+    [sys.executable, INSPECT_EXCEL_PATH, str(path)],
+    capture_output=True, text=True,
+  )
+  print(result.stdout)
+  if result.returncode != 0:
+    print(result.stderr, file=sys.stderr)
+
+
+def inspect_pdf(path: Path) -> None:
+  document = fitz.open(path)
+
+  print("=" * 60)
+  print("PDF TEXT")
+  print("=" * 60)
+  print()
+
+  has_text = False
+  for page in document:
+    text = page.get_text()
+    if text.strip():
+      has_text = True
+    print(text)
+
+  print()
+  print("=" * 60)
+  print("PDF METADATA")
+  print("=" * 60)
+  print()
+  print(json.dumps(document.metadata, ensure_ascii=False, indent=2))
+  print(f"Page count: {document.page_count}")
+
+  if not has_text:
+    print()
+    print("=" * 60)
+    print("NO EXTRACTABLE TEXT -- LIKELY SCANNED. RENDERING + OCR")
+    print("=" * 60)
+    print()
+
+    for page_index, page in enumerate(document):
+      pixmap = page.get_pixmap(dpi=200)
+      ocr_text = run_ocr(pixmap.tobytes("png"))
+      print(f"--- Page {page_index + 1} OCR ---")
+      print(ocr_text)
+
+  document.close()
+
+
+def inspect_docx(path: Path) -> None:
+  from docx import Document
+
+  document = Document(path)
+  paragraphs = [p.text for p in document.paragraphs if p.text.strip()]
+  tables = [
+    [[cell.text for cell in row.cells] for row in table.rows]
+    for table in document.tables
+  ]
+
+  print(json.dumps({"paragraphs": paragraphs, "tables": tables}, ensure_ascii=False, indent=2))
+
+
+def inspect_pptx(path: Path) -> None:
+  from pptx import Presentation
+
+  presentation = Presentation(path)
+  slides = [
+    [shape.text for shape in slide.shapes if shape.has_text_frame and shape.text.strip()]
+    for slide in presentation.slides
+  ]
+
+  print(json.dumps({"slides": slides}, ensure_ascii=False, indent=2))
+
+
+def inspect_image(path: Path) -> None:
+  with Image.open(path) as img:
+    print("=" * 60)
+    print("IMAGE INFORMATION")
+    print("=" * 60)
+    print()
+    print(json.dumps({"format": img.format, "size": img.size, "mode": img.mode}, ensure_ascii=False, indent=2))
+
+  print()
+  print("=" * 60)
+  print("OCR")
+  print("=" * 60)
+  print()
+  print(run_ocr(path.read_bytes()))
+
+
+def inspect_csv(path: Path) -> None:
+  with open(path, "r", encoding="utf-8-sig", newline="") as file:
+    rows = list(csv.reader(file))
+
+  print(json.dumps({"rows": rows, "row_count": len(rows)}, ensure_ascii=False, indent=2))
+
+
+def main() -> None:
+  if len(sys.argv) != 2:
+    print("Usage: form-inspect <file>", file=sys.stderr)
+    sys.exit(1)
+
+  path = Path(sys.argv[1]).resolve()
+  if not path.exists():
+    print(f"File does not exist: {path}", file=sys.stderr)
+    sys.exit(1)
+
+  extension = path.suffix.lower().lstrip(".")
+
+  print("=" * 60)
+  print("FILE INSPECTION")
+  print("=" * 60)
+  print()
+  print("Path:")
+  print(path)
+  print()
+  print("Extension:")
+  print(f".{extension}")
+  print()
+
+  if extension in {"xls", "xlsx", "xlsm"}:
+    inspect_spreadsheet(path)
+  elif extension == "pdf":
+    inspect_pdf(path)
+  elif extension == "docx":
+    inspect_docx(path)
+  elif extension == "doc":
+    print("Legacy DOC format detected. Use form-convert to convert it to DOCX or PDF first.")
+  elif extension == "pptx":
+    inspect_pptx(path)
+  elif extension == "ppt":
+    print("Legacy PPT format detected. Use form-convert to convert it to PPTX or PDF first.")
+  elif extension in {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"}:
+    inspect_image(path)
+  elif extension == "csv":
+    inspect_csv(path)
+  else:
+    print(f"No specialized inspector exists for .{extension}.")
+
+
+if __name__ == "__main__":
+  main()

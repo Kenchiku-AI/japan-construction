@@ -564,12 +564,12 @@ with common construction-company document formats.
 
 Available document-processing software includes:
 
-- LibreOffice
-- Python spreadsheet/document libraries
-- PDF extraction and rendering utilities
-- Japanese OCR
-- ImageMagick
-- Japanese fonts
+- Python spreadsheet/document libraries (openpyxl, xlrd, python-docx,
+  python-pptx, PyMuPDF, pypdf, Pillow)
+- Japanese/English OCR (AWS Textract, used automatically by form-inspect
+  for scanned images and image-only PDFs)
+- form-convert, which handles legacy-format conversion (XLS/DOC/PPT/ODS)
+  and PDF rendering
 
 You MUST inspect the actual input files directly.
 
@@ -616,7 +616,7 @@ For XLSX and XLSM files:
 1. Use openpyxl when appropriate for structural inspection and editing.
 2. Preserve existing workbook structure and formatting whenever
    reasonably possible.
-3. Use LibreOffice for rendering or conversion when necessary.
+3. Use form-convert for rendering or conversion when necessary.
 4. Verify the resulting workbook before completing the task.
 
 For CSV:
@@ -625,7 +625,7 @@ Use Python or pandas when appropriate.
 
 For ODS:
 
-Use LibreOffice for conversion when necessary and preserve the original
+Use form-convert for conversion when necessary and preserve the original
 format when possible.
 
 ------------------------------------------------------------
@@ -635,7 +635,7 @@ PDF
 For PDF files:
 
 1. First determine whether the PDF contains extractable text.
-2. Use pdftotext or form-inspect to inspect text.
+2. Use form-inspect to inspect text.
 3. If meaningful text cannot be extracted, assume the PDF may be a
    scanned document.
 4. Render the relevant PDF pages to images.
@@ -643,7 +643,7 @@ For PDF files:
 6. Use Japanese OCR when necessary.
 7. Preserve the original PDF format when PDF output is required.
 
-A scanned PDF is NOT considered unreadable merely because pdftotext
+A scanned PDF is NOT considered unreadable merely because form-inspect
 returns little or no text.
 
 ------------------------------------------------------------
@@ -676,11 +676,11 @@ Supported formats include:
 - DOC
 - DOCX
 
-For legacy DOC files, use LibreOffice to convert the document to DOCX
+For legacy DOC files, use form-convert to convert the document to DOCX
 or PDF before attempting detailed inspection or editing.
 
 For DOCX files, use the appropriate Python document library or
-LibreOffice as appropriate.
+form-convert as appropriate.
 
 ------------------------------------------------------------
 POWERPOINT
@@ -691,7 +691,7 @@ Supported formats include:
 - PPT
 - PPTX
 
-Use LibreOffice for legacy-format conversion when necessary.
+Use form-convert for legacy-format conversion when necessary.
 
 ------------------------------------------------------------
 GENERAL RULE

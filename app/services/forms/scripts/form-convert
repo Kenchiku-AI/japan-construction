@@ -1,76 +1,131 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
+"""
+form-convert <input-file> <output-directory>
 
-set -euo pipefail
+Converts between office-document formats. This is only needed for
+formats where no pure-Python library preserves fidelity -- legacy
+XLS/DOC/PPT, ODS, and anything -> PDF. Modern-format round-trips
+(XLSX/DOCX/PPTX) don't need this; edit them directly.
 
-if [ "$#" -ne 2 ]; then
-  echo "Usage: form-convert <input> <output-directory>" >&2
-  exit 1
-fi
+Delegates to CloudConvert (https://cloudconvert.com/api/v2) over
+HTTPS. Requires CLOUDCONVERT_API_KEY in the sandbox environment.
 
-INPUT="$1"
-OUTPUT_DIR="$2"
+DATA HANDLING: this sends the file's contents to a third-party API.
+If that's not acceptable, replace convert_via_cloudconvert() below
+with a call to a conversion service you host yourself.
+"""
 
-if [ ! -f "$INPUT" ]; then
-  echo "Input file does not exist: $INPUT" >&2
-  exit 1
-fi
+import os
+import sys
+import time
+from pathlib import Path
 
-mkdir -p "$OUTPUT_DIR"
+import httpx
 
-EXTENSION="${INPUT##*.}"
-EXTENSION="$(printf '%s' "$EXTENSION" | tr '[:upper:]' '[:lower:]')"
+CLOUDCONVERT_API_KEY = os.environ.get("CLOUDCONVERT_API_KEY")
+CLOUDCONVERT_API_BASE = "https://api.cloudconvert.com/v2"
 
-case "$EXTENSION" in
-  xls)
-    FORMAT="xlsx"
-    ;;
+FORMAT_MAP = {
+  "xls": "xlsx",
+  "xlsx": "xls",
+  "xlsm": "xlsx",
+  "doc": "docx",
+  "docx": "pdf",
+  "ppt": "pptx",
+  "pptx": "pdf",
+  "ods": "xlsx",
+}
 
-  xlsx)
-    FORMAT="xls"
-    ;;
 
-  xlsm)
-    FORMAT="xlsx"
-    ;;
+def convert_via_cloudconvert(input_path: Path, output_format: str, output_dir: Path) -> Path:
+  if not CLOUDCONVERT_API_KEY:
+    raise RuntimeError("CLOUDCONVERT_API_KEY is not set in the sandbox environment.")
 
-  doc)
-    FORMAT="docx"
-    ;;
+  headers = {"Authorization": f"Bearer {CLOUDCONVERT_API_KEY}"}
 
-  docx)
-    FORMAT="pdf"
-    ;;
+  with httpx.Client(timeout=120.0) as client:
+    job_response = client.post(
+      f"{CLOUDCONVERT_API_BASE}/jobs",
+      headers=headers,
+      json={
+        "tasks": {
+          "import-file": {"operation": "import/upload"},
+          "convert-file": {
+            "operation": "convert",
+            "input": "import-file",
+            "output_format": output_format,
+          },
+          "export-file": {"operation": "export/url", "input": "convert-file"},
+        }
+      },
+    )
+    job_response.raise_for_status()
+    job = job_response.json()["data"]
 
-  ppt)
-    FORMAT="pptx"
-    ;;
+    import_task = next(t for t in job["tasks"] if t["name"] == "import-file")
+    upload_form = import_task["result"]["form"]
 
-  pptx)
-    FORMAT="pdf"
-    ;;
+    with open(input_path, "rb") as file_obj:
+      upload_response = client.post(
+        upload_form["url"],
+        data=upload_form["parameters"],
+        files={"file": (input_path.name, file_obj)},
+      )
+      upload_response.raise_for_status()
 
-  ods)
-    FORMAT="xlsx"
-    ;;
+    job_id = job["id"]
+    file_url = None
 
-  *)
-    echo "Unsupported conversion from .$EXTENSION" >&2
-    exit 1
-    ;;
-esac
+    for _ in range(60):
+      status_response = client.get(f"{CLOUDCONVERT_API_BASE}/jobs/{job_id}", headers=headers)
+      status_response.raise_for_status()
+      status = status_response.json()["data"]
 
-libreoffice \
-  --headless \
-  --convert-to "$FORMAT" \
-  --outdir "$OUTPUT_DIR" \
-  "$INPUT"
+      if status["status"] == "error":
+        raise RuntimeError(f"CloudConvert job failed: {status}")
 
-EXPECTED="$OUTPUT_DIR/$(basename "${INPUT%.*}").$FORMAT"
+      if status["status"] == "finished":
+        export_task = next(t for t in status["tasks"] if t["name"] == "export-file")
+        file_url = export_task["result"]["files"][0]["url"]
+        break
 
-if [ ! -f "$EXPECTED" ]; then
-  echo "Conversion did not produce expected file:"
-  echo "$EXPECTED"
-  exit 1
-fi
+      time.sleep(2)
 
-echo "$EXPECTED"
+    if file_url is None:
+      raise RuntimeError("CloudConvert job did not finish in time.")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{input_path.stem}.{output_format}"
+
+    download_response = client.get(file_url)
+    download_response.raise_for_status()
+    output_path.write_bytes(download_response.content)
+
+  return output_path
+
+
+def main() -> None:
+  if len(sys.argv) != 3:
+    print("Usage: form-convert <input> <output-directory>", file=sys.stderr)
+    sys.exit(1)
+
+  input_path = Path(sys.argv[1]).resolve()
+  output_dir = Path(sys.argv[2]).resolve()
+
+  if not input_path.exists():
+    print(f"Input file does not exist: {input_path}", file=sys.stderr)
+    sys.exit(1)
+
+  extension = input_path.suffix.lower().lstrip(".")
+  output_format = FORMAT_MAP.get(extension)
+
+  if output_format is None:
+    print(f"Unsupported conversion from .{extension}", file=sys.stderr)
+    sys.exit(1)
+
+  result_path = convert_via_cloudconvert(input_path, output_format, output_dir)
+  print(result_path)
+
+
+if __name__ == "__main__":
+  main()
