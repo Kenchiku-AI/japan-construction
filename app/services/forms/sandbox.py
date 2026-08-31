@@ -30,8 +30,6 @@ class S3SnapshotClient:
     self._s3 = boto3.client("s3")
 
   def upload(self, snapshot_id: str, data: io.IOBase) -> None:
-    import tarfile
-
     logger.info(
       "S3SnapshotClient.upload() called for snapshot %r",
       snapshot_id,
@@ -123,8 +121,6 @@ class S3SnapshotClient:
     )
 
   def download(self, snapshot_id: str) -> io.IOBase:
-    import tarfile
-
     key = self._object_key(snapshot_id)
 
     metadata = self._s3.head_object(
