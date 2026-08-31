@@ -107,6 +107,7 @@ async def run_form_agent(
         options=VercelSandboxClientOptions(
           allow_s3_credential_exposure=False,
           timeout_ms=600_000,
+          runtime="python3.13",
         ),
       )
 
@@ -142,6 +143,7 @@ async def run_form_agent(
         options=VercelSandboxClientOptions(
           allow_s3_credential_exposure=False,
           timeout_ms=300_000,
+          runtime="python3.13",
         ),
       )
 
