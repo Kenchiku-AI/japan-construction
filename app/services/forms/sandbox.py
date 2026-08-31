@@ -95,14 +95,4 @@ def get_form_sandbox_client() -> VercelSandboxClient:
     snapshot_client,
   )
 
-  try:
-    logger.info(
-      "VercelSandboxClient.__init__ signature: %s",
-      inspect.signature(VercelSandboxClient.__init__),
-    )
-  except Exception:
-    logger.exception(
-      "Could not inspect VercelSandboxClient.__init__ signature."
-    )
-
   return VercelSandboxClient(dependencies=dependencies)
