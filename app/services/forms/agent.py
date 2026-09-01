@@ -1,7 +1,6 @@
 import asyncio
 import io
 import logging
-import inspect
 import tarfile
 from pathlib import Path
 from typing import Any
@@ -109,28 +108,6 @@ async def run_form_agent(
           runtime="python3.13",
         ),
       )
-
-      for name in (
-        "persist_workspace",
-        "hydrate_workspace",
-        "aclose",
-      ):
-        attr = getattr(sandbox, name, None)
-
-        if attr is None:
-          continue
-
-        try:
-          logger.info(
-            "Sandbox.%s%s",
-            name,
-            inspect.signature(attr),
-          )
-        except (TypeError, ValueError):
-          logger.info(
-            "Sandbox.%s (signature unavailable)",
-            name,
-          )
 
       await provision_dependencies(sandbox)
 
