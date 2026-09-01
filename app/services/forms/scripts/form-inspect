@@ -5,6 +5,7 @@ form-inspect <file>
 Prints a structural/content inspection of a document.
 
 OCR uses PaddleOCR locally with Japanese language support.
+
 No external OCR service or AWS credentials are required.
 """
 
@@ -21,428 +22,285 @@ INSPECT_EXCEL_PATH = "/home/vercel-sandbox/.local/bin/inspect_excel.py"
 
 _OCR = None
 
+
 def get_ocr():
-global _OCR
+    global _OCR
 
-if _OCR is None:
-from paddleocr import PaddleOCR
+    if _OCR is None:
+        from paddleocr import PaddleOCR
 
-```
-print(
-  "Initializing PaddleOCR...",
-  file=sys.stderr,
-)
+        print("Initializing PaddleOCR...", file=sys.stderr)
 
-_OCR = PaddleOCR(
-  lang="japan",
-  device="cpu",
-)
-```
+        _OCR = PaddleOCR(
+            lang="japan",
+            device="cpu",
+        )
 
-return _OCR
+    return _OCR
+
 
 def run_ocr(image_path: Path) -> dict:
-"""
-Run PaddleOCR on an image and return structured OCR results.
+    """
+    Run PaddleOCR on an image and return structured OCR results.
 
-Returns:
-{
-"text": "...",
-"items": [
-{
-"text": "...",
-"confidence": 0.98,
-"bbox": [...],
-}
-]
-}
-"""
-ocr = get_ocr()
+    Returns:
+        {
+            "text": "...",
+            "items": [
+                {
+                    "text": "...",
+                    "confidence": 0.98,
+                    "bbox": [...]
+                }
+            ]
+        }
+    """
+    ocr = get_ocr()
 
-result = ocr.predict(
-str(image_path)
-)
+    result = ocr.predict(str(image_path))
 
-items = []
+    items = []
 
-for page_result in result:
-json_data = page_result.json
+    for page_result in result:
+        json_data = page_result.json
 
-```
-if callable(json_data):
-  json_data = json_data()
+        if callable(json_data):
+            json_data = json_data()
 
-if not json_data:
-  continue
+        if not json_data:
+            continue
 
-if isinstance(json_data, str):
-  json_data = json.loads(json_data)
+        if isinstance(json_data, str):
+            json_data = json.loads(json_data)
 
-texts = json_data.get(
-  "rec_texts",
-  [],
-)
+        texts = json_data.get("rec_texts", [])
+        scores = json_data.get("rec_scores", [])
+        boxes = json_data.get("rec_boxes", [])
 
-scores = json_data.get(
-  "rec_scores",
-  [],
-)
+        for index, text in enumerate(texts):
+            score = scores[index] if index < len(scores) else None
+            bbox = boxes[index] if index < len(boxes) else None
 
-boxes = json_data.get(
-  "rec_boxes",
-  [],
-)
+            items.append(
+                {
+                    "text": text,
+                    "confidence": float(score) if score is not None else None,
+                    "bbox": bbox,
+                }
+            )
 
-for index, text in enumerate(texts):
-  score = (
-    scores[index]
-    if index < len(scores)
-    else None
-  )
-
-  bbox = (
-    boxes[index]
-    if index < len(boxes)
-    else None
-  )
-
-  items.append(
-    {
-      "text": text,
-      "confidence": (
-        float(score)
-        if score is not None
-        else None
-      ),
-      "bbox": bbox,
+    return {
+        "engine": "paddleocr",
+        "language": "japan",
+        "text": "\n".join(item["text"] for item in items),
+        "items": items,
     }
-  )
-```
 
-return {
-"engine": "paddleocr",
-"language": "japan",
-"text": "\n".join(
-item["text"]
-for item in items
-),
-"items": items,
-}
 
 def inspect_spreadsheet(path: Path) -> None:
-result = subprocess.run(
-[
-sys.executable,
-INSPECT_EXCEL_PATH,
-str(path),
-],
-capture_output=True,
-text=True,
-)
+    result = subprocess.run(
+        [sys.executable, INSPECT_EXCEL_PATH, str(path)],
+        capture_output=True,
+        text=True,
+    )
 
-print(result.stdout)
+    print(result.stdout)
 
-if result.returncode != 0:
-print(
-result.stderr,
-file=sys.stderr,
-)
+    if result.returncode != 0:
+        print(result.stderr, file=sys.stderr)
+
 
 def inspect_pdf(path: Path) -> None:
-document = fitz.open(path)
+    document = fitz.open(path)
 
-print("=" * 60)
-print("PDF TEXT")
-print("=" * 60)
-print()
+    print("=" * 60)
+    print("PDF TEXT")
+    print("=" * 60)
+    print()
 
-has_text = False
+    has_text = False
 
-for page in document:
-text = page.get_text()
+    for page in document:
+        text = page.get_text()
 
-```
-if text.strip():
-  has_text = True
+        if text.strip():
+            has_text = True
 
-print(text)
-```
+        print(text)
 
-print()
-print("=" * 60)
-print("PDF METADATA")
-print("=" * 60)
-print()
+    print()
+    print("=" * 60)
+    print("PDF METADATA")
+    print("=" * 60)
+    print()
 
-print(
-json.dumps(
-document.metadata,
-ensure_ascii=False,
-indent=2,
-)
-)
+    print(json.dumps(document.metadata, ensure_ascii=False, indent=2))
+    print(f"Page count: {document.page_count}")
 
-print(
-f"Page count: {document.page_count}"
-)
+    if not has_text:
+        print()
+        print("=" * 60)
+        print("NO EXTRACTABLE TEXT -- LIKELY SCANNED. RENDERING + PADDLEOCR")
+        print("=" * 60)
+        print()
 
-if not has_text:
-print()
-print("=" * 60)
-print(
-"NO EXTRACTABLE TEXT -- "
-"LIKELY SCANNED. RENDERING + PADDLEOCR"
-)
-print("=" * 60)
-print()
+        for page_index, page in enumerate(document):
+            pixmap = page.get_pixmap(dpi=200)
 
-```
-for page_index, page in enumerate(document):
-  pixmap = page.get_pixmap(
-    dpi=200
-  )
+            image_path = Path("/tmp") / f"form-inspect-page-{page_index + 1}.png"
 
-  image_path = (
-    Path("/tmp")
-    / (
-      f"form-inspect-page-"
-      f"{page_index + 1}.png"
-    )
-  )
+            pixmap.save(str(image_path))
 
-  pixmap.save(
-    str(image_path)
-  )
+            try:
+                ocr_result = run_ocr(image_path)
 
-  try:
-    ocr_result = run_ocr(
-      image_path
-    )
+                print(f"--- Page {page_index + 1} OCR ---")
+                print(json.dumps(ocr_result, ensure_ascii=False, indent=2))
+            finally:
+                try:
+                    image_path.unlink()
+                except OSError:
+                    pass
 
-    print(
-      f"--- Page {page_index + 1} OCR ---"
-    )
+    document.close()
 
-    print(
-      json.dumps(
-        ocr_result,
-        ensure_ascii=False,
-        indent=2,
-      )
-    )
-  finally:
-    try:
-      image_path.unlink()
-    except OSError:
-      pass
-```
-
-document.close()
 
 def inspect_docx(path: Path) -> None:
-from docx import Document
+    from docx import Document
 
-document = Document(path)
+    document = Document(path)
 
-paragraphs = [
-p.text
-for p in document.paragraphs
-if p.text.strip()
-]
+    paragraphs = [p.text for p in document.paragraphs if p.text.strip()]
 
-tables = [
-[
-[
-cell.text
-for cell in row.cells
-]
-for row in table.rows
-]
-for table in document.tables
-]
+    tables = [
+        [[cell.text for cell in row.cells] for row in table.rows]
+        for table in document.tables
+    ]
 
-print(
-json.dumps(
-{
-"paragraphs": paragraphs,
-"tables": tables,
-},
-ensure_ascii=False,
-indent=2,
-)
-)
+    print(
+        json.dumps(
+            {"paragraphs": paragraphs, "tables": tables},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
 
 def inspect_pptx(path: Path) -> None:
-from pptx import Presentation
+    from pptx import Presentation
 
-presentation = Presentation(path)
+    presentation = Presentation(path)
 
-slides = [
-[
-shape.text
-for shape in slide.shapes
-if (
-shape.has_text_frame
-and shape.text.strip()
-)
-]
-for slide in presentation.slides
-]
+    slides = [
+        [
+            shape.text
+            for shape in slide.shapes
+            if (shape.has_text_frame and shape.text.strip())
+        ]
+        for slide in presentation.slides
+    ]
 
-print(
-json.dumps(
-{"slides": slides},
-ensure_ascii=False,
-indent=2,
-)
-)
+    print(json.dumps({"slides": slides}, ensure_ascii=False, indent=2))
+
 
 def inspect_image(path: Path) -> None:
-with Image.open(path) as img:
-print("=" * 60)
-print("IMAGE INFORMATION")
-print("=" * 60)
-print()
+    with Image.open(path) as img:
+        print("=" * 60)
+        print("IMAGE INFORMATION")
+        print("=" * 60)
+        print()
 
-```
-print(
-  json.dumps(
-    {
-      "format": img.format,
-      "size": img.size,
-      "mode": img.mode,
-    },
-    ensure_ascii=False,
-    indent=2,
-  )
-)
-```
+        print(
+            json.dumps(
+                {"format": img.format, "size": img.size, "mode": img.mode},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
 
-print()
-print("=" * 60)
-print("OCR")
-print("=" * 60)
-print()
+    print()
+    print("=" * 60)
+    print("OCR")
+    print("=" * 60)
+    print()
 
-ocr_result = run_ocr(path)
+    ocr_result = run_ocr(path)
 
-print(
-json.dumps(
-ocr_result,
-ensure_ascii=False,
-indent=2,
-)
-)
+    print(json.dumps(ocr_result, ensure_ascii=False, indent=2))
+
 
 def inspect_csv(path: Path) -> None:
-with open(
-path,
-"r",
-encoding="utf-8-sig",
-newline="",
-) as file:
-rows = list(
-csv.reader(file)
-)
+    with open(path, "r", encoding="utf-8-sig", newline="") as file:
+        rows = list(csv.reader(file))
 
-print(
-json.dumps(
-{
-"rows": rows,
-"row_count": len(rows),
-},
-ensure_ascii=False,
-indent=2,
-)
-)
+    print(
+        json.dumps(
+            {"rows": rows, "row_count": len(rows)},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
 
 def main() -> None:
-if len(sys.argv) != 2:
-print(
-"Usage: form-inspect <file>",
-file=sys.stderr,
-)
-sys.exit(1)
+    if len(sys.argv) != 2:
+        print("Usage: form-inspect <file>", file=sys.stderr)
+        sys.exit(1)
 
-path = Path(
-sys.argv[1]
-).resolve()
+    path = Path(sys.argv[1]).resolve()
 
-if not path.exists():
-print(
-f"File does not exist: {path}",
-file=sys.stderr,
-)
-sys.exit(1)
+    if not path.exists():
+        print(f"File does not exist: {path}", file=sys.stderr)
+        sys.exit(1)
 
-extension = (
-path.suffix
-.lower()
-.lstrip(".")
-)
+    extension = path.suffix.lower().lstrip(".")
 
-print("=" * 60)
-print("FILE INSPECTION")
-print("=" * 60)
-print()
+    print("=" * 60)
+    print("FILE INSPECTION")
+    print("=" * 60)
+    print()
 
-print("Path:")
-print(path)
-print()
+    print("Path:")
+    print(path)
+    print()
 
-print("Extension:")
-print(f".{extension}")
-print()
+    print("Extension:")
+    print(f".{extension}")
+    print()
 
-if extension in {
-"xls",
-"xlsx",
-"xlsm",
-}:
-inspect_spreadsheet(path)
+    if extension in {"xls", "xlsx", "xlsm"}:
+        inspect_spreadsheet(path)
 
-elif extension == "pdf":
-inspect_pdf(path)
+    elif extension == "pdf":
+        inspect_pdf(path)
 
-elif extension == "docx":
-inspect_docx(path)
+    elif extension == "docx":
+        inspect_docx(path)
 
-elif extension == "doc":
-print(
-"Legacy DOC format detected. "
-"Use form-convert to convert it "
-"to DOCX or PDF first."
-)
+    elif extension == "doc":
+        print(
+            "Legacy DOC format detected. "
+            "Use form-convert to convert it to DOCX or PDF first."
+        )
 
-elif extension == "pptx":
-inspect_pptx(path)
+    elif extension == "pptx":
+        inspect_pptx(path)
 
-elif extension == "ppt":
-print(
-"Legacy PPT format detected. "
-"Use form-convert to convert it "
-"to PPTX or PDF first."
-)
+    elif extension == "ppt":
+        print(
+            "Legacy PPT format detected. "
+            "Use form-convert to convert it to PPTX or PDF first."
+        )
 
-elif extension in {
-"png",
-"jpg",
-"jpeg",
-"tif",
-"tiff",
-"bmp",
-"webp",
-}:
-inspect_image(path)
+    elif extension in {"png", "jpg", "jpeg", "tif", "tiff", "bmp", "webp"}:
+        inspect_image(path)
 
-elif extension == "csv":
-inspect_csv(path)
+    elif extension == "csv":
+        inspect_csv(path)
 
-else:
-print(
-f"No specialized inspector exists "
-f"for .{extension}."
-)
+    else:
+        print(f"No specialized inspector exists for .{extension}.")
 
-if **name** == "**main**":
-main()
+
+if __name__ == "__main__":
+    main()
