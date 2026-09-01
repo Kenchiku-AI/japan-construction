@@ -567,7 +567,7 @@ def inspect_xls(path: Path) -> dict:
 
   workbook = xlrd.open_workbook(
     str(path),
-    formatting_info=True,
+    formatting_info=False,
   )
 
   result = {
