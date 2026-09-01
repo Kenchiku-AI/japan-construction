@@ -24,7 +24,10 @@ from app.services.forms.sandbox import (
   build_snapshot_client,
   get_form_agent_snapshot,
 )
-from app.services.forms.scripts.snapshot_setup import provision_dependencies
+from app.services.forms.scripts.snapshot_setup import (
+  RUNTIME_ARCHIVE_NAME,
+  provision_dependencies,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -121,7 +124,7 @@ async def run_form_agent(
       bootstrap_sandbox = await sandbox_client.create(
         snapshot=get_form_agent_snapshot(),
         options=VercelSandboxClientOptions(
-          allow_s3_credential_exposure=True,
+          allow_s3_credential_exposure=False,
           timeout_ms=600_000,
           runtime="python3.13",
         ),
@@ -160,11 +163,6 @@ pwd
 
 echo "=== BOOTSTRAP PATH ==="
 echo "$PATH"
-
-echo "=== BOOTSTRAP PYTHON ==="
-command -v python3 || true
-python3 --version || true
-python3 -m pip --version || true
 
 echo "=== BOOTSTRAP SCRIPTS ==="
 find /home/vercel-sandbox \
@@ -251,7 +249,13 @@ echo "=== BOOTSTRAP DONE ==="
       # Do NOT upload the user's job files here.
       #
       # Closing this sandbox will persist its workspace as the
-      # dependency snapshot.
+      # dependency snapshot. Note "workspace" here specifically means
+      # the sandbox's workspace directory (relative session.write()
+      # paths) -- NOT $HOME or /opt. Anything provision_dependencies()
+      # installed outside the workspace (the LibreOffice /opt install,
+      # $HOME/.local pip packages and cp'd scripts) only survives this
+      # boundary because provision_dependencies() already packaged it
+      # into RUNTIME_ARCHIVE_NAME inside the workspace before returning.
       # --------------------------------------------------------------
 
       logger.info(
@@ -338,7 +342,7 @@ echo "=== BOOTSTRAP DONE ==="
     sandbox = await sandbox_client.create(
       snapshot=snapshot,
       options=VercelSandboxClientOptions(
-        allow_s3_credential_exposure=True,
+        allow_s3_credential_exposure=False,
         timeout_ms=300_000,
         runtime="python3.13",
       ),
@@ -352,6 +356,98 @@ echo "=== BOOTSTRAP DONE ==="
 
     logger.info(
       "JOB SANDBOX: started. Snapshot should now be hydrated."
+    )
+
+    # --------------------------------------------------------------
+    # Restore everything that lives outside the workspace directory.
+    #
+    # The snapshot mechanism only hydrates the workspace (this is why
+    # provision_dependencies() only ever showed "./scripts" and
+    # "./libreoffice" as tar entries, never anything under $HOME or
+    # /opt). provision_dependencies() packaged $HOME/.local and the
+    # LibreOffice /opt install into RUNTIME_ARCHIVE_NAME, placed at the
+    # workspace root, specifically so it WOULD get captured by the
+    # snapshot. Extract it back to "/" now, before anything else runs,
+    # so the rest of this function (and the agent itself) sees a
+    # filesystem that actually matches what bootstrap provisioned.
+    # --------------------------------------------------------------
+
+    logger.info(
+      "JOB SANDBOX: restoring runtime archive (%s) to /.",
+      RUNTIME_ARCHIVE_NAME,
+    )
+
+    restore_result = await sandbox.exec(
+      "sh",
+      "-lc",
+      f"""
+set -euo pipefail
+
+RUNTIME_ARCHIVE="{RUNTIME_ARCHIVE_NAME}"
+
+if [ ! -f "$RUNTIME_ARCHIVE" ]; then
+  echo "ERROR: runtime archive not found in restored workspace: $RUNTIME_ARCHIVE"
+  echo "Workspace contents:"
+  find . -maxdepth 3 -print
+  exit 1
+fi
+
+echo "Runtime archive found:"
+ls -lh "$RUNTIME_ARCHIVE"
+
+echo "Extracting to / ..."
+sudo tar -xzf "$RUNTIME_ARCHIVE" -C /
+
+echo "Verifying restored paths..."
+
+if [ ! -d "$HOME/.local" ]; then
+  echo "ERROR: $HOME/.local was not restored."
+  exit 1
+fi
+
+if ! command -v form-convert >/dev/null 2>&1; then
+  echo "ERROR: form-convert not found on PATH after restore."
+  echo "PATH=$PATH"
+  find "$HOME/.local" -maxdepth 2 -print
+  exit 1
+fi
+
+if ! command -v soffice >/dev/null 2>&1; then
+  echo "ERROR: soffice not found on PATH after restore."
+  echo "PATH=$PATH"
+  exit 1
+fi
+
+echo "Runtime restore verified: form-convert and soffice are on PATH."
+
+# The archive itself isn't needed once extracted -- remove it so it
+# doesn't sit alongside this job's input/output directories.
+rm -f "$RUNTIME_ARCHIVE"
+      """,
+    )
+
+    restore_stdout = restore_result.stdout.decode(errors="replace")
+    restore_stderr = restore_result.stderr.decode(errors="replace")
+
+    logger.info(
+      "JOB SANDBOX runtime restore stdout:\n%s",
+      restore_stdout,
+    )
+
+    if restore_stderr:
+      logger.warning(
+        "JOB SANDBOX runtime restore stderr:\n%s",
+        restore_stderr,
+      )
+
+    if restore_result.exit_code != 0:
+      raise RuntimeError(
+        "Failed to restore runtime archive in job sandbox. "
+        f"Exit code: {restore_result.exit_code}"
+      )
+
+    logger.info(
+      "JOB SANDBOX: runtime restored successfully."
     )
 
     # --------------------------------------------------------------
@@ -410,6 +506,11 @@ find /home /tmp /workspace /app /usr/local/bin \
     -name "inspect_excel.py" \
   \\) \
   -print 2>/dev/null || true
+
+echo "=== LIBREOFFICE ==="
+command -v libreoffice || true
+command -v soffice || true
+libreoffice --version 2>&1 || soffice --version 2>&1 || true
 
 echo "=== PYTHON PACKAGES ==="
 python3 - <<'PY'
