@@ -717,6 +717,41 @@ fi
 
 echo "Runtime restore verified: form-convert and soffice are on PATH."
 
+echo "=== LIBREOFFICE SHARED LIBRARY CHECK ==="
+
+SOFFICE_PATH="$(command -v soffice || true)"
+
+if [ -z "$SOFFICE_PATH" ]; then
+  echo "ERROR: soffice not found."
+  exit 1
+fi
+
+echo "soffice: $SOFFICE_PATH"
+
+echo "--- ldd soffice ---"
+ldd "$SOFFICE_PATH" 2>&1
+
+if ldd "$SOFFICE_PATH" 2>&1 | grep -q "not found"; then
+  echo "ERROR: soffice has missing shared libraries."
+  ldd "$SOFFICE_PATH" 2>&1 | grep "not found"
+  exit 1
+fi
+
+OOSPLASH_PATH="$(dirname "$SOFFICE_PATH")/oosplash"
+
+if [ -f "$OOSPLASH_PATH" ]; then
+  echo "--- ldd oosplash ---"
+  ldd "$OOSPLASH_PATH" 2>&1
+
+  if ldd "$OOSPLASH_PATH" 2>&1 | grep -q "not found"; then
+    echo "ERROR: oosplash has missing shared libraries."
+    ldd "$OOSPLASH_PATH" 2>&1 | grep "not found"
+    exit 1
+  fi
+fi
+
+echo "LibreOffice shared-library dependencies verified."
+
 # The archive itself isn't needed once extracted -- remove it so it
 # doesn't sit alongside this job's input/output directories.
 rm -f "$RUNTIME_ARCHIVE"

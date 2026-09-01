@@ -539,9 +539,7 @@ sudo dnf install -y \
   dbus-libs \
   nss \
   nspr \
-  glibc-langpack-en \
-  || echo "WARNING: one or more runtime dependency packages were not found in enabled repos -- continuing, but the headless test below may reveal a still-missing library."
-
+  glibc-langpack-en
 
 echo ""
 echo "========================================"
@@ -627,6 +625,38 @@ ls -lh "{USR_LOCAL_BIN}/soffice" "{USR_LOCAL_BIN}/libreoffice"
 echo ""
 echo "LibreOffice version:"
 "$LIBREOFFICE_BIN" --version
+
+
+echo ""
+echo "========================================"
+echo "=== VERIFYING LIBREOFFICE SHARED LIBRARIES"
+echo "========================================"
+
+echo "--- ldd $LIBREOFFICE_BIN ---"
+
+ldd "$LIBREOFFICE_BIN" 2>&1 | tee /tmp/libreoffice-ldd.txt
+
+if grep -q "not found" /tmp/libreoffice-ldd.txt; then
+  echo ""
+  echo "ERROR: LibreOffice has missing shared-library dependencies:"
+  grep "not found" /tmp/libreoffice-ldd.txt
+  exit 1
+fi
+
+OOSPLASH_BIN="$(dirname "$LIBREOFFICE_BIN")/oosplash"
+
+echo ""
+echo "--- checking oosplash ---"
+ldd "$OOSPLASH_BIN" 2>&1 | tee /tmp/oosplash-ldd.txt
+
+if grep -q "not found" /tmp/oosplash-ldd.txt; then
+  echo "ERROR: oosplash has missing shared libraries:"
+  grep "not found" /tmp/oosplash-ldd.txt
+  exit 1
+fi
+
+echo ""
+echo "All direct LibreOffice shared-library dependencies are present."
 
 
 echo ""
