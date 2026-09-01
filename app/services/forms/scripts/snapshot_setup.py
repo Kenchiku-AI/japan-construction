@@ -447,6 +447,41 @@ sudo dnf install -y ./*.rpm
 
 echo ""
 echo "========================================"
+echo "=== INSTALLING LIBREOFFICE RUNTIME DEPENDENCIES"
+echo "========================================"
+echo "The LibreOffice RPMs list several libraries as weak deps"
+echo "(Recommends/Suggests) rather than hard Requires. Minimal/container"
+echo "base images commonly disable weak-dep installation by default, so"
+echo "install the known runtime set explicitly rather than discovering"
+echo "each missing .so one at a time via trial and error."
+
+sudo dnf install -y \
+  libXinerama \
+  libXrandr \
+  libXrender \
+  libXext \
+  libSM \
+  libICE \
+  libXcomposite \
+  libXcursor \
+  libXi \
+  libXtst \
+  cups-libs \
+  mesa-libGL \
+  cairo \
+  pango \
+  atk \
+  at-spi2-atk \
+  at-spi2-core \
+  dbus-libs \
+  nss \
+  nspr \
+  glibc-langpack-en \
+  || echo "WARNING: one or more runtime dependency packages were not found in enabled repos -- continuing, but the headless test below may reveal a still-missing library."
+
+
+echo ""
+echo "========================================"
 echo "=== LOCATING LIBREOFFICE EXECUTABLE"
 echo "========================================"
 
