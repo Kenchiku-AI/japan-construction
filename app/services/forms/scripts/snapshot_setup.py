@@ -98,7 +98,6 @@ PIP_PACKAGES = [
   "pymupdf",
   "pypdf",
   "Pillow",
-  "boto3",
   "httpx",
   "paddlepaddle",
   "paddleocr",
