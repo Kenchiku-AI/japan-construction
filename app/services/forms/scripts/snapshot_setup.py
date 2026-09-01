@@ -285,6 +285,14 @@ set -euo pipefail
 
 export PATH="{BIN_DIR}:$PATH"
 
+# Saved so we can cd back here after installing the LibreOffice RPMs
+# (which requires cd-ing into a mktemp -d directory that gets rm -rf'd
+# during cleanup later in this script). Without this, the shell's cwd
+# gets deleted out from under it once cleanup runs, and every command
+# after that point -- including Python's own import machinery for
+# C-extension packages -- starts failing on getcwd().
+INSTALL_COMMAND_START_DIR="$(pwd)"
+
 echo "========================================"
 echo "=== INSTALLING PYTHON PACKAGES"
 echo "========================================"
@@ -482,6 +490,22 @@ sudo dnf install -y \
 
 echo ""
 echo "========================================"
+echo "=== RETURNING TO ORIGINAL WORKING DIRECTORY"
+echo "========================================"
+echo "We cd'd into a mktemp -d directory to run dnf install above. That"
+echo "directory tree gets rm -rf'd during cleanup later in this script,"
+echo "so cd back out now -- staying inside it would leave every"
+echo "subsequent command (including Python's own import machinery) with"
+echo "a cwd that no longer exists once cleanup runs."
+
+cd "$INSTALL_COMMAND_START_DIR"
+
+echo "Working directory restored:"
+pwd
+
+
+echo ""
+echo "========================================"
 echo "=== LOCATING LIBREOFFICE EXECUTABLE"
 echo "========================================"
 
@@ -570,15 +594,16 @@ worksheet = workbook.active
 
 worksheet["A1"] = "LibreOffice test"
 worksheet["A2"] = "日本語テスト"
-worksheet["B1"] = 123
-worksheet["B2"] = "=B1*2"
 
-# Column A's default width is narrow. Because B1 is occupied, Calc
-# suppresses text overflow from A1 into B1 and visually CLIPS the
-# rendered text to fit the column -- the clipped text is what ends up
-# in the exported PDF, even though the underlying cell value is
-# unchanged. Widen the column so "LibreOffice test" renders in full.
-worksheet.column_dimensions["A"].width = 30
+# IMPORTANT: leave column B entirely empty. Calc only suppresses text
+# overflow from A1 when the DIRECTLY ADJACENT cell (B1) is occupied --
+# widening column A's width alone did not fix this, since the clip
+# boundary tracks "does B1 have content", not column A's pixel width.
+# With B1 empty, A1's text overflows and renders in full regardless of
+# column width. Put the numeric/formula test data in column C instead,
+# which has no effect on A1's rendering since it isn't adjacent.
+worksheet["C1"] = 123
+worksheet["C2"] = "=C1*2"
 
 workbook.save(output_path)
 
