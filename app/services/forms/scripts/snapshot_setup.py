@@ -59,6 +59,27 @@ LIBREOFFICE_PRESIGN_EXPIRY_SECONDS = 900  # 15 minutes
 # lingers in the sandbox filesystem or gets persisted into the snapshot.
 LIBREOFFICE_URL_ENV_PATH = Path("libreoffice/.lo_url.env")
 
+# ---------------------------------------------------------------------------
+# Runtime archive
+# ---------------------------------------------------------------------------
+#
+# The sandbox snapshot mechanism only persists files under the workspace
+# directory (this module's session.write() targets, e.g. "./scripts",
+# "./libreoffice"). It does NOT capture $HOME or /opt -- confirmed by a
+# job sandbox restored from a snapshot missing $HOME/.local and the
+# LibreOffice /opt install entirely, even though bootstrap provisioning
+# completed successfully.
+#
+# So everything dnf/pip/cp/chmod/ln put outside the workspace gets packaged
+# into a single archive placed INSIDE the workspace (this filename, at the
+# workspace root) right before the bootstrap sandbox closes. agent.py's
+# job-sandbox path re-extracts this archive back to "/" on every job run,
+# before doing anything else.
+#
+# Referenced by both this module (creation, inside INSTALL_COMMAND) and
+# agent.py (restoration, inside run_form_agent) -- keep in sync.
+RUNTIME_ARCHIVE_NAME = "runtime-snapshot.tar.gz"
+
 
 # ---------------------------------------------------------------------------
 # Python dependencies
@@ -594,15 +615,16 @@ worksheet = workbook.active
 
 worksheet["A1"] = "LibreOffice test"
 worksheet["A2"] = "日本語テスト"
-worksheet["B1"] = 123
-worksheet["B2"] = "=B1*2"
 
-# Column A's default width is narrow. Because B1 is occupied, Calc
-# suppresses text overflow from A1 into B1 and visually CLIPS the
-# rendered text to fit the column -- the clipped text is what ends up
-# in the exported PDF, even though the underlying cell value is
-# unchanged. Widen the column so "LibreOffice test" renders in full.
-worksheet.column_dimensions["A"].width = 30
+# IMPORTANT: leave column B entirely empty. Calc only suppresses text
+# overflow from A1 when the DIRECTLY ADJACENT cell (B1) is occupied --
+# widening column A's width alone did not fix this, since the clip
+# boundary tracks "does B1 have content", not column A's pixel width.
+# With B1 empty, A1's text overflows and renders in full regardless of
+# column width. Put the numeric/formula test data in column C instead,
+# which has no effect on A1's rendering since it isn't adjacent.
+worksheet["C1"] = 123
+worksheet["C2"] = "=C1*2"
 
 workbook.save(output_path)
 
@@ -802,6 +824,67 @@ echo "========================================"
 command -v form-convert || true
 command -v form-inspect || true
 command -v form-verify || true
+
+
+echo ""
+echo "========================================"
+echo "=== PACKAGING RUNTIME FOR SNAPSHOT PERSISTENCE"
+echo "========================================"
+echo "The sandbox snapshot mechanism only persists files under this"
+echo "workspace directory -- NOT \\$HOME or /opt. Everything we just"
+echo "installed via dnf (/opt/libreofficeNN.N) and pip/cp/chmod/symlink"
+echo "(\\$HOME/.local) lives outside the workspace and would silently"
+echo "vanish once this sandbox closes and its snapshot is persisted."
+echo "Package both into a single archive INSIDE the workspace so the"
+echo "snapshotter picks it up; job sandboxes re-extract it on startup."
+
+LIBREOFFICE_OPT_DIR="$(dirname "$(dirname "$LIBREOFFICE_BIN")")"
+
+echo "LibreOffice opt directory to package: $LIBREOFFICE_OPT_DIR"
+
+if [ ! -d "$LIBREOFFICE_OPT_DIR" ]; then
+  echo "ERROR: expected LibreOffice opt directory not found: $LIBREOFFICE_OPT_DIR"
+  exit 1
+fi
+
+if [ ! -d "$HOME/.local" ]; then
+  echo "ERROR: expected $HOME/.local not found -- pip/script installs are missing."
+  exit 1
+fi
+
+RUNTIME_ARCHIVE="{RUNTIME_ARCHIVE_NAME}"
+
+echo "Building $RUNTIME_ARCHIVE from:"
+echo "  $LIBREOFFICE_OPT_DIR"
+echo "  $HOME/.local"
+
+# tar strips the leading '/' from absolute paths automatically, storing
+# entries as e.g. "opt/libreoffice26.8/..." and "home/vercel-sandbox/.local/...".
+# Re-extracting with `tar -C /` on the job side restores them to the exact
+# same absolute locations, so nothing else needs to change (symlinks under
+# .local/bin pointing at /opt/libreofficeNN.N/... resolve correctly since
+# both halves land back in the same place relative to each other).
+sudo tar -czf "$RUNTIME_ARCHIVE" "$LIBREOFFICE_OPT_DIR" "$HOME/.local"
+
+# The archive gets created via sudo, so it's root-owned -- hand it back to
+# the sandbox user so later steps (and the snapshot upload itself) don't
+# need elevated privileges to read it.
+sudo chown "$(id -u):$(id -g)" "$RUNTIME_ARCHIVE"
+
+echo "Runtime archive created:"
+ls -lh "$RUNTIME_ARCHIVE"
+
+RUNTIME_ARCHIVE_SIZE="$(stat -c '%s' "$RUNTIME_ARCHIVE" 2>/dev/null || stat -f '%z' "$RUNTIME_ARCHIVE")"
+
+echo "Runtime archive size (bytes): $RUNTIME_ARCHIVE_SIZE"
+
+if [ "$RUNTIME_ARCHIVE_SIZE" -lt 52428800 ]; then
+  echo "ERROR: runtime archive appears unexpectedly small: $RUNTIME_ARCHIVE_SIZE bytes"
+  echo "(A full LibreOffice + site-packages install should be well over 50MB.)"
+  exit 1
+fi
+
+echo "Runtime archive packaged and verified."
 
 
 echo ""
