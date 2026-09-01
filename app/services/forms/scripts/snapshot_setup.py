@@ -456,6 +456,20 @@ if [ -z "$LIBREOFFICE_BIN" ]; then
   LIBREOFFICE_BIN="$(command -v soffice || true)"
 fi
 
+# The RPM distribution installs into /opt/libreofficeNN.N/program/soffice,
+# which is NOT on PATH by default -- so command -v will normally miss it
+# even on a successful install. Fall back to a direct filesystem search.
+if [ -z "$LIBREOFFICE_BIN" ]; then
+  echo "libreoffice/soffice not found on PATH, searching /opt directly..."
+
+  LIBREOFFICE_BIN="$(find /opt \
+    -maxdepth 4 \
+    -type f \
+    -path '*/program/soffice' \
+    -print \
+    -quit)"
+fi
+
 if [ -z "$LIBREOFFICE_BIN" ]; then
   echo "ERROR: LibreOffice was installed but executable was not found."
 
@@ -472,6 +486,18 @@ fi
 
 echo "LibreOffice executable:"
 echo "$LIBREOFFICE_BIN"
+
+# Symlink it onto PATH via BIN_DIR so downstream scripts (form-convert,
+# form-inspect, form-verify) can invoke `soffice` / `libreoffice` at
+# job-run time without hardcoding the /opt/libreofficeNN.N path, which
+# will change on every LibreOffice version bump.
+echo ""
+echo "Symlinking into {BIN_DIR} ..."
+
+ln -sf "$LIBREOFFICE_BIN" "{BIN_DIR}/soffice"
+ln -sf "$LIBREOFFICE_BIN" "{BIN_DIR}/libreoffice"
+
+ls -lh "{BIN_DIR}/soffice" "{BIN_DIR}/libreoffice"
 
 echo ""
 echo "LibreOffice version:"
