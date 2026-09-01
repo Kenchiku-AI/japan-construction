@@ -42,10 +42,10 @@ LIBREOFFICE_S3_KEY = os.environ.get(
 )
 
 # Location inside the sandbox where the archive will be downloaded.
-LIBREOFFICE_DOWNLOAD_DIR = Path("/tmp/libreoffice")
+LIBREOFFICE_WORKSPACE_DIR = Path("libreoffice")
 
-LIBREOFFICE_DOWNLOAD_PATH = (
-  LIBREOFFICE_DOWNLOAD_DIR / LIBREOFFICE_ARCHIVE
+LIBREOFFICE_WORKSPACE_PATH = (
+  LIBREOFFICE_WORKSPACE_DIR / LIBREOFFICE_ARCHIVE
 )
 
 
@@ -230,7 +230,7 @@ echo "========================================"
 echo "=== VERIFYING LIBREOFFICE ARCHIVE"
 echo "========================================"
 
-LO_ARCHIVE="{LIBREOFFICE_DOWNLOAD_PATH}"
+LO_ARCHIVE="libreoffice/{LIBREOFFICE_ARCHIVE}"
 
 if [ ! -f "$LO_ARCHIVE" ]; then
   echo "ERROR: LibreOffice archive was not downloaded:"
@@ -504,6 +504,14 @@ rm -rf "$TEST_DIR"
 rm -rf "$TEST_PROFILE"
 rm -rf "$TMP_DIR"
 
+echo ""
+echo "=== REMOVING LIBREOFFICE ARCHIVE ==="
+
+rm -rf "libreoffice"
+
+echo "LibreOffice archive removed from sandbox workspace."
+
+echo ""
 echo "LibreOffice installation and test succeeded."
 
 
@@ -699,10 +707,9 @@ async def provision_dependencies(session) -> None:
   # ------------------------------------------------------------------
 
   mkdir_result = await session.exec(
-    "mkdir",
-    "-p",
-    BIN_DIR,
-    str(LIBREOFFICE_DOWNLOAD_DIR),
+    "sh",
+    "-lc",
+    f'rm -rf "libreoffice" && mkdir -p "{BIN_DIR}" "libreoffice"',
   )
 
   if mkdir_result.exit_code != 0:
@@ -864,13 +871,11 @@ async def provision_dependencies(session) -> None:
     # Upload the archive into the sandbox.
     logger.info(
       "Uploading LibreOffice archive to sandbox: %s",
-      LIBREOFFICE_DOWNLOAD_PATH,
+      LIBREOFFICE_WORKSPACE_PATH,
     )
 
     await session.write(
-      Path(
-        str(LIBREOFFICE_DOWNLOAD_PATH)
-      ),
+      LIBREOFFICE_WORKSPACE_PATH,
       io.BytesIO(
         local_download_path.read_bytes()
       ),
