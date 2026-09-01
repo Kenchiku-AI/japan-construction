@@ -132,12 +132,6 @@ async def run_form_agent(
         "BOOTSTRAP: sandbox created."
       )
 
-      await bootstrap_sandbox.start()
-
-      logger.info(
-        "BOOTSTRAP: sandbox started."
-      )
-
       logger.info(
         "BOOTSTRAP: installing dependencies."
       )
