@@ -274,6 +274,19 @@ echo "=== BOOTSTRAP DONE ==="
           )
           raise
 
+        finally:
+          try:
+            await sandbox_client.delete(bootstrap_sandbox)
+
+            logger.info(
+              "BOOTSTRAP: sandbox deleted."
+            )
+
+          except Exception:
+            logger.exception(
+              "BOOTSTRAP: error deleting bootstrap sandbox."
+            )
+
     # --------------------------------------------------------------
     # Verify that the snapshot now exists in S3.
     # --------------------------------------------------------------
@@ -617,11 +630,24 @@ echo "=== DONE ==="
   finally:
     if sandbox is not None:
       try:
-        await sandbox.aclose()
+        await sandbox.shutdown()
       except Exception:
         logger.exception(
-          "Error closing form agent sandbox.",
+          "Error shutting down job sandbox.",
         )
+
+      finally:
+        try:
+          await sandbox_client.delete(sandbox)
+
+          logger.info(
+            "JOB SANDBOX: deleted."
+          )
+
+        except Exception:
+          logger.exception(
+            "Error deleting job sandbox."
+          )
 
 
 async def _collect_sandbox_output_files(
