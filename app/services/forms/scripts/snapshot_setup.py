@@ -596,6 +596,7 @@ worksheet["A1"] = "LibreOffice test"
 worksheet["A2"] = "日本語テスト"
 worksheet["B1"] = 123
 worksheet["B2"] = "=B1*2"
+
 # Column A's default width is narrow. Because B1 is occupied, Calc
 # suppresses text overflow from A1 into B1 and visually CLIPS the
 # rendered text to fit the column -- the clipped text is what ends up
