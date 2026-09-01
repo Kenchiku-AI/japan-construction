@@ -573,6 +573,13 @@ worksheet["A2"] = "日本語テスト"
 worksheet["B1"] = 123
 worksheet["B2"] = "=B1*2"
 
+# Column A's default width is narrow. Because B1 is occupied, Calc
+# suppresses text overflow from A1 into B1 and visually CLIPS the
+# rendered text to fit the column -- the clipped text is what ends up
+# in the exported PDF, even though the underlying cell value is
+# unchanged. Widen the column so "LibreOffice test" renders in full.
+worksheet.column_dimensions["A"].width = 30
+
 workbook.save(output_path)
 
 print("Created:", output_path)
