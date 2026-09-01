@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+
+import json
+import sys
+from pathlib import Path
+
+import cv2
+from paddleocr import PaddleOCR
+
+
+OCR = None
+
+
+def get_ocr():
+  global OCR
+
+  if OCR is None:
+    OCR = PaddleOCR(
+      lang="japan",
+      device="cpu",
+    )
+
+  return OCR
+
+
+def preprocess_image(input_path: Path) -> Path:
+  image = cv2.imread(str(input_path))
+
+  if image is None:
+    raise RuntimeError(
+      f"Could not read image: {input_path}"
+    )
+
+  height, width = image.shape[:2]
+
+  # Upscale smaller images because Japanese characters on forms
+  # can be very small.
+  if width < 1600:
+    scale = 1600 / width
+
+    image = cv2.resize(
+      image,
+      None,
+      fx=scale,
+      fy=scale,
+      interpolation=cv2.INTER_CUBIC,
+    )
+
+  # Mild contrast normalization.
+  lab = cv2.cvtColor(
+    image,
+    cv2.COLOR_BGR2LAB,
+  )
+
+  l_channel, a_channel, b_channel = cv2.split(lab)
+
+  clahe = cv2.createCLAHE(
+    clipLimit=2.0,
+    tileGridSize=(8, 8),
+  )
+
+  l_channel = clahe.apply(l_channel)
+
+  image = cv2.merge(
+    (
+      l_channel,
+      a_channel,
+      b_channel,
+    )
+  )
+
+  image = cv2.cvtColor(
+    image,
+    cv2.COLOR_LAB2BGR,
+  )
+
+  output_path = input_path.with_suffix(
+    ".ocr-preprocessed.png"
+  )
+
+  cv2.imwrite(
+    str(output_path),
+    image,
+  )
+
+  return output_path
+
+
+def run_ocr(input_path: Path) -> dict:
+  ocr = get_ocr()
+
+  processed_path = preprocess_image(
+    input_path
+  )
+
+  result = ocr.predict(
+    str(processed_path)
+  )
+
+  items = []
+
+  for page_result in result:
+    json_data = page_result.json
+
+    if callable(json_data):
+      json_data = json_data()
+
+    if not json_data:
+      continue
+
+    if isinstance(json_data, str):
+      json_data = json.loads(json_data)
+
+    for text, score, bbox in zip(
+      json_data.get("rec_texts", []),
+      json_data.get("rec_scores", []),
+      json_data.get("rec_boxes", []),
+    ):
+      items.append(
+        {
+          "text": text,
+          "confidence": float(score),
+          "bbox": bbox,
+          "source": "paddleocr",
+        }
+      )
+
+  try:
+    processed_path.unlink()
+  except OSError:
+    pass
+
+  return {
+    "file": str(input_path),
+    "engine": "paddleocr",
+    "language": "japan",
+    "items": items,
+    "text": "\n".join(
+      item["text"]
+      for item in items
+    ),
+  }
+
+
+def main():
+  if len(sys.argv) != 2:
+    print(
+      f"Usage: {sys.argv[0]} <image>",
+      file=sys.stderr,
+    )
+    sys.exit(2)
+
+  input_path = Path(
+    sys.argv[1]
+  ).resolve()
+
+  if not input_path.is_file():
+    print(
+      f"File not found: {input_path}",
+      file=sys.stderr,
+    )
+    sys.exit(1)
+
+  result = run_ocr(
+    input_path
+  )
+
+  print(
+    json.dumps(
+      result,
+      ensure_ascii=False,
+      indent=2,
+    )
+  )
+
+
+if __name__ == "__main__":
+  main()

@@ -567,17 +567,33 @@ with common construction-company document formats.
 
 Available document-processing software includes:
 
-- Python spreadsheet/document libraries (openpyxl, xlrd, python-docx,
-  python-pptx, PyMuPDF, pypdf, Pillow)
-- Japanese/English OCR (AWS Textract, used automatically by form-inspect
-  for scanned images and image-only PDFs)
-- form-convert, which handles legacy-format conversion (XLS/DOC/PPT/ODS)
+* Python spreadsheet/document libraries:
+  openpyxl, xlrd, python-docx, python-pptx, PyMuPDF, pypdf, Pillow
+* Local Japanese/English OCR using PaddleOCR
+* form-inspect, which analyzes the structure and content of supported
+  documents and uses PaddleOCR automatically when OCR is needed for
+  images or scanned/image-only PDFs
+* form-convert, which handles legacy-format conversion (XLS/DOC/PPT/ODS)
   and PDF rendering
 
-You MUST inspect the actual input files directly.
+OCR is performed locally inside the sandbox using PaddleOCR. No external
+OCR service or AWS Textract is used.
+
+You MUST inspect the actual input files directly before editing them.
 
 Do not assume that a file is unsupported merely because it uses an
 older or less common file extension.
+
+When a document is supported by a specialized inspection tool, use that
+tool rather than relying on assumptions about the document's contents.
+
+For scanned PDFs or image-based documents, use form-inspect to obtain
+OCR text and its associated confidence/bounding-box information before
+attempting to determine what fields need to be filled.
+
+Always preserve the original document's structure, formatting, layout,
+and existing content unless the task explicitly requires otherwise.
+
 
 ------------------------------------------------------------
 SPREADSHEETS

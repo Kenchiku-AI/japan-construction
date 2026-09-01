@@ -12,10 +12,13 @@ SCRIPT_FILES = [
   "form-convert",
   "form-inspect",
   "form-verify",
+  "form-ocr",
   "inspect_excel.py",
 ]
 
 BIN_DIR = "/home/vercel-sandbox/.local/bin"
+PADDLE_HOME = "/home/vercel-sandbox/.paddle"
+PADDLE_CACHE_DIR = "/home/vercel-sandbox/.paddle"
 
 # ---------------------------------------------------------------------------
 # LibreOffice
@@ -95,8 +98,10 @@ PIP_PACKAGES = [
   "pymupdf",
   "pypdf",
   "Pillow",
-  "boto3",
   "httpx",
+  "paddlepaddle",
+  "paddleocr",
+  "opencv-python-headless",
 ]
 
 
@@ -305,6 +310,12 @@ INSTALL_COMMAND = f"""
 set -euo pipefail
 
 export PATH="{BIN_DIR}:$PATH"
+
+export PADDLE_HOME="{PADDLE_HOME}"
+export PADDLEOCR_HOME="{PADDLE_CACHE_DIR}"
+
+mkdir -p "$PADDLE_HOME"
+mkdir -p "$PADDLEOCR_HOME"
 
 # Saved so we can cd back here after installing the LibreOffice RPMs
 # (which requires cd-ing into a mktemp -d directory that gets rm -rf'd
@@ -568,7 +579,7 @@ echo "LibreOffice executable:"
 echo "$LIBREOFFICE_BIN"
 
 # Symlink it onto PATH via BIN_DIR so downstream scripts (form-convert,
-# form-inspect, form-verify) can invoke `soffice` / `libreoffice` at
+# form-inspect, form-verify, form-ocr) can invoke `soffice` / `libreoffice` at
 # job-run time without hardcoding the /opt/libreofficeNN.N path, which
 # will change on every LibreOffice version bump.
 echo ""
@@ -758,6 +769,9 @@ mods = {{
   "Pillow": "PIL",
   "boto3": "boto3",
   "httpx": "httpx",
+  "paddlepaddle": "paddle",
+  "paddleocr": "paddleocr",
+  "opencv-python-headless": "cv2",
 }}
 
 for pkg, mod in mods.items():
@@ -800,7 +814,42 @@ python3 -m pip show \
   pypdf \
   Pillow \
   boto3 \
-  httpx || true
+  httpx \
+  paddlepaddle \
+  paddleocr \
+  opencv-python-headless || true
+
+
+echo ""
+echo "========================================"
+echo "=== VERIFYING PADDLEOCR"
+echo "========================================"
+
+python3 - <<'PY'
+import paddle
+import paddleocr
+
+print("PaddlePaddle version:", paddle.__version__)
+print("PaddleOCR version:", paddleocr.__version__)
+
+print("Running PaddlePaddle CPU check...")
+
+paddle.utils.run_check()
+
+print("PaddlePaddle CPU check succeeded.")
+
+from paddleocr import PaddleOCR
+
+print("Initializing Japanese PaddleOCR...")
+
+ocr = PaddleOCR(
+  lang="japan",
+  device="cpu",
+)
+
+print("Japanese PaddleOCR initialized successfully.")
+print("PaddleOCR model initialization complete.")
+PY
 
 
 echo ""
@@ -824,6 +873,27 @@ echo "========================================"
 command -v form-convert || true
 command -v form-inspect || true
 command -v form-verify || true
+command -v form-ocr || true
+
+echo ""
+echo "========================================"
+echo "=== LOCATING PADDLEOCR MODEL CACHE"
+echo "========================================"
+
+echo "--- Paddle-related files under HOME ---"
+
+find "$HOME" \
+  -maxdepth 5 \
+  \( \
+    -iname "*paddle*" \
+    -o -iname "*ppocr*" \
+  \) \
+  -print 2>/dev/null | head -200
+
+echo ""
+echo "--- HOME disk usage ---"
+
+du -sh "$HOME"/* 2>/dev/null || true
 
 
 echo ""
@@ -835,7 +905,7 @@ echo "workspace directory -- NOT \\$HOME or /opt. Everything we just"
 echo "installed via dnf (/opt/libreofficeNN.N) and pip/cp/chmod/symlink"
 echo "(\\$HOME/.local) lives outside the workspace and would silently"
 echo "vanish once this sandbox closes and its snapshot is persisted."
-echo "Package both into a single archive INSIDE the workspace so the"
+echo "Package the installed runtime and model caches into a single archive INSIDE the workspace so the"
 echo "snapshotter picks it up; job sandboxes re-extract it on startup."
 
 LIBREOFFICE_OPT_DIR="$(dirname "$(dirname "$LIBREOFFICE_BIN")")"
@@ -852,11 +922,17 @@ if [ ! -d "$HOME/.local" ]; then
   exit 1
 fi
 
+if [ ! -d "$HOME/.paddle" ]; then
+  echo "ERROR: expected $HOME/.paddle not found -- PaddleOCR model cache is missing."
+  exit 1
+fi
+
 RUNTIME_ARCHIVE="{RUNTIME_ARCHIVE_NAME}"
 
 echo "Building $RUNTIME_ARCHIVE from:"
 echo "  $LIBREOFFICE_OPT_DIR"
 echo "  $HOME/.local"
+echo "  $HOME/.paddle"
 
 # tar strips the leading '/' from absolute paths automatically, storing
 # entries as e.g. "opt/libreoffice26.8/..." and "home/vercel-sandbox/.local/...".
@@ -864,7 +940,10 @@ echo "  $HOME/.local"
 # same absolute locations, so nothing else needs to change (symlinks under
 # .local/bin pointing at /opt/libreofficeNN.N/... resolve correctly since
 # both halves land back in the same place relative to each other).
-sudo tar -czf "$RUNTIME_ARCHIVE" "$LIBREOFFICE_OPT_DIR" "$HOME/.local"
+sudo tar -czf "$RUNTIME_ARCHIVE" \
+  "$LIBREOFFICE_OPT_DIR" \
+  "$HOME/.local" \
+  "$HOME/.paddle"
 
 # The archive gets created via sudo, so it's root-owned -- hand it back to
 # the sandbox user so later steps (and the snapshot upload itself) don't
@@ -958,9 +1037,6 @@ async def provision_dependencies(session) -> None:
 
   The LibreOffice installation is verified with an actual XLSX -> PDF
   conversion before snapshot creation continues.
-
-  OCR is delegated to AWS Textract, which needs AWS credentials reachable
-  from the sandbox at *job run* time (unrelated to this function).
 
   Raises on any failure.
   """
@@ -1175,6 +1251,7 @@ async def provision_dependencies(session) -> None:
     f"{BIN_DIR}/form-convert",
     f"{BIN_DIR}/form-inspect",
     f"{BIN_DIR}/form-verify",
+    f"{BIN_DIR}/form-ocr",
   )
 
   if chmod_result.exit_code != 0:
