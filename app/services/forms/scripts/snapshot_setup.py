@@ -285,6 +285,14 @@ set -euo pipefail
 
 export PATH="{BIN_DIR}:$PATH"
 
+# Saved so we can cd back here after installing the LibreOffice RPMs
+# (which requires cd-ing into a mktemp -d directory that gets rm -rf'd
+# during cleanup later in this script). Without this, the shell's cwd
+# gets deleted out from under it once cleanup runs, and every command
+# after that point -- including Python's own import machinery for
+# C-extension packages -- starts failing on getcwd().
+INSTALL_COMMAND_START_DIR="$(pwd)"
+
 echo "========================================"
 echo "=== INSTALLING PYTHON PACKAGES"
 echo "========================================"
@@ -478,6 +486,22 @@ sudo dnf install -y \
   nspr \
   glibc-langpack-en \
   || echo "WARNING: one or more runtime dependency packages were not found in enabled repos -- continuing, but the headless test below may reveal a still-missing library."
+
+
+echo ""
+echo "========================================"
+echo "=== RETURNING TO ORIGINAL WORKING DIRECTORY"
+echo "========================================"
+echo "We cd'd into a mktemp -d directory to run dnf install above. That"
+echo "directory tree gets rm -rf'd during cleanup later in this script,"
+echo "so cd back out now -- staying inside it would leave every"
+echo "subsequent command (including Python's own import machinery) with"
+echo "a cwd that no longer exists once cleanup runs."
+
+cd "$INSTALL_COMMAND_START_DIR"
+
+echo "Working directory restored:"
+pwd
 
 
 echo ""
