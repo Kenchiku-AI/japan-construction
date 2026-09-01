@@ -1,8 +1,6 @@
 import asyncio
 import io
 import logging
-import inspect
-import tarfile
 from pathlib import Path
 from typing import Any
 from uuid import UUID
