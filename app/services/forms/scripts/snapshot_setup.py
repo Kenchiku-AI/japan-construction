@@ -594,16 +594,14 @@ worksheet = workbook.active
 
 worksheet["A1"] = "LibreOffice test"
 worksheet["A2"] = "日本語テスト"
-
-# IMPORTANT: leave column B entirely empty. Calc only suppresses text
-# overflow from A1 when the DIRECTLY ADJACENT cell (B1) is occupied --
-# widening column A's width alone did not fix this, since the clip
-# boundary tracks "does B1 have content", not column A's pixel width.
-# With B1 empty, A1's text overflows and renders in full regardless of
-# column width. Put the numeric/formula test data in column C instead,
-# which has no effect on A1's rendering since it isn't adjacent.
-worksheet["C1"] = 123
-worksheet["C2"] = "=C1*2"
+worksheet["B1"] = 123
+worksheet["B2"] = "=B1*2"
+# Column A's default width is narrow. Because B1 is occupied, Calc
+# suppresses text overflow from A1 into B1 and visually CLIPS the
+# rendered text to fit the column -- the clipped text is what ends up
+# in the exported PDF, even though the underlying cell value is
+# unchanged. Widen the column so "LibreOffice test" renders in full.
+worksheet.column_dimensions["A"].width = 30
 
 workbook.save(output_path)
 
