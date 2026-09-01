@@ -119,6 +119,7 @@ async def run_form_agent(
       )
 
       bootstrap_sandbox = await sandbox_client.create(
+        snapshot=get_form_agent_snapshot(),
         options=VercelSandboxClientOptions(
           allow_s3_credential_exposure=False,
           timeout_ms=600_000,
