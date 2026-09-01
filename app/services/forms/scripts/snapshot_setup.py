@@ -20,6 +20,29 @@ BIN_DIR = "/home/vercel-sandbox/.local/bin"
 PADDLE_HOME = "/home/vercel-sandbox/.paddle"
 PADDLE_CACHE_DIR = "/home/vercel-sandbox/.paddle"
 
+# >>> NEW: /usr/local/bin is on PATH by default for every shell context
+# (login, interactive, non-interactive) -- unlike BIN_DIR above, which is
+# only on PATH when something explicitly exports it. The agent's own
+# exec_command tool calls do NOT source our provisioning scripts' PATH
+# exports, so scripts installed only under BIN_DIR are invisible to the
+# LLM at job-run time. We symlink everything from BIN_DIR into
+# USR_LOCAL_BIN so the agent can call form-convert / soffice / etc. by
+# name with zero PATH setup required.
+USR_LOCAL_BIN = "/usr/local/bin"
+
+# >>> NEW: names symlinked into USR_LOCAL_BIN, kept in sync with
+# SCRIPT_FILES plus the two LibreOffice symlinks created later in
+# INSTALL_COMMAND.
+USR_LOCAL_BIN_LINKS = [
+  "form-convert",
+  "form-inspect",
+  "form-verify",
+  "form-ocr",
+  "inspect_excel.py",
+  "soffice",
+  "libreoffice",
+]
+
 # ---------------------------------------------------------------------------
 # LibreOffice
 # ---------------------------------------------------------------------------
@@ -590,6 +613,17 @@ ln -sf "$LIBREOFFICE_BIN" "{BIN_DIR}/libreoffice"
 
 ls -lh "{BIN_DIR}/soffice" "{BIN_DIR}/libreoffice"
 
+# >>> NEW: also symlink LibreOffice onto /usr/local/bin, which is on
+# PATH by default for every shell context (unlike BIN_DIR). This is
+# what the agent's own exec_command tool calls actually see.
+echo ""
+echo "Symlinking LibreOffice into {USR_LOCAL_BIN} ..."
+
+sudo ln -sf "$LIBREOFFICE_BIN" "{USR_LOCAL_BIN}/soffice"
+sudo ln -sf "$LIBREOFFICE_BIN" "{USR_LOCAL_BIN}/libreoffice"
+
+ls -lh "{USR_LOCAL_BIN}/soffice" "{USR_LOCAL_BIN}/libreoffice"
+
 echo ""
 echo "LibreOffice version:"
 "$LIBREOFFICE_BIN" --version
@@ -767,7 +801,6 @@ mods = {{
   "pymupdf": "fitz",
   "pypdf": "pypdf",
   "Pillow": "PIL",
-  "boto3": "boto3",
   "httpx": "httpx",
   "paddlepaddle": "paddle",
   "paddleocr": "paddleocr",
@@ -813,7 +846,6 @@ python3 -m pip show \
   pymupdf \
   pypdf \
   Pillow \
-  boto3 \
   httpx \
   paddlepaddle \
   paddleocr \
@@ -875,6 +907,22 @@ command -v form-inspect || true
 command -v form-verify || true
 command -v form-ocr || true
 
+# >>> NEW: verify the scripts resolve WITHOUT the PATH export at the top
+# of this very script -- i.e. exactly what the agent's exec_command tool
+# will see. This is the check that would have caught this whole class of
+# bug before it ever reached a real job.
+echo ""
+echo "--- verifying scripts resolve with a clean PATH (no BIN_DIR) ---"
+
+env -i PATH="/usr/bin:/bin:/usr/local/bin" sh -lc '
+  command -v form-convert || echo "MISSING (clean PATH): form-convert"
+  command -v form-inspect || echo "MISSING (clean PATH): form-inspect"
+  command -v form-verify || echo "MISSING (clean PATH): form-verify"
+  command -v form-ocr || echo "MISSING (clean PATH): form-ocr"
+  command -v soffice || echo "MISSING (clean PATH): soffice"
+  command -v libreoffice || echo "MISSING (clean PATH): libreoffice"
+'
+
 echo ""
 echo "========================================"
 echo "=== LOCATING PADDLEOCR MODEL CACHE"
@@ -927,23 +975,39 @@ if [ ! -d "$HOME/.paddle" ]; then
   exit 1
 fi
 
+# >>> NEW: fail loudly (rather than silently omitting them from the
+# archive) if the /usr/local/bin symlinks are somehow missing at
+# packaging time.
+for link in {" ".join(USR_LOCAL_BIN_LINKS)}; do
+  if [ ! -e "{USR_LOCAL_BIN}/$link" ]; then
+    echo "ERROR: expected symlink not found: {USR_LOCAL_BIN}/$link"
+    exit 1
+  fi
+done
+
 RUNTIME_ARCHIVE="{RUNTIME_ARCHIVE_NAME}"
 
 echo "Building $RUNTIME_ARCHIVE from:"
 echo "  $LIBREOFFICE_OPT_DIR"
 echo "  $HOME/.local"
 echo "  $HOME/.paddle"
+echo "  {USR_LOCAL_BIN} (form-* / inspect_excel.py / soffice / libreoffice symlinks)"
 
 # tar strips the leading '/' from absolute paths automatically, storing
-# entries as e.g. "opt/libreoffice26.8/..." and "home/vercel-sandbox/.local/...".
-# Re-extracting with `tar -C /` on the job side restores them to the exact
-# same absolute locations, so nothing else needs to change (symlinks under
-# .local/bin pointing at /opt/libreofficeNN.N/... resolve correctly since
-# both halves land back in the same place relative to each other).
+# entries as e.g. "opt/libreoffice26.8/...", "home/vercel-sandbox/.local/...",
+# and "usr/local/bin/form-convert". Re-extracting with `tar -C /` on the
+# job side restores them to the exact same absolute locations, so nothing
+# else needs to change (symlinks under .local/bin and usr/local/bin
+# pointing at /opt/libreofficeNN.N/... resolve correctly since all halves
+# land back in the same place relative to each other). tar preserves
+# symlinks as symlinks by default (no -h/--dereference), so this only
+# adds a handful of small symlink entries -- not LibreOffice's bytes
+# a second time.
 sudo tar -czf "$RUNTIME_ARCHIVE" \
   "$LIBREOFFICE_OPT_DIR" \
   "$HOME/.local" \
-  "$HOME/.paddle"
+  "$HOME/.paddle" \
+  {" ".join(f'"{USR_LOCAL_BIN}/{link}"' for link in USR_LOCAL_BIN_LINKS)}
 
 # The archive gets created via sudo, so it's root-owned -- hand it back to
 # the sandbox user so later steps (and the snapshot upload itself) don't
@@ -1259,6 +1323,31 @@ async def provision_dependencies(session) -> None:
 
     raise RuntimeError(
       f"Failed to make form scripts executable: {stderr}"
+    )
+
+  # >>> NEW: symlink the scripts onto /usr/local/bin, which is on PATH by
+  # default for every shell context. This is what actually makes them
+  # visible to the agent's own exec_command tool calls at job-run time --
+  # BIN_DIR alone is not enough, since nothing sources BIN_DIR's PATH
+  # export in that context (see the InvalidManifestPathError debugging
+  # notes above INSTALL_COMMAND / in agent.py's restore step).
+  symlink_result = await session.exec(
+    "sh",
+    "-lc",
+    f'''
+    set -euo pipefail
+    for f in {" ".join(SCRIPT_FILES)}; do
+      sudo ln -sf "{BIN_DIR}/$f" "{USR_LOCAL_BIN}/$f"
+    done
+    ls -lh {" ".join(f'"{USR_LOCAL_BIN}/{f}"' for f in SCRIPT_FILES)}
+    ''',
+  )
+
+  if symlink_result.exit_code != 0:
+    stderr = symlink_result.stderr.decode(errors="replace")
+
+    raise RuntimeError(
+      f"Failed to symlink scripts into {USR_LOCAL_BIN}: {stderr}"
     )
 
   # ------------------------------------------------------------------
