@@ -33,11 +33,296 @@ from app.services.forms.scripts.snapshot_setup import (
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Deterministic format conversion
+# ---------------------------------------------------------------------------
+#
+# Some input formats (legacy XLS, DOC, PPT, ODS) cannot be edited directly
+# by openpyxl/python-docx/python-pptx and must first be converted to a
+# modern equivalent via LibreOffice (form-convert). This used to be left
+# entirely to the agent's judgment via prompt instructions. In production
+# this proved unreliable: the agent silently gave up on an XLS file
+# ("編集環境の制約により入力欄へ記入できませんでした") without any
+# evidence it ever attempted form-convert.
+#
+# There is exactly one correct way to handle these conversions -- no
+# judgment call is involved -- so they are now performed deterministically
+# here, outside the agent's tool loop entirely. The agent only ever sees
+# an already-converted, directly editable file.
+#
+# ROUND_TRIP_CONVERSIONS: the original extension is the format the
+# customer expects back, so after the agent edits the modern equivalent,
+# we convert its output back to the original extension automatically.
+ROUND_TRIP_CONVERSIONS = {
+  "xls": "xlsx",
+  "ods": "xlsx",
+}
+
+# ONE_WAY_CONVERSIONS: the modern equivalent is an acceptable final output
+# format on its own, so no reverse conversion is performed.
+ONE_WAY_CONVERSIONS = {
+  "doc": "docx",
+  "ppt": "pptx",
+}
+
+EDITABLE_FORMAT = {
+  **ROUND_TRIP_CONVERSIONS,
+  **ONE_WAY_CONVERSIONS,
+}
+
+
 def build_form_agent() -> SandboxAgent:
   return SandboxAgent(
     name="Kenchiku AI Form Agent",
     instructions=FORM_AGENT_INSTRUCTIONS,
   )
+
+
+async def _run_form_convert(
+  sandbox,
+  input_relative_path: str,
+  output_dir_relative: str,
+) -> str:
+  """Runs form-convert inside the sandbox for a single file.
+
+  Returns the filename (not full path) of the produced output file on
+  success. Raises RuntimeError with full stdout/stderr context on any
+  failure.
+  """
+
+  result = await sandbox.exec(
+    "form-convert",
+    input_relative_path,
+    output_dir_relative,
+  )
+
+  stdout = result.stdout.decode(errors="replace")
+  stderr = result.stderr.decode(errors="replace")
+
+  if result.exit_code != 0:
+    raise RuntimeError(
+      "form-convert failed for "
+      f"{input_relative_path!r} (exit_code={result.exit_code}). "
+      f"stdout:\n{stdout}\nstderr:\n{stderr}"
+    )
+
+  produced_line = stdout.strip().splitlines()[-1] if stdout.strip() else ""
+
+  if not produced_line:
+    raise RuntimeError(
+      "form-convert reported success but printed no output path for "
+      f"{input_relative_path!r}. stdout:\n{stdout}\nstderr:\n{stderr}"
+    )
+
+  return Path(produced_line).name
+
+
+async def _preconvert_input_files(
+  sandbox,
+  host_input_files: list[Path],
+) -> dict[str, dict[str, Any]]:
+  """Deterministically converts any legacy-format input files to an
+  editable modern format, before the agent ever runs.
+
+  Returns a mapping of:
+
+    converted_filename -> {
+      "original_filename": str,
+      "original_extension": str,
+      "round_trip": bool,
+    }
+
+  for every file that required conversion. Files that didn't need
+  conversion (already-editable formats, PDFs, images, etc.) are simply
+  omitted from the returned mapping.
+  """
+
+  conversion_map: dict[str, dict[str, Any]] = {}
+
+  for host_file in host_input_files:
+    extension = host_file.suffix.lower().lstrip(".")
+    target_format = EDITABLE_FORMAT.get(extension)
+
+    if target_format is None:
+      continue
+
+    logger.info(
+      "Deterministically pre-converting %s (.%s -> .%s).",
+      host_file.name,
+      extension,
+      target_format,
+    )
+
+    converted_name = await _run_form_convert(
+      sandbox,
+      f"input/{host_file.name}",
+      "input",
+    )
+
+    conversion_map[converted_name] = {
+      "original_filename": host_file.name,
+      "original_extension": extension,
+      "round_trip": extension in ROUND_TRIP_CONVERSIONS,
+    }
+
+    logger.info(
+      "Pre-converted input/%s -> input/%s",
+      host_file.name,
+      converted_name,
+    )
+
+  return conversion_map
+
+
+def _build_conversion_prompt_addendum(
+  conversion_map: dict[str, dict[str, Any]],
+) -> str:
+  """Builds a short, explicit prompt section telling the agent exactly
+  which pre-converted files to edit and exactly what to save them as.
+
+  Returns an empty string if no conversions were performed.
+  """
+
+  if not conversion_map:
+    return ""
+
+  lines = [
+    "",
+    "=" * 60,
+    "AUTOMATIC FORMAT CONVERSION (already performed)",
+    "=" * 60,
+    "",
+    "The following input files have ALREADY been automatically "
+    "converted to an editable format before you started. This was done "
+    "deterministically outside your control.",
+    "",
+    "For these specific files:",
+    "",
+    "- Do NOT call form-convert on them.",
+    "- Do NOT attempt to convert your output back to the original "
+    "format yourself.",
+    "- The system will automatically handle any reverse conversion "
+    "after you finish, where applicable.",
+    "",
+  ]
+
+  for converted_name, info in conversion_map.items():
+    stem = Path(converted_name).stem
+    suffix = Path(converted_name).suffix  # includes leading "."
+
+    lines.append(
+      f"- input/{info['original_filename']} was converted to "
+      f"input/{converted_name}."
+    )
+    lines.append(
+      f"  Edit input/{converted_name} directly. The original "
+      f"input/{info['original_filename']} is kept only for reference "
+      f"and must not be modified."
+    )
+
+    if info["round_trip"]:
+      lines.append(
+        f"  Save your completed work as EXACTLY output/{stem}{suffix} "
+        f"-- the system will automatically convert this back to "
+        f".{info['original_extension']} afterward. Do not save it "
+        f"under any other filename or extension."
+      )
+    else:
+      lines.append(
+        f"  Save your completed work as output/{stem}{suffix}. This is "
+        f"the final output format for this file -- no further "
+        f"conversion will be performed."
+      )
+
+    lines.append("")
+
+  return "\n".join(lines)
+
+
+async def _postconvert_output_files(
+  sandbox,
+  conversion_map: dict[str, dict[str, Any]],
+) -> dict[str, str]:
+  """Deterministically converts round-trip output files back to their
+  original extension, after the agent has finished.
+
+  For every entry in conversion_map with round_trip=True, checks whether
+  the agent actually produced the expected editable-format output file.
+  If so, converts it back to the original extension, removes the
+  intermediate editable-format file from the sandbox (so it isn't also
+  collected as a redundant separate output), and records the rename.
+
+  If the agent did NOT produce the expected file for a given input, that
+  input is skipped (the agent may have legitimately been unable to
+  complete it) -- this only converts what the agent actually saved.
+
+  Returns a mapping of old sandbox path -> new sandbox path (e.g.
+  "output/x.xlsx" -> "output/x.xls") for every file actually converted,
+  so callers can patch up any text (e.g. the agent's own final JSON
+  output) that references the intermediate filename.
+  """
+
+  path_replacements: dict[str, str] = {}
+
+  for converted_name, info in conversion_map.items():
+    if not info["round_trip"]:
+      continue
+
+    stem = Path(converted_name).stem
+    editable_ext = Path(converted_name).suffix.lstrip(".")
+    output_relative = f"output/{stem}.{editable_ext}"
+
+    check = await sandbox.exec(
+      "sh",
+      "-lc",
+      f'[ -f "{output_relative}" ] && echo FOUND || echo MISSING',
+    )
+
+    check_stdout = check.stdout.decode(errors="replace").strip()
+
+    if "FOUND" not in check_stdout:
+      logger.warning(
+        "Expected agent output %s not found -- skipping automatic "
+        "reverse conversion for %s. The agent may not have completed "
+        "this file.",
+        output_relative,
+        info["original_filename"],
+      )
+      continue
+
+    logger.info(
+      "Deterministically reverse-converting %s (.%s -> .%s).",
+      output_relative,
+      editable_ext,
+      info["original_extension"],
+    )
+
+    reverse_converted_name = await _run_form_convert(
+      sandbox,
+      output_relative,
+      "output",
+    )
+
+    # Remove the intermediate editable-format file so it isn't also
+    # collected/uploaded as a separate, redundant output file.
+    await sandbox.exec(
+      "rm",
+      "-f",
+      output_relative,
+    )
+
+    new_relative = f"output/{reverse_converted_name}"
+
+    logger.info(
+      "Reverse-converted %s -> %s (removed intermediate %s)",
+      output_relative,
+      new_relative,
+      output_relative,
+    )
+
+    path_replacements[output_relative] = new_relative
+
+  return path_replacements
 
 
 async def run_form_agent(
@@ -48,7 +333,18 @@ async def run_form_agent(
   db: AsyncSession,
   company_id: UUID,
   project_id: UUID | None,
-):
+) -> tuple[Any, dict[str, str]]:
+  """Runs the form agent.
+
+  Returns a tuple of (agent_run_result, path_replacements). path_replacements
+  maps any intermediate editable-format output path to its final,
+  reverse-converted path (e.g. "output/x.xlsx" -> "output/x.xls"), for any
+  file that was automatically round-trip-converted. Callers that inspect
+  the agent's own final JSON output should apply these replacements to
+  that text before parsing, since the agent's JSON will still reference
+  the intermediate filename it actually saved.
+  """
+
   agent = build_form_agent()
 
   workspace = workspace.resolve()
@@ -364,12 +660,13 @@ echo "=== BOOTSTRAP DONE ==="
     # The snapshot mechanism only hydrates the workspace (this is why
     # provision_dependencies() only ever showed "./scripts" and
     # "./libreoffice" as tar entries, never anything under $HOME or
-    # /opt). provision_dependencies() packaged $HOME/.local and the
-    # LibreOffice /opt install into RUNTIME_ARCHIVE_NAME, placed at the
-    # workspace root, specifically so it WOULD get captured by the
-    # snapshot. Extract it back to "/" now, before anything else runs,
-    # so the rest of this function (and the agent itself) sees a
-    # filesystem that actually matches what bootstrap provisioned.
+    # /opt). provision_dependencies() packaged $HOME/.local, the
+    # LibreOffice /opt install, and the /usr/local/bin symlinks into
+    # RUNTIME_ARCHIVE_NAME, placed at the workspace root, specifically
+    # so it WOULD get captured by the snapshot. Extract it back to "/"
+    # now, before anything else runs, so the rest of this function
+    # (and the agent itself) sees a filesystem that actually matches
+    # what bootstrap provisioned.
     # --------------------------------------------------------------
 
     logger.info(
@@ -451,7 +748,11 @@ rm -f "$RUNTIME_ARCHIVE"
     )
 
     # --------------------------------------------------------------
-    # Verify that the snapshot actually restored.
+    # Verify that the snapshot actually restored, using a CLEAN PATH
+    # (i.e. exactly what the agent's own exec_command tool calls will
+    # see, with no manual PATH export). This is the check that would
+    # have caught the earlier InvalidManifestPathError bug before it
+    # ever reached a real job.
     # --------------------------------------------------------------
 
     check_result = await sandbox.exec(
@@ -471,48 +772,19 @@ echo "$PATH"
 echo "=== HOME ==="
 echo "HOME=$HOME"
 
+echo "=== CLEAN-PATH TOOL RESOLUTION (matches agent exec_command) ==="
+env -i PATH="/usr/bin:/bin:/usr/local/bin" sh -lc '
+  command -v form-convert || echo "MISSING (clean PATH): form-convert"
+  command -v form-inspect || echo "MISSING (clean PATH): form-inspect"
+  command -v form-verify || echo "MISSING (clean PATH): form-verify"
+  command -v form-ocr || echo "MISSING (clean PATH): form-ocr"
+  command -v soffice || echo "MISSING (clean PATH): soffice"
+  command -v libreoffice || echo "MISSING (clean PATH): libreoffice"
+'
+
 echo "=== PYTHON ==="
 command -v python3 || true
 python3 --version || true
-
-echo "=== PIP ==="
-python3 -m pip --version || true
-
-echo "=== EXPECTED SCRIPT DIRECTORY ==="
-ls -la /home/vercel-sandbox/.local/bin 2>&1 || true
-
-echo "=== EXPECTED SCRIPTS ==="
-for f in \
-  /home/vercel-sandbox/.local/bin/form-convert \
-  /home/vercel-sandbox/.local/bin/form-inspect \
-  /home/vercel-sandbox/.local/bin/form-verify \
-  /home/vercel-sandbox/.local/bin/form-ocr \
-  /home/vercel-sandbox/.local/bin/inspect_excel.py
-do
-  if [ -f "$f" ]; then
-    echo "FOUND: $f"
-    ls -l "$f"
-  else
-    echo "MISSING: $f"
-  fi
-done
-
-echo "=== SEARCH FOR OUR SCRIPTS ==="
-find /home /tmp /workspace /app /usr/local/bin \
-  -type f \
-  \\( \
-    -name "form-convert" -o \
-    -name "form-inspect" -o \
-    -name "form-ocr" -o \
-    -name "form-verify" -o \
-    -name "inspect_excel.py" \
-  \\) \
-  -print 2>/dev/null || true
-
-echo "=== LIBREOFFICE ==="
-command -v libreoffice || true
-command -v soffice || true
-libreoffice --version 2>&1 || soffice --version 2>&1 || true
 
 echo "=== PYTHON PACKAGES ==="
 python3 - <<'PY'
@@ -544,47 +816,6 @@ for package, module in mods.items():
       f"{type(exc).__name__}: {exc}"
     )
 PY
-
-echo "=== PYTHON SITE-PACKAGES ==="
-python3 - <<'PY'
-import site
-import sys
-
-print("sys.executable:", sys.executable)
-
-print("sys.path:")
-for path in sys.path:
-  print("  ", path)
-
-print("site-packages:")
-try:
-  for path in site.getsitepackages():
-    print("  ", path)
-except Exception as exc:
-  print("ERROR:", exc)
-
-try:
-  print("user-site:", site.getusersitepackages())
-except Exception as exc:
-  print("user-site ERROR:", exc)
-PY
-
-echo "=== PIP PACKAGE LIST ==="
-python3 -m pip list 2>&1 || true
-
-echo "=== COMMAND LOOKUP ==="
-export PATH="/home/vercel-sandbox/.local/bin:$PATH"
-
-command -v form-convert || true
-command -v form-inspect || true
-command -v form-verify || true
-command -v form-ocr || true
-
-echo "=== DIRECT EXECUTION TEST ==="
-/home/vercel-sandbox/.local/bin/form-convert --help 2>&1 || true
-/home/vercel-sandbox/.local/bin/form-inspect --help 2>&1 || true
-/home/vercel-sandbox/.local/bin/form-verify --help 2>&1 || true
-/home/vercel-sandbox/.local/bin/form-ocr --help 2>&1 || true
 
 echo "=== WORKSPACE BEFORE JOB FILES ==="
 find . \
@@ -684,8 +915,46 @@ echo "=== DONE ==="
         )
 
     logger.info(
-      "Starting form agent with %d input file(s).",
+      "Uploaded %d input file(s). Starting deterministic pre-conversion.",
       len(host_input_files),
+    )
+
+    # --------------------------------------------------------------
+    # DETERMINISTIC FORMAT CONVERSION (pre-agent)
+    #
+    # Convert any legacy-format inputs (XLS, DOC, PPT, ODS) to an
+    # editable modern format BEFORE the agent runs, and tell the agent
+    # exactly which file to edit via a prompt addendum. This removes
+    # format-conversion judgment calls from the agent's tool loop
+    # entirely.
+    # --------------------------------------------------------------
+
+    conversion_map = await _preconvert_input_files(
+      sandbox,
+      host_input_files,
+    )
+
+    if conversion_map:
+      logger.info(
+        "Deterministic pre-conversion complete for %d file(s): %s",
+        len(conversion_map),
+        {
+          name: info["original_filename"]
+          for name, info in conversion_map.items()
+        },
+      )
+    else:
+      logger.info(
+        "No input files required deterministic pre-conversion."
+      )
+
+    prompt = prompt + _build_conversion_prompt_addendum(conversion_map)
+
+    logger.info(
+      "Starting form agent with %d input file(s) "
+      "(%d pre-converted).",
+      len(host_input_files),
+      len(conversion_map),
     )
 
     # --------------------------------------------------------------
@@ -714,6 +983,25 @@ echo "=== DONE ==="
       "Form agent execution completed successfully.",
     )
 
+    # --------------------------------------------------------------
+    # DETERMINISTIC FORMAT CONVERSION (post-agent)
+    #
+    # For any round-trip conversions (XLS, ODS), convert the agent's
+    # edited output back to the original extension now, while the
+    # sandbox (and LibreOffice inside it) is still available.
+    # --------------------------------------------------------------
+
+    path_replacements = await _postconvert_output_files(
+      sandbox,
+      conversion_map,
+    )
+
+    if path_replacements:
+      logger.info(
+        "Deterministic post-conversion complete: %s",
+        path_replacements,
+      )
+
     await _collect_sandbox_output_files(
       sandbox,
       output_dir,
@@ -723,7 +1011,7 @@ echo "=== DONE ==="
       "Sandbox output files collected successfully.",
     )
 
-    return result
+    return result, path_replacements
 
   except Exception:
     logger.exception(
