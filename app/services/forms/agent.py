@@ -170,6 +170,7 @@ find /home/vercel-sandbox \
   \\( \
     -name "form-convert" -o \
     -name "form-inspect" -o \
+    -name "form-ocr" -o \
     -name "form-verify" -o \
     -name "inspect_excel.py" \
   \\) \
@@ -486,6 +487,7 @@ for f in \
   /home/vercel-sandbox/.local/bin/form-convert \
   /home/vercel-sandbox/.local/bin/form-inspect \
   /home/vercel-sandbox/.local/bin/form-verify \
+  /home/vercel-sandbox/.local/bin/form-ocr \
   /home/vercel-sandbox/.local/bin/inspect_excel.py
 do
   if [ -f "$f" ]; then
@@ -502,6 +504,7 @@ find /home /tmp /workspace /app /usr/local/bin \
   \\( \
     -name "form-convert" -o \
     -name "form-inspect" -o \
+    -name "form-ocr" -o \
     -name "form-verify" -o \
     -name "inspect_excel.py" \
   \\) \
@@ -577,11 +580,13 @@ export PATH="/home/vercel-sandbox/.local/bin:$PATH"
 command -v form-convert || true
 command -v form-inspect || true
 command -v form-verify || true
+command -v form-ocr || true
 
 echo "=== DIRECT EXECUTION TEST ==="
 /home/vercel-sandbox/.local/bin/form-convert --help 2>&1 || true
 /home/vercel-sandbox/.local/bin/form-inspect --help 2>&1 || true
 /home/vercel-sandbox/.local/bin/form-verify --help 2>&1 || true
+/home/vercel-sandbox/.local/bin/form-ocr --help 2>&1 || true
 
 echo "=== WORKSPACE BEFORE JOB FILES ==="
 find . \

@@ -72,6 +72,7 @@ class S3SnapshotClient:
               "form-convert",
               "form-inspect",
               "form-verify",
+              "form-ocr",
               "inspect_excel.py",
               ".local",
             )
@@ -182,6 +183,7 @@ class S3SnapshotClient:
               "form-convert",
               "form-inspect",
               "form-verify",
+              "form-ocr",
               "inspect_excel.py",
               ".local",
             )
