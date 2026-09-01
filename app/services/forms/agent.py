@@ -91,18 +91,36 @@ async def run_form_agent(
     FORM_AGENT_SNAPSHOT_ID,
   )
 
-  sandbox = None
+  logger.info(
+    "INITIAL SNAPSHOT EXISTS: snapshot=%r exists=%s",
+    FORM_AGENT_SNAPSHOT_ID,
+    snapshot_exists,
+  )
 
-  try:
-    if not snapshot_exists:
-      logger.warning(
-        "Snapshot %r not found in S3. Bootstrapping it now from this "
-        "run's sandbox -- this run will take longer than usual.",
-        FORM_AGENT_SNAPSHOT_ID,
+  # ------------------------------------------------------------------
+  # BOOTSTRAP PHASE
+  #
+  # If the snapshot does not exist, create a completely fresh sandbox
+  # without a snapshot, install the dependencies, then close it.
+  #
+  # aclose() -> stop() -> persist snapshot -> S3 upload
+  # ------------------------------------------------------------------
+
+  if not snapshot_exists:
+    logger.warning(
+      "Snapshot %r not found. "
+      "Creating a temporary bootstrap sandbox without a snapshot.",
+      FORM_AGENT_SNAPSHOT_ID,
+    )
+
+    bootstrap_sandbox = None
+
+    try:
+      logger.info(
+        "BOOTSTRAP: creating sandbox WITHOUT snapshot."
       )
 
-      sandbox = await sandbox_client.create(
-        snapshot=get_form_agent_snapshot(),
+      bootstrap_sandbox = await sandbox_client.create(
         options=VercelSandboxClientOptions(
           allow_s3_credential_exposure=False,
           timeout_ms=600_000,
@@ -110,151 +128,53 @@ async def run_form_agent(
         ),
       )
 
-      for name in (
-        "persist_workspace",
-        "hydrate_workspace",
-        "aclose",
-      ):
-        attr = getattr(sandbox, name, None)
-
-        if attr is None:
-          continue
-
-        try:
-          logger.info(
-            "Sandbox.%s%s",
-            name,
-            inspect.signature(attr),
-          )
-        except (TypeError, ValueError):
-          logger.info(
-            "Sandbox.%s (signature unavailable)",
-            name,
-          )
-
-      await provision_dependencies(sandbox)
-
-      workspace_stream = await sandbox.persist_workspace()
-
-      workspace_stream.seek(0)
-
-      persisted_bytes = workspace_stream.read()
-
       logger.info(
-        "PERSISTED WORKSPACE: bytes=%d",
-        len(persisted_bytes),
+        "BOOTSTRAP: sandbox created."
       )
 
-      try:
-        with tarfile.open(
-          fileobj=io.BytesIO(persisted_bytes),
-          mode="r:*",
-        ) as tar:
-          names = tar.getnames()
-
-          logger.info(
-            "PERSISTED WORKSPACE TAR: entries=%d",
-            len(names),
-          )
-
-          for name in names[:100]:
-            logger.info(
-              "PERSISTED WORKSPACE TAR ENTRY: %s",
-              name,
-            )
-
-          important_names = [
-            name
-            for name in names
-            if any(
-              target in name
-              for target in (
-                "form-convert",
-                "form-inspect",
-                "form-verify",
-                "inspect_excel.py",
-                ".local",
-              )
-            )
-          ]
-
-          logger.info(
-            "PERSISTED WORKSPACE IMPORTANT ENTRIES: %s",
-            important_names,
-          )
-
-      except Exception:
-        logger.exception(
-          "Could not inspect persisted workspace tar.",
-        )
-
-      workspace_stream.seek(0)
+      await bootstrap_sandbox.start()
 
       logger.info(
-        "Running final pre-snapshot dependency verification."
+        "BOOTSTRAP: sandbox started."
       )
 
-      pre_snapshot_check = await sandbox.exec(
-  "sh",
-  "-lc",
-  """
+      logger.info(
+        "BOOTSTRAP: installing dependencies."
+      )
+
+      await provision_dependencies(
+        bootstrap_sandbox,
+      )
+
+      logger.info(
+        "BOOTSTRAP: dependency installation complete."
+      )
+
+      # --------------------------------------------------------------
+      # Verify exactly what exists before snapshot persistence.
+      # --------------------------------------------------------------
+
+      bootstrap_check = await bootstrap_sandbox.exec(
+        "sh",
+        "-lc",
+        """
 set -x
 
-echo "=== PRE-SNAPSHOT IDENTITY ==="
+echo "=== BOOTSTRAP IDENTITY ==="
 whoami
 id
 pwd
 
-echo "=== PRE-SNAPSHOT PATH ==="
+echo "=== BOOTSTRAP PATH ==="
 echo "$PATH"
 
-echo "=== PRE-SNAPSHOT SCRIPT FILES ==="
-ls -la /home/vercel-sandbox/.local/bin 2>&1 || true
+echo "=== BOOTSTRAP PYTHON ==="
+command -v python3 || true
+python3 --version || true
+python3 -m pip --version || true
 
-echo "=== PRE-SNAPSHOT PYTHON ==="
-python3 --version
-python3 -m pip --version
-
-echo "=== PRE-SNAPSHOT IMPORT CHECK ==="
-python3 - <<'PY'
-import importlib
-import sys
-
-mods = [
-  "openpyxl",
-  "xlrd",
-  "docx",
-  "pptx",
-  "pandas",
-  "odf",
-  "fitz",
-  "pypdf",
-  "PIL",
-  "boto3",
-  "httpx",
-]
-
-print("Python:", sys.executable)
-
-for mod in mods:
-  try:
-    imported = importlib.import_module(mod)
-    print(
-      "OK",
-      mod,
-      getattr(imported, "__file__", "unknown"),
-    )
-  except Exception as exc:
-    print(
-      "MISSING",
-      mod,
-      type(exc).__name__,
-      exc,
-    )
-PY
-
-echo "=== PRE-SNAPSHOT SCRIPT SEARCH ==="
-find /home/vercel-sandbox /usr/local/bin \
+echo "=== BOOTSTRAP SCRIPTS ==="
+find /home/vercel-sandbox \
   -type f \
   \\( \
     -name "form-convert" -o \
@@ -264,73 +184,177 @@ find /home/vercel-sandbox /usr/local/bin \
   \\) \
   -print 2>/dev/null || true
 
-echo "=== PRE-SNAPSHOT DONE ==="
+echo "=== BOOTSTRAP WORKSPACE ==="
+find . \
+  -maxdepth 4 \
+  -print \
+  2>/dev/null || true
+
+echo "=== BOOTSTRAP PACKAGE CHECK ==="
+python3 - <<'PY'
+import importlib
+
+mods = {
+  "openpyxl": "openpyxl",
+  "xlrd": "xlrd",
+  "python-docx": "docx",
+  "python-pptx": "pptx",
+  "pandas": "pandas",
+  "odfpy": "odf",
+  "pymupdf": "fitz",
+  "pypdf": "pypdf",
+  "Pillow": "PIL",
+  "boto3": "boto3",
+  "httpx": "httpx",
+}
+
+for package, module in mods.items():
+  try:
+    imported = importlib.import_module(module)
+    print(
+      f"OK      {package} -> "
+      f"{getattr(imported, '__file__', 'unknown')}"
+    )
+  except Exception as exc:
+    print(
+      f"MISSING {package} -> "
+      f"{type(exc).__name__}: {exc}"
+    )
+PY
+
+echo "=== BOOTSTRAP DONE ==="
         """,
       )
 
       logger.info(
-        "Pre-snapshot verification exit code: %s",
-        pre_snapshot_check.exit_code,
+        "BOOTSTRAP verification exit code: %s",
+        bootstrap_check.exit_code,
       )
 
       logger.info(
-        "Pre-snapshot verification stdout:\n%s",
-        pre_snapshot_check.stdout.decode(errors="replace"),
-      )
-
-      logger.info(
-        "Pre-snapshot verification stderr:\n%s",
-        pre_snapshot_check.stderr.decode(errors="replace"),
-      )
-
-      if pre_snapshot_check.exit_code != 0:
-        raise RuntimeError(
-          "Pre-snapshot dependency verification failed."
-        )
-    else:
-      logger.info(
-        "Creating sandbox for form agent from snapshot %r.",
-        FORM_AGENT_SNAPSHOT_ID,
-      )
-
-
-      snapshot = get_form_agent_snapshot()
-
-      logger.info(
-        "CREATING SANDBOX WITH SNAPSHOT: "
-        "type=%s id=%r client_dependency_key=%r",
-        type(snapshot).__name__,
-        snapshot.id,
-        snapshot.client_dependency_key,
-      )
-
-      logger.info(
-        "VERCEL CLIENT ATTRIBUTES: %s",
-        [
-          name
-          for name in dir(sandbox_client)
-          if "snapshot" in name.lower()
-          or "depend" in name.lower()
-          or "workspace" in name.lower()
-        ],
-      )
-
-      logger.info(
-        "VERCEL CLIENT TYPE: %s",
-        type(sandbox_client),
-      )
-
-      sandbox = await sandbox_client.create(
-        snapshot=snapshot,
-        options=VercelSandboxClientOptions(
-          allow_s3_credential_exposure=False,
-          timeout_ms=300_000,
-          runtime="python3.13",
+        "BOOTSTRAP verification stdout:\n%s",
+        bootstrap_check.stdout.decode(
+          errors="replace",
         ),
       )
 
+      logger.info(
+        "BOOTSTRAP verification stderr:\n%s",
+        bootstrap_check.stderr.decode(
+          errors="replace",
+        ),
+      )
+
+      if bootstrap_check.exit_code != 0:
+        raise RuntimeError(
+          "Bootstrap dependency verification failed."
+        )
+
+      # --------------------------------------------------------------
+      # IMPORTANT:
+      #
+      # Do NOT create input/ or output/ here.
+      #
+      # Do NOT upload the user's job files here.
+      #
+      # Closing this sandbox will persist its workspace as the
+      # dependency snapshot.
+      # --------------------------------------------------------------
+
+      logger.info(
+        "BOOTSTRAP: closing sandbox to persist snapshot."
+      )
+
+    finally:
+      if bootstrap_sandbox is not None:
+        try:
+          await bootstrap_sandbox.aclose()
+
+          logger.info(
+            "BOOTSTRAP: sandbox closed. "
+            "Snapshot persistence should now be complete."
+          )
+
+        except Exception:
+          logger.exception(
+            "BOOTSTRAP: error closing bootstrap sandbox."
+          )
+          raise
+
+    # --------------------------------------------------------------
+    # Verify that the snapshot now exists in S3.
+    # --------------------------------------------------------------
+
+    snapshot_exists = await asyncio.to_thread(
+      snapshot_client.exists,
+      FORM_AGENT_SNAPSHOT_ID,
+    )
+
+    logger.info(
+      "POST-BOOTSTRAP SNAPSHOT EXISTS: snapshot=%r exists=%s",
+      FORM_AGENT_SNAPSHOT_ID,
+      snapshot_exists,
+    )
+
+    if not snapshot_exists:
+      raise RuntimeError(
+        "Bootstrap sandbox closed successfully, but the expected "
+        f"snapshot {FORM_AGENT_SNAPSHOT_ID!r} was not found in S3."
+      )
+
+  # ------------------------------------------------------------------
+  # JOB SANDBOX
+  #
+  # At this point the snapshot MUST exist.
+  #
+  # Create a fresh sandbox from it, explicitly start it, and let the
+  # SDK hydrate the workspace from S3.
+  # ------------------------------------------------------------------
+
+  logger.info(
+    "Creating JOB sandbox from snapshot %r.",
+    FORM_AGENT_SNAPSHOT_ID,
+  )
+
+  snapshot = get_form_agent_snapshot()
+
+  logger.info(
+    "CREATING JOB SANDBOX WITH SNAPSHOT: "
+    "type=%s id=%r client_dependency_key=%r",
+    type(snapshot).__name__,
+    snapshot.id,
+    snapshot.client_dependency_key,
+  )
+
+  sandbox = None
+
+  try:
+    sandbox = await sandbox_client.create(
+      snapshot=snapshot,
+      options=VercelSandboxClientOptions(
+        allow_s3_credential_exposure=False,
+        timeout_ms=300_000,
+        runtime="python3.13",
+      ),
+    )
+
+    logger.info(
+      "JOB SANDBOX: created."
+    )
+
+    await sandbox.start()
+
+    logger.info(
+      "JOB SANDBOX: started. Snapshot should now be hydrated."
+    )
+
+    # --------------------------------------------------------------
+    # Verify that the snapshot actually restored.
+    # --------------------------------------------------------------
+
     check_result = await sandbox.exec(
-      "sh", "-lc",
+      "sh",
+      "-lc",
       """
 set -x
 
@@ -402,9 +426,15 @@ mods = {
 for package, module in mods.items():
   try:
     imported = importlib.import_module(module)
-    print(f"OK      {package} -> {getattr(imported, '__file__', 'unknown')}")
+    print(
+      f"OK      {package} -> "
+      f"{getattr(imported, '__file__', 'unknown')}"
+    )
   except Exception as exc:
-    print(f"MISSING {package} -> {type(exc).__name__}: {exc}")
+    print(
+      f"MISSING {package} -> "
+      f"{type(exc).__name__}: {exc}"
+    )
 PY
 
 echo "=== PYTHON SITE-PACKAGES ==="
@@ -413,6 +443,7 @@ import site
 import sys
 
 print("sys.executable:", sys.executable)
+
 print("sys.path:")
 for path in sys.path:
   print("  ", path)
@@ -433,7 +464,7 @@ PY
 echo "=== PIP PACKAGE LIST ==="
 python3 -m pip list 2>&1 || true
 
-echo "=== COMMAND LOOKUP WITH EXPECTED PATH ==="
+echo "=== COMMAND LOOKUP ==="
 export PATH="/home/vercel-sandbox/.local/bin:$PATH"
 
 command -v form-convert || true
@@ -445,15 +476,23 @@ echo "=== DIRECT EXECUTION TEST ==="
 /home/vercel-sandbox/.local/bin/form-inspect --help 2>&1 || true
 /home/vercel-sandbox/.local/bin/form-verify --help 2>&1 || true
 
-echo "=== FILESYSTEM ROOTS ==="
-ls -la / 2>&1 || true
+echo "=== WORKSPACE BEFORE JOB FILES ==="
+find . \
+  -maxdepth 4 \
+  -print \
+  2>/dev/null || true
 
 echo "=== DONE ==="
       """,
     )
 
-    stdout = check_result.stdout.decode(errors="replace")
-    stderr = check_result.stderr.decode(errors="replace")
+    stdout = check_result.stdout.decode(
+      errors="replace",
+    )
+
+    stderr = check_result.stderr.decode(
+      errors="replace",
+    )
 
     logger.info(
       "Sandbox dependency check stdout:\n%s",
@@ -473,7 +512,17 @@ echo "=== DONE ==="
         check_result.exit_code,
       )
 
-    mkdir_result = await sandbox.exec("mkdir", "-p", "input", "output")
+    # --------------------------------------------------------------
+    # ONLY NOW create the job directories.
+    # They therefore cannot contaminate the dependency snapshot.
+    # --------------------------------------------------------------
+
+    mkdir_result = await sandbox.exec(
+      "mkdir",
+      "-p",
+      "input",
+      "output",
+    )
 
     if mkdir_result.exit_code != 0:
       stderr = mkdir_result.stderr.decode(
@@ -486,6 +535,10 @@ echo "=== DONE ==="
         f"Exit code: {mkdir_result.exit_code}. "
         f"Error: {stderr}"
       )
+
+    # --------------------------------------------------------------
+    # Upload this job's input files.
+    # --------------------------------------------------------------
 
     for host_file in host_input_files:
       sandbox_path = (
@@ -524,6 +577,10 @@ echo "=== DONE ==="
       "Starting form agent with %d input file(s).",
       len(host_input_files),
     )
+
+    # --------------------------------------------------------------
+    # Run agent.
+    # --------------------------------------------------------------
 
     try:
       result = await Runner.run(
