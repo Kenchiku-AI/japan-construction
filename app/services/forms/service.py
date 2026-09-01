@@ -266,7 +266,6 @@ class FormJobService:
             "type": "code_interpreter",
             "container": {
               "type": "auto",
-              "network_enabled": False,
             },
           },
         ],
