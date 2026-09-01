@@ -261,11 +261,18 @@ class FormJobService:
         reasoning={
           "effort": "high",
         },
+        include=[
+          "code_interpreter_call.outputs",
+        ],
         tools=[
           {
             "type": "code_interpreter",
             "container": {
               "type": "auto",
+              "file_ids": [
+                uploaded.id
+                for uploaded in uploaded_files
+              ],
             },
           },
         ],
@@ -276,6 +283,43 @@ class FormJobService:
           },
         ],
       )
+
+      logger.info(
+        "OpenAI response status: %s",
+        response.status,
+      )
+
+      for index, item in enumerate(
+        response.output,
+      ):
+        logger.info(
+          "OpenAI response output[%s]: type=%s",
+          index,
+          getattr(
+            item,
+            "type",
+            None,
+          ),
+        )
+
+        if getattr(
+          item,
+          "type",
+          None,
+        ) == "code_interpreter_call":
+          logger.info(
+            "Code Interpreter container_id=%s outputs=%s",
+            getattr(
+              item,
+              "container_id",
+              None,
+            ),
+            getattr(
+              item,
+              "outputs",
+              None,
+            ),
+          )
 
       logger.info(
         "OpenAI form processing completed",
@@ -332,6 +376,18 @@ class FormJobService:
       ) != "code_interpreter_call":
         continue
 
+      container_id = getattr(
+        item,
+        "container_id",
+        None,
+      )
+
+      if not container_id:
+        logger.warning(
+          "Code Interpreter call has no container_id",
+        )
+        continue
+
       outputs = getattr(
         item,
         "outputs",
@@ -339,6 +395,85 @@ class FormJobService:
       )
 
       if not outputs:
+        logger.info(
+          "Code Interpreter call has no inline outputs; "
+          "checking container files",
+        )
+
+        try:
+          container_files = (
+            self.openai.containers.files.list(
+              container_id,
+            )
+          )
+
+          for container_file in container_files.data:
+            file_id = getattr(
+              container_file,
+              "id",
+              None,
+            )
+
+            filename = getattr(
+              container_file,
+              "filename",
+              None,
+            )
+
+            if not file_id:
+              continue
+
+            if not filename:
+              filename = f"output-{file_id}"
+
+            if filename in found_files:
+              continue
+
+            found_files.add(
+              filename,
+            )
+
+            logger.info(
+              "Downloading Code Interpreter container file: "
+              "container=%s file=%s filename=%s",
+              container_id,
+              file_id,
+              filename,
+            )
+
+            file_content = (
+              self.openai.containers.files.content.retrieve(
+                file_id,
+                container_id=container_id,
+              )
+            )
+
+            destination = (
+              output_dir / filename
+            )
+
+            destination.parent.mkdir(
+              parents=True,
+              exist_ok=True,
+            )
+
+            with destination.open("wb") as file_handle:
+              file_handle.write(
+                file_content.read(),
+              )
+
+            logger.info(
+              "Saved Code Interpreter output: %s",
+              destination,
+            )
+
+        except Exception:
+          logger.exception(
+            "Failed to retrieve files from Code Interpreter "
+            "container %s",
+            container_id,
+          )
+
         continue
 
       for output in outputs:
@@ -369,7 +504,9 @@ class FormJobService:
         )
 
         logger.info(
-          "Retrieving generated file from OpenAI: %s",
+          "Downloading Code Interpreter output file: "
+          "file=%s filename=%s",
+          file_id,
           filename,
         )
 
@@ -386,16 +523,13 @@ class FormJobService:
           exist_ok=True,
         )
 
-        with destination.open(
-          "wb",
-        ) as file_handle:
-
+        with destination.open("wb") as file_handle:
           file_handle.write(
             file_content.read(),
           )
 
         logger.info(
-          "Saved OpenAI output file to %s",
+          "Saved Code Interpreter output: %s",
           destination,
         )
 
