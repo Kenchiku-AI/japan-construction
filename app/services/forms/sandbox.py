@@ -12,9 +12,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Bump this whenever scripts/ or the installed system packages change,
-# so job runs never silently pick up a stale snapshot.
-FORM_AGENT_SNAPSHOT_ID = "form-agent-snapshot-v5"
+FORM_AGENT_SNAPSHOT_ID = "form-agent-snapshot-v1.0.0"
 
 SNAPSHOT_CLIENT_DEPENDENCY_KEY = "kenchiku.form_agent.s3_snapshot_client"
 

@@ -105,28 +105,6 @@ class FormJobService:
 
         sandbox_client = get_form_sandbox_client()
 
-        for name in (
-          "create",
-          "resume",
-          "delete",
-        ):
-          attr = getattr(sandbox_client, name, None)
-
-          if attr is None:
-            continue
-
-          try:
-            logger.info(
-              "VercelSandboxClient.%s%s",
-              name,
-              inspect.signature(attr),
-            )
-          except (TypeError, ValueError):
-            logger.info(
-              "VercelSandboxClient.%s (signature unavailable)",
-              name,
-            )
-
         result = await run_form_agent(
           prompt=prompt,
           sandbox_client=sandbox_client,
