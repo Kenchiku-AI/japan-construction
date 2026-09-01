@@ -2,28 +2,40 @@
 """
 form-convert <input-file> <output-directory>
 
-Converts between office-document formats. This is only needed for
-formats where no pure-Python library preserves fidelity -- legacy
-XLS/DOC/PPT, ODS, and anything -> PDF. Modern-format round-trips
-(XLSX/DOCX/PPTX) don't need this; edit them directly.
+Converts office documents locally using LibreOffice.
 
-Delegates to CloudConvert (https://cloudconvert.com/api/v2) over
-HTTPS. Requires CLOUDCONVERT_API_KEY in the sandbox environment.
+No files are sent to a third-party conversion service.
 
-DATA HANDLING: this sends the file's contents to a third-party API.
-If that's not acceptable, replace convert_via_cloudconvert() below
-with a call to a conversion service you host yourself.
+Supported conversions:
+
+  .xls  -> .xlsx
+  .xlsx -> .xls
+  .xlsm -> .xlsx
+  .doc  -> .docx
+  .docx -> .pdf
+  .ppt  -> .pptx
+  .pptx -> .pdf
+  .ods  -> .xlsx
+
+LibreOffice is installed into the sandbox snapshot and invoked
+directly with its headless command-line interface.
 """
 
 import os
+import shutil
+import subprocess
 import sys
-import time
+import tempfile
 from pathlib import Path
 
-import httpx
 
-CLOUDCONVERT_API_KEY = os.environ.get("CLOUDCONVERT_API_KEY")
-CLOUDCONVERT_API_BASE = "https://api.cloudconvert.com/v2"
+LIBREOFFICE_BIN = os.environ.get(
+  "LIBREOFFICE_BIN",
+  shutil.which("libreoffice")
+  or shutil.which("soffice")
+  or "/usr/bin/libreoffice",
+)
+
 
 FORMAT_MAP = {
   "xls": "xlsx",
@@ -37,93 +49,131 @@ FORMAT_MAP = {
 }
 
 
-def convert_via_cloudconvert(input_path: Path, output_format: str, output_dir: Path) -> Path:
-  if not CLOUDCONVERT_API_KEY:
-    raise RuntimeError("CLOUDCONVERT_API_KEY is not set in the sandbox environment.")
+def find_libreoffice() -> str:
+  candidates = [
+    os.environ.get("LIBREOFFICE_BIN"),
+    shutil.which("libreoffice"),
+    shutil.which("soffice"),
+    "/usr/bin/libreoffice",
+    "/usr/local/bin/libreoffice",
+  ]
 
-  headers = {"Authorization": f"Bearer {CLOUDCONVERT_API_KEY}"}
+  for candidate in candidates:
+    if candidate and Path(candidate).exists():
+      return candidate
 
-  with httpx.Client(timeout=120.0) as client:
-    job_response = client.post(
-      f"{CLOUDCONVERT_API_BASE}/jobs",
-      headers=headers,
-      json={
-        "tasks": {
-          "import-file": {"operation": "import/upload"},
-          "convert-file": {
-            "operation": "convert",
-            "input": "import-file",
-            "output_format": output_format,
-          },
-          "export-file": {"operation": "export/url", "input": "convert-file"},
-        }
-      },
+  raise RuntimeError(
+    "LibreOffice was not found. "
+    "Expected 'libreoffice' or 'soffice' to be installed "
+    "in the sandbox snapshot."
+  )
+
+
+def convert_via_libreoffice(
+  input_path: Path,
+  output_format: str,
+  output_dir: Path,
+) -> Path:
+  libreoffice = find_libreoffice()
+
+  output_dir.mkdir(parents=True, exist_ok=True)
+
+  # LibreOffice can have problems when multiple headless instances
+  # share the same user profile. Give each conversion an isolated
+  # temporary profile.
+  with tempfile.TemporaryDirectory(
+    prefix="libreoffice-profile-",
+  ) as profile_dir:
+
+    profile_uri = Path(profile_dir).resolve().as_uri()
+
+    command = [
+      libreoffice,
+      "--headless",
+      "--nologo",
+      "--nodefault",
+      "--nofirststartwizard",
+      "--norestore",
+      f"-env:UserInstallation={profile_uri}",
+      "--convert-to",
+      output_format,
+      "--outdir",
+      str(output_dir),
+      str(input_path),
+    ]
+
+    result = subprocess.run(
+      command,
+      capture_output=True,
+      text=True,
+      timeout=120,
     )
-    job_response.raise_for_status()
-    job = job_response.json()["data"]
 
-    import_task = next(t for t in job["tasks"] if t["name"] == "import-file")
-    upload_form = import_task["result"]["form"]
+  if result.returncode != 0:
+    raise RuntimeError(
+      "LibreOffice conversion failed.\n"
+      f"Command: {' '.join(command)}\n"
+      f"stdout:\n{result.stdout}\n"
+      f"stderr:\n{result.stderr}"
+    )
 
-    with open(input_path, "rb") as file_obj:
-      upload_response = client.post(
-        upload_form["url"],
-        data=upload_form["parameters"],
-        files={"file": (input_path.name, file_obj)},
-      )
-      upload_response.raise_for_status()
+  output_path = output_dir / (
+    f"{input_path.stem}.{output_format}"
+  )
 
-    job_id = job["id"]
-    file_url = None
-
-    for _ in range(60):
-      status_response = client.get(f"{CLOUDCONVERT_API_BASE}/jobs/{job_id}", headers=headers)
-      status_response.raise_for_status()
-      status = status_response.json()["data"]
-
-      if status["status"] == "error":
-        raise RuntimeError(f"CloudConvert job failed: {status}")
-
-      if status["status"] == "finished":
-        export_task = next(t for t in status["tasks"] if t["name"] == "export-file")
-        file_url = export_task["result"]["files"][0]["url"]
-        break
-
-      time.sleep(2)
-
-    if file_url is None:
-      raise RuntimeError("CloudConvert job did not finish in time.")
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{input_path.stem}.{output_format}"
-
-    download_response = client.get(file_url)
-    download_response.raise_for_status()
-    output_path.write_bytes(download_response.content)
+  if not output_path.exists():
+    raise RuntimeError(
+      "LibreOffice reported success but the expected output "
+      f"was not created: {output_path}\n"
+      f"stdout:\n{result.stdout}\n"
+      f"stderr:\n{result.stderr}"
+    )
 
   return output_path
 
 
 def main() -> None:
   if len(sys.argv) != 3:
-    print("Usage: form-convert <input> <output-directory>", file=sys.stderr)
+    print(
+      "Usage: form-convert <input> <output-directory>",
+      file=sys.stderr,
+    )
     sys.exit(1)
 
   input_path = Path(sys.argv[1]).resolve()
   output_dir = Path(sys.argv[2]).resolve()
 
   if not input_path.exists():
-    print(f"Input file does not exist: {input_path}", file=sys.stderr)
+    print(
+      f"Input file does not exist: {input_path}",
+      file=sys.stderr,
+    )
     sys.exit(1)
 
   extension = input_path.suffix.lower().lstrip(".")
+
   output_format = FORMAT_MAP.get(extension)
 
   if output_format is None:
-    print(f"Unsupported conversion from .{extension}", file=sys.stderr)
+    print(
+      f"Unsupported conversion from .{extension}",
+      file=sys.stderr,
+    )
     sys.exit(1)
 
-  result_path = convert_via_cloudconvert(input_path, output_format, output_dir)
+  try:
+    result_path = convert_via_libreoffice(
+      input_path,
+      output_format,
+      output_dir,
+    )
+  except Exception as exc:
+    print(
+      f"Conversion failed: {exc}",
+      file=sys.stderr,
+    )
+    sys.exit(1)
+
   print(result_path)
 
 
