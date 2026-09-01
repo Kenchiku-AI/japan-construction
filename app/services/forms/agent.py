@@ -196,7 +196,6 @@ mods = {
   "pymupdf": "fitz",
   "pypdf": "pypdf",
   "Pillow": "PIL",
-  "boto3": "boto3",
   "httpx": "httpx",
 }
 
@@ -529,7 +528,6 @@ mods = {
   "pymupdf": "fitz",
   "pypdf": "pypdf",
   "Pillow": "PIL",
-  "boto3": "boto3",
   "httpx": "httpx",
 }
 
