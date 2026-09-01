@@ -365,173 +365,152 @@ class FormJobService:
       exist_ok=True,
     )
 
-    found_files = set()
+    container_files = []
 
+    # The model's final text can contain container_file_citation
+    # annotations for files it created in Code Interpreter.
     for item in response.output:
 
       if getattr(
         item,
         "type",
         None,
-      ) != "code_interpreter_call":
+      ) != "message":
         continue
 
-      container_id = getattr(
+      for content in getattr(
         item,
-        "container_id",
-        None,
-      )
+        "content",
+        [],
+      ):
 
-      if not container_id:
-        logger.warning(
-          "Code Interpreter call has no container_id",
-        )
-        continue
+        if getattr(
+          content,
+          "type",
+          None,
+        ) != "output_text":
+          continue
 
-      outputs = getattr(
-        item,
-        "outputs",
-        None,
-      )
+        for annotation in getattr(
+          content,
+          "annotations",
+          [],
+        ):
 
-      if not outputs:
-        logger.info(
-          "Code Interpreter call has no inline outputs; "
-          "checking container files",
-        )
+          if getattr(
+            annotation,
+            "type",
+            None,
+          ) != "container_file_citation":
+            continue
 
-        try:
-          container_files = (
-            self.openai.containers.files.list(
-              container_id,
-            )
+          container_id = getattr(
+            annotation,
+            "container_id",
+            None,
           )
 
-          for container_file in container_files.data:
-            file_id = getattr(
-              container_file,
-              "id",
-              None,
-            )
+          file_id = getattr(
+            annotation,
+            "file_id",
+            None,
+          )
 
-            filename = getattr(
-              container_file,
-              "filename",
-              None,
-            )
+          filename = getattr(
+            annotation,
+            "filename",
+            None,
+          )
 
-            if not file_id:
-              continue
+          if not container_id or not file_id:
+            continue
 
-            if not filename:
-              filename = f"output-{file_id}"
-
-            if filename in found_files:
-              continue
-
-            found_files.add(
-              filename,
-            )
-
-            logger.info(
-              "Downloading Code Interpreter container file: "
-              "container=%s file=%s filename=%s",
+          container_files.append(
+            (
               container_id,
               file_id,
               filename,
             )
-
-            file_content = (
-              self.openai.containers.files.content.retrieve(
-                file_id,
-                container_id=container_id,
-              )
-            )
-
-            destination = (
-              output_dir / filename
-            )
-
-            destination.parent.mkdir(
-              parents=True,
-              exist_ok=True,
-            )
-
-            with destination.open("wb") as file_handle:
-              file_handle.write(
-                file_content.read(),
-              )
-
-            logger.info(
-              "Saved Code Interpreter output: %s",
-              destination,
-            )
-
-        except Exception:
-          logger.exception(
-            "Failed to retrieve files from Code Interpreter "
-            "container %s",
-            container_id,
           )
 
+    # Remove duplicates while preserving order.
+    seen = set()
+
+    unique_container_files = []
+
+    for container_id, file_id, filename in container_files:
+
+      key = (
+        container_id,
+        file_id,
+      )
+
+      if key in seen:
         continue
 
-      for output in outputs:
+      seen.add(key)
 
-        file_id = getattr(
-          output,
-          "file_id",
-          None,
-        )
-
-        filename = getattr(
-          output,
-          "filename",
-          None,
-        )
-
-        if not file_id:
-          continue
-
-        if not filename:
-          filename = f"output-{file_id}"
-
-        if filename in found_files:
-          continue
-
-        found_files.add(
-          filename,
-        )
-
-        logger.info(
-          "Downloading Code Interpreter output file: "
-          "file=%s filename=%s",
+      unique_container_files.append(
+        (
+          container_id,
           file_id,
           filename,
         )
+      )
 
-        file_content = self.openai.files.content(
+    if not unique_container_files:
+      logger.warning(
+        "No container_file_citation annotations found in "
+        "OpenAI response."
+      )
+
+      return
+
+    for (
+      container_id,
+      file_id,
+      filename,
+    ) in unique_container_files:
+
+      if not filename:
+        filename = f"output-{file_id}"
+
+      logger.info(
+        "Downloading Code Interpreter output: "
+        "container=%s file=%s filename=%s",
+        container_id,
+        file_id,
+        filename,
+      )
+
+      file_content = (
+        self.openai.containers.files.content(
+          container_id,
           file_id,
         )
+      )
 
-        destination = (
-          output_dir / filename
+      destination = (
+        output_dir / filename
+      )
+
+      destination.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+      )
+
+      with destination.open(
+        "wb",
+      ) as file_handle:
+
+        file_handle.write(
+          file_content.read(),
         )
 
-        destination.parent.mkdir(
-          parents=True,
-          exist_ok=True,
-        )
-
-        with destination.open("wb") as file_handle:
-          file_handle.write(
-            file_content.read(),
-          )
-
-        logger.info(
-          "Saved Code Interpreter output: %s",
-          destination,
-        )
+      logger.info(
+        "Saved Code Interpreter output: %s",
+        destination,
+      )
 
 
   def _parse_agent_output(
