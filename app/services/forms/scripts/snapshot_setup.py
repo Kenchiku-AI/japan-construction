@@ -227,17 +227,117 @@ python3 -m pip install \
 
 echo ""
 echo "========================================"
-echo "=== VERIFYING LIBREOFFICE ARCHIVE"
+echo "=== VERIFYING AWS ACCESS FROM SANDBOX"
+echo "========================================"
+
+python3 - <<'PY'
+import boto3
+import sys
+
+print("boto3 version:", boto3.__version__)
+
+try:
+  sts = boto3.client("sts")
+  identity = sts.get_caller_identity()
+
+  print(
+    "AWS credentials available from sandbox."
+  )
+  print(
+    "AWS account:",
+    identity.get("Account"),
+  )
+  print(
+    "AWS ARN:",
+    identity.get("Arn"),
+  )
+
+except Exception as exc:
+  print(
+    "ERROR: AWS credentials are not available from sandbox."
+  )
+  print(
+    type(exc).__name__ + ":",
+    str(exc),
+  )
+  sys.exit(1)
+PY
+
+
+echo ""
+echo "========================================"
+echo "=== DOWNLOADING LIBREOFFICE FROM S3"
 echo "========================================"
 
 LO_ARCHIVE="libreoffice/{LIBREOFFICE_ARCHIVE}"
 
-if [ ! -f "$LO_ARCHIVE" ]; then
-  echo "ERROR: LibreOffice archive was not downloaded:"
-  echo "$LO_ARCHIVE"
-  exit 1
-fi
+echo "S3 bucket:"
+echo "{LIBREOFFICE_S3_BUCKET}"
 
+echo "S3 key:"
+echo "{LIBREOFFICE_S3_KEY}"
+
+echo "Destination:"
+echo "$LO_ARCHIVE"
+
+mkdir -p libreoffice
+
+python3 - <<'PY'
+import boto3
+import os
+import sys
+
+bucket = {LIBREOFFICE_S3_BUCKET!r}
+key = {LIBREOFFICE_S3_KEY!r}
+destination = {str(LIBREOFFICE_WORKSPACE_PATH)!r}
+
+print("Downloading:")
+print(f"  s3://{{bucket}}/{{key}}")
+print("To:")
+print(f"  {{destination}}")
+
+try:
+  s3 = boto3.client("s3")
+
+  s3.download_file(
+    bucket,
+    key,
+    destination,
+  )
+
+except Exception as exc:
+  print(
+    "ERROR: Failed to download LibreOffice from S3."
+  )
+  print(
+    type(exc).__name__ + ":",
+    str(exc),
+  )
+  sys.exit(1)
+
+if not os.path.isfile(destination):
+  print(
+    "ERROR: boto3 download completed but file does not exist:"
+  )
+  print(destination)
+  sys.exit(1)
+
+size = os.path.getsize(destination)
+
+print(
+  f"LibreOffice archive downloaded: "
+  f"{{size / (1024 * 1024):.2f}} MB"
+)
+
+if size < 100 * 1024 * 1024:
+  print(
+    "ERROR: LibreOffice archive appears unexpectedly small:"
+  )
+  print(f"{{size}} bytes")
+  sys.exit(1)
+PY
+
+echo ""
 echo "LibreOffice archive:"
 ls -lh "$LO_ARCHIVE"
 
@@ -505,11 +605,14 @@ rm -rf "$TEST_PROFILE"
 rm -rf "$TMP_DIR"
 
 echo ""
-echo "=== REMOVING LIBREOFFICE ARCHIVE ==="
+echo "Removing downloaded LibreOffice archive..."
 
-rm -rf "libreoffice"
+rm -f "$LO_ARCHIVE"
 
-echo "LibreOffice archive removed from sandbox workspace."
+echo "LibreOffice archive removed."
+
+# Remove the now-empty workspace directory too.
+rmdir libreoffice 2>/dev/null || true
 
 echo ""
 echo "LibreOffice installation and test succeeded."
@@ -644,13 +747,13 @@ async def _run_and_log(session, label: str, *cmd: str):
 
 
 async def provision_dependencies(session) -> None:
-  """Uploads conversion/inspection scripts, downloads LibreOffice from
-  private S3 storage, and installs all dependencies into the sandbox.
+  """Uploads conversion/inspection scripts and installs all dependencies
+  into the sandbox.
 
   Python dependencies are installed with pip.
 
-  LibreOffice is downloaded from S3 during snapshot creation and installed
-  locally from its Linux x86-64 RPM distribution.
+  LibreOffice is downloaded directly from private S3 storage by the
+  sandbox after boto3 has been installed.
 
   User documents are never sent to CloudConvert or another third-party
   conversion service.
@@ -707,9 +810,9 @@ async def provision_dependencies(session) -> None:
   # ------------------------------------------------------------------
 
   mkdir_result = await session.exec(
-    "sh",
-    "-lc",
-    f'rm -rf "libreoffice" && mkdir -p "{BIN_DIR}" "libreoffice"',
+    "mkdir",
+    "-p",
+    BIN_DIR,
   )
 
   if mkdir_result.exit_code != 0:
@@ -778,133 +881,6 @@ async def provision_dependencies(session) -> None:
       )
 
   # ------------------------------------------------------------------
-  # Download LibreOffice from S3.
-  #
-  # We do this using boto3 from the Python process running the snapshot
-  # provisioning code. This avoids:
-  #
-  #   1. putting the 241 MB archive in Git
-  #   2. Git LFS
-  #   3. public URLs
-  #   4. curl/network downloads from inside the sandbox
-  #
-  # The S3 object should remain private.
-  # ------------------------------------------------------------------
-
-  logger.info(
-    "Downloading LibreOffice from private S3..."
-  )
-
-  logger.info(
-    "S3 location: s3://%s/%s",
-    LIBREOFFICE_S3_BUCKET,
-    LIBREOFFICE_S3_KEY,
-  )
-
-  try:
-    import boto3
-  except Exception as exc:
-    raise RuntimeError(
-      "boto3 is required to download LibreOffice from S3 "
-      "during snapshot provisioning."
-    ) from exc
-
-  try:
-    s3 = boto3.client("s3")
-
-    # First verify credentials/account access.
-    sts = boto3.client("sts")
-
-    identity = sts.get_caller_identity()
-
-    logger.info(
-      "AWS credentials available. Account: %s",
-      identity.get("Account"),
-    )
-
-    # Download directly to a local temporary file on the machine running
-    # snapshot_setup.py.
-    #
-    # This is intentional: we don't want the 241 MB archive committed to
-    # Git or uploaded through session.write().
-    local_download_path = (
-      SCRIPTS_DIR.parent.parent.parent.parent
-      / ".libreoffice-download"
-      / LIBREOFFICE_ARCHIVE
-    )
-
-    local_download_path.parent.mkdir(
-      parents=True,
-      exist_ok=True,
-    )
-
-    logger.info(
-      "Downloading LibreOffice archive locally to: %s",
-      local_download_path,
-    )
-
-    s3.download_file(
-      LIBREOFFICE_S3_BUCKET,
-      LIBREOFFICE_S3_KEY,
-      str(local_download_path),
-    )
-
-    if not local_download_path.exists():
-      raise RuntimeError(
-        "S3 download completed but local archive does not exist: "
-        f"{local_download_path}"
-      )
-
-    archive_size = local_download_path.stat().st_size
-
-    logger.info(
-      "LibreOffice archive downloaded: %.2f MB",
-      archive_size / (1024 * 1024),
-    )
-
-    if archive_size < 100 * 1024 * 1024:
-      raise RuntimeError(
-        "LibreOffice archive appears unexpectedly small: "
-        f"{archive_size} bytes"
-      )
-
-    # Upload the archive into the sandbox.
-    logger.info(
-      "Uploading LibreOffice archive to sandbox: %s",
-      LIBREOFFICE_WORKSPACE_PATH,
-    )
-
-    await session.write(
-      LIBREOFFICE_WORKSPACE_PATH,
-      io.BytesIO(
-        local_download_path.read_bytes()
-      ),
-    )
-
-    logger.info(
-      "LibreOffice archive uploaded to sandbox."
-    )
-
-    # Remove the local temporary copy after it has been uploaded.
-    try:
-      local_download_path.unlink()
-      logger.info(
-        "Removed temporary local LibreOffice archive."
-      )
-    except Exception as exc:
-      logger.warning(
-        "Could not remove temporary local LibreOffice archive: %s",
-        exc,
-      )
-
-  except Exception as exc:
-    raise RuntimeError(
-      "Failed to download LibreOffice archive from S3. "
-      f"s3://{LIBREOFFICE_S3_BUCKET}/{LIBREOFFICE_S3_KEY}: "
-      f"{type(exc).__name__}: {exc}"
-    ) from exc
-
-  # ------------------------------------------------------------------
   # Make scripts executable.
   # ------------------------------------------------------------------
 
@@ -925,10 +901,17 @@ async def provision_dependencies(session) -> None:
 
   # ------------------------------------------------------------------
   # Install Python dependencies and LibreOffice.
+  #
+  # IMPORTANT:
+  #
+  # The LibreOffice archive is NO LONGER uploaded with session.write().
+  #
+  # INSTALL_COMMAND installs boto3 first, then the sandbox itself
+  # downloads the 241 MB archive directly from S3.
   # ------------------------------------------------------------------
 
   logger.info(
-    "Installing Python dependencies and LibreOffice ..."
+    "Installing Python dependencies and LibreOffice..."
   )
 
   result = await _run_and_log(
@@ -944,3 +927,7 @@ async def provision_dependencies(session) -> None:
       "Dependency install failed with exit code "
       f"{result.exit_code}"
     )
+
+  logger.info(
+    "Dependency provisioning completed successfully."
+  )
