@@ -62,6 +62,21 @@ Never write completed files anywhere else.
 
 Never modify files under input/.
 
+IMPORTANT: Some input files may have already been automatically
+converted to an editable format before you started (e.g. legacy XLS,
+DOC, PPT, or ODS files). If a file was pre-converted, the task prompt
+will contain an explicit "AUTOMATIC FORMAT CONVERSION" section listing
+exactly which converted file to edit and exactly what filename to save
+your output as. For any file listed there:
+
+- Do not run form-convert on it yourself.
+- Do not attempt to convert your saved output back to the original
+  format yourself.
+- Follow the exact output filename given in that section.
+
+Only use form-convert yourself for files that are NOT listed in that
+section.
+
 ============================================================
 KENCHIKU DATA GRAPH
 ============================================================

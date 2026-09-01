@@ -105,7 +105,7 @@ class FormJobService:
 
         sandbox_client = get_form_sandbox_client()
 
-        result = await run_form_agent(
+        result, path_replacements = await run_form_agent(
           prompt=prompt,
           sandbox_client=sandbox_client,
           workspace=workspace,
@@ -146,11 +146,24 @@ class FormJobService:
         # The agent is instructed to return a JSON object containing
         # summary, completed, missing_data, recommendations, etc.
         #
+        # Some output files may have been deterministically round-trip
+        # converted back to their original extension AFTER the agent
+        # produced its final JSON (see run_form_agent's
+        # path_replacements) -- e.g. the agent saved "output/x.xlsx"
+        # but the actual final file is "output/x.xls". Patch the raw
+        # JSON text for any such renames before parsing, so the
+        # "files" list the agent reported matches what was actually
+        # uploaded.
+        raw_output = result.final_output
+
+        for old_path, new_path in path_replacements.items():
+          raw_output = raw_output.replace(old_path, new_path)
+
         # Store that object directly while preserving the existing
         # "output" key for compatibility.
         try:
           agent_output = json.loads(
-            result.final_output,
+            raw_output,
           )
 
           if not isinstance(agent_output, dict):
@@ -165,7 +178,7 @@ class FormJobService:
           )
 
           agent_output = {
-            "summary": result.final_output,
+            "summary": raw_output,
             "completed": True,
             "missing_data": [],
             "recommendations": [],
@@ -375,6 +388,13 @@ The following input files are available inside the sandbox:
 {file_list}
 
 You MUST inspect the input files directly.
+
+NOTE: Some of these files may already have been automatically converted
+to an editable format before you started. If so, this will be spelled
+out explicitly in an "AUTOMATIC FORMAT CONVERSION" section appended at
+the very end of this prompt -- follow those per-file instructions
+exactly for any file listed there, instead of the general DOCUMENT
+FORMAT HANDLING guidance below.
 
 ============================================================
 KENCHIKU DATA GRAPH
@@ -594,6 +614,13 @@ attempting to determine what fields need to be filled.
 Always preserve the original document's structure, formatting, layout,
 and existing content unless the task explicitly requires otherwise.
 
+IMPORTANT: If a file is listed in the "AUTOMATIC FORMAT CONVERSION"
+section appended at the end of this prompt, format conversion for that
+specific file has ALREADY been handled for you -- skip the
+XLS/DOC/PPT/ODS conversion steps below for that file entirely and go
+straight to inspecting/editing the already-converted file named there.
+The steps below only apply to files NOT listed in that section.
+
 
 ------------------------------------------------------------
 SPREADSHEETS
@@ -607,29 +634,6 @@ Supported spreadsheet formats include:
 - CSV
 - ODS
 
-For XLS files:
-
-1. Do NOT attempt to open the XLS file with openpyxl directly.
-2. Use:
-
-   form-inspect input/example.xls
-
-   to inspect the workbook.
-
-3. If you need to edit an XLS workbook, first convert it to XLSX using:
-
-   form-convert input/example.xls /tmp/converted
-
-4. Edit the resulting XLSX.
-5. Convert the completed XLSX back to XLS when the original input was
-   XLS.
-6. Verify the resulting XLS with:
-
-   form-verify output/example.xls
-
-7. Do not consider an XLS form successfully completed until the
-   resulting XLS can be opened and inspected successfully.
-
 For XLSX and XLSM files:
 
 1. Use openpyxl when appropriate for structural inspection and editing.
@@ -642,10 +646,11 @@ For CSV:
 
 Use Python or pandas when appropriate.
 
-For ODS:
-
-Use form-convert for conversion when necessary and preserve the original
-format when possible.
+For any XLS or ODS file NOT listed in the AUTOMATIC FORMAT CONVERSION
+section (this should be rare): use form-convert to convert it to XLSX,
+edit the XLSX, then use form-convert again to convert your edited
+result back to the original extension, and verify the resulting file
+with form-verify.
 
 ------------------------------------------------------------
 PDF
@@ -695,11 +700,8 @@ Supported formats include:
 - DOC
 - DOCX
 
-For legacy DOC files, use form-convert to convert the document to DOCX
-or PDF before attempting detailed inspection or editing.
-
-For DOCX files, use the appropriate Python document library or
-form-convert as appropriate.
+Any DOC file will already be listed in the AUTOMATIC FORMAT CONVERSION
+section (converted to DOCX) -- edit the converted DOCX directly.
 
 ------------------------------------------------------------
 POWERPOINT
@@ -710,7 +712,8 @@ Supported formats include:
 - PPT
 - PPTX
 
-Use form-convert for legacy-format conversion when necessary.
+Any PPT file will already be listed in the AUTOMATIC FORMAT CONVERSION
+section (converted to PPTX) -- edit the converted PPTX directly.
 
 ------------------------------------------------------------
 GENERAL RULE
@@ -1027,7 +1030,8 @@ Verify:
 8. Existing values that should remain were preserved.
 9. No unsupported information was invented.
 10. The input file was not modified.
-11. Formatting and structure were preserved as much as reasonably possible.
+11. Formatting and structure were preserved as much as reasonably
+    possible.
 
 ------------------------------------------------------------
 VISUAL VERIFICATION
