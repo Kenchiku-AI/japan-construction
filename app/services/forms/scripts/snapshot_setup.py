@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import os
@@ -22,11 +23,12 @@ BIN_DIR = "/home/vercel-sandbox/.local/bin"
 #
 # The LibreOffice archive is NOT stored in Git.
 #
-# It is stored in a private S3 bucket and downloaded into the sandbox while
-# creating the snapshot.
-#
-# The Vercel Sandbox must have AWS credentials that allow s3:GetObject on
-# this object.
+# It lives in a private S3 bucket. Rather than downloading it through the
+# form-worker host process (which OOM'd a 512MB Fargate task pulling a
+# 241MB file into memory) or exposing long-lived AWS credentials inside the
+# sandbox, we generate a short-lived presigned GET URL on the host and have
+# the sandbox `curl` it directly. The archive bytes never pass through the
+# worker process's memory or disk.
 #
 LIBREOFFICE_ARCHIVE = (
   "LibreOffice_26.8.0_Linux_x86-64_rpm.tar.gz"
@@ -47,6 +49,15 @@ LIBREOFFICE_WORKSPACE_DIR = Path("libreoffice")
 LIBREOFFICE_WORKSPACE_PATH = (
   LIBREOFFICE_WORKSPACE_DIR / LIBREOFFICE_ARCHIVE
 )
+
+# How long the presigned URL is valid for. Keep this tight -- it only needs
+# to survive one curl download, not the full provisioning run.
+LIBREOFFICE_PRESIGN_EXPIRY_SECONDS = 900  # 15 minutes
+
+# Path (inside the sandbox workspace) where we briefly stage the presigned
+# URL before curl consumes it. Removed immediately after use so it never
+# lingers in the sandbox filesystem or gets persisted into the snapshot.
+LIBREOFFICE_URL_ENV_PATH = Path("libreoffice/.lo_url.env")
 
 
 # ---------------------------------------------------------------------------
@@ -170,28 +181,95 @@ curl --version 2>&1 | head -3 || true
 
 echo ""
 echo "========================================"
-echo "=== AWS CREDENTIALS"
-echo "========================================"
-
-python3 -c "
-try:
-    import boto3
-
-    try:
-        identity = boto3.client('sts').get_caller_identity()
-        print('AWS credentials OK:', identity.get('Account'))
-    except Exception as exc:
-        print('AWS credentials NOT available:', exc)
-
-except Exception as exc:
-    print('boto3 not installed yet:', type(exc).__name__, exc)
-" 2>&1 || true
-
-
-echo ""
-echo "========================================"
 echo "=== END DIAGNOSTICS"
 echo "========================================"
+"""
+
+
+# ---------------------------------------------------------------------------
+# LibreOffice download command (runs INSIDE the sandbox)
+# ---------------------------------------------------------------------------
+#
+# This is executed separately from INSTALL_COMMAND, immediately after we
+# stage the presigned URL file, so that:
+#
+#   1. The URL file's lifetime is as short as possible (written, sourced,
+#      deleted, all in one shell invocation).
+#   2. The presigned URL is never interpolated into INSTALL_COMMAND's
+#      f-string, so it can never end up in _run_and_log's stdout/stderr
+#      logging for the big install step.
+#
+# `set -x` is intentionally OMITTED here (unlike some of our other debug
+# commands) so the sourced URL is never echoed to logs.
+#
+LIBREOFFICE_DOWNLOAD_COMMAND = f"""
+set -euo pipefail
+
+echo "========================================"
+echo "=== DOWNLOADING LIBREOFFICE VIA PRESIGNED URL"
+echo "========================================"
+
+URL_FILE="{LIBREOFFICE_URL_ENV_PATH}"
+
+if [ ! -f "$URL_FILE" ]; then
+  echo "ERROR: presigned URL file not found at $URL_FILE"
+  exit 1
+fi
+
+# shellcheck disable=SC1090
+. "$URL_FILE"
+
+# Remove the URL file immediately -- it must not survive into the
+# snapshot and should exist on disk for as little time as possible.
+rm -f "$URL_FILE"
+
+if [ -z "${{LO_URL:-}}" ]; then
+  echo "ERROR: LO_URL was not set after sourcing $URL_FILE"
+  exit 1
+fi
+
+mkdir -p "{LIBREOFFICE_WORKSPACE_DIR}"
+
+echo "Downloading LibreOffice archive to {LIBREOFFICE_WORKSPACE_PATH} ..."
+
+curl \
+  --fail \
+  --show-error \
+  --location \
+  --retry 3 \
+  --retry-delay 2 \
+  --connect-timeout 30 \
+  --max-time 600 \
+  --output "{LIBREOFFICE_WORKSPACE_PATH}" \
+  "$LO_URL"
+
+# Belt-and-suspenders: make sure the URL variable doesn't linger in this
+# shell's environment any longer than necessary.
+unset LO_URL
+
+if [ ! -f "{LIBREOFFICE_WORKSPACE_PATH}" ]; then
+  echo "ERROR: curl reported success but archive is missing:"
+  echo "{LIBREOFFICE_WORKSPACE_PATH}"
+  exit 1
+fi
+
+echo "Downloaded archive:"
+ls -lh "{LIBREOFFICE_WORKSPACE_PATH}"
+
+SIZE_BYTES="$(stat -c '%s' "{LIBREOFFICE_WORKSPACE_PATH}" 2>/dev/null || stat -f '%z' "{LIBREOFFICE_WORKSPACE_PATH}")"
+
+echo "Downloaded size (bytes): $SIZE_BYTES"
+
+if [ "$SIZE_BYTES" -lt 104857600 ]; then
+  echo "ERROR: LibreOffice archive appears unexpectedly small: $SIZE_BYTES bytes"
+  echo "This usually means the presigned URL returned an XML error body"
+  echo "instead of the archive (e.g. expired URL, wrong key/bucket)."
+  echo "First 2KB of downloaded content for debugging:"
+  head -c 2048 "{LIBREOFFICE_WORKSPACE_PATH}" || true
+  exit 1
+fi
+
+echo "LibreOffice archive download verified."
 """
 
 
@@ -199,8 +277,8 @@ echo "========================================"
 # Installation command
 # ---------------------------------------------------------------------------
 #
-# The Python process downloads the LibreOffice archive into /tmp before
-# running this shell command.
+# By the time this runs, the LibreOffice archive is already sitting in
+# the sandbox workspace (downloaded by LIBREOFFICE_DOWNLOAD_COMMAND above).
 #
 INSTALL_COMMAND = f"""
 set -euo pipefail
@@ -227,117 +305,17 @@ python3 -m pip install \
 
 echo ""
 echo "========================================"
-echo "=== VERIFYING AWS ACCESS FROM SANDBOX"
-echo "========================================"
-
-python3 - <<'PY'
-import boto3
-import sys
-
-print("boto3 version:", boto3.__version__)
-
-try:
-  sts = boto3.client("sts")
-  identity = sts.get_caller_identity()
-
-  print(
-    "AWS credentials available from sandbox."
-  )
-  print(
-    "AWS account:",
-    identity.get("Account"),
-  )
-  print(
-    "AWS ARN:",
-    identity.get("Arn"),
-  )
-
-except Exception as exc:
-  print(
-    "ERROR: AWS credentials are not available from sandbox."
-  )
-  print(
-    type(exc).__name__ + ":",
-    str(exc),
-  )
-  sys.exit(1)
-PY
-
-
-echo ""
-echo "========================================"
-echo "=== DOWNLOADING LIBREOFFICE FROM S3"
+echo "=== VERIFYING LIBREOFFICE ARCHIVE"
 echo "========================================"
 
 LO_ARCHIVE="libreoffice/{LIBREOFFICE_ARCHIVE}"
 
-echo "S3 bucket:"
-echo "{LIBREOFFICE_S3_BUCKET}"
+if [ ! -f "$LO_ARCHIVE" ]; then
+  echo "ERROR: LibreOffice archive was not downloaded:"
+  echo "$LO_ARCHIVE"
+  exit 1
+fi
 
-echo "S3 key:"
-echo "{LIBREOFFICE_S3_KEY}"
-
-echo "Destination:"
-echo "$LO_ARCHIVE"
-
-mkdir -p libreoffice
-
-python3 - <<'PY'
-import boto3
-import os
-import sys
-
-bucket = {LIBREOFFICE_S3_BUCKET!r}
-key = {LIBREOFFICE_S3_KEY!r}
-destination = {str(LIBREOFFICE_WORKSPACE_PATH)!r}
-
-print("Downloading:")
-print(f"  s3://{{bucket}}/{{key}}")
-print("To:")
-print(f"  {{destination}}")
-
-try:
-  s3 = boto3.client("s3")
-
-  s3.download_file(
-    bucket,
-    key,
-    destination,
-  )
-
-except Exception as exc:
-  print(
-    "ERROR: Failed to download LibreOffice from S3."
-  )
-  print(
-    type(exc).__name__ + ":",
-    str(exc),
-  )
-  sys.exit(1)
-
-if not os.path.isfile(destination):
-  print(
-    "ERROR: boto3 download completed but file does not exist:"
-  )
-  print(destination)
-  sys.exit(1)
-
-size = os.path.getsize(destination)
-
-print(
-  f"LibreOffice archive downloaded: "
-  f"{{size / (1024 * 1024):.2f}} MB"
-)
-
-if size < 100 * 1024 * 1024:
-  print(
-    "ERROR: LibreOffice archive appears unexpectedly small:"
-  )
-  print(f"{{size}} bytes")
-  sys.exit(1)
-PY
-
-echo ""
 echo "LibreOffice archive:"
 ls -lh "$LO_ARCHIVE"
 
@@ -605,14 +583,11 @@ rm -rf "$TEST_PROFILE"
 rm -rf "$TMP_DIR"
 
 echo ""
-echo "Removing downloaded LibreOffice archive..."
+echo "=== REMOVING LIBREOFFICE ARCHIVE ==="
 
-rm -f "$LO_ARCHIVE"
+rm -rf "libreoffice"
 
-echo "LibreOffice archive removed."
-
-# Remove the now-empty workspace directory too.
-rmdir libreoffice 2>/dev/null || true
+echo "LibreOffice archive removed from sandbox workspace."
 
 echo ""
 echo "LibreOffice installation and test succeeded."
@@ -746,14 +721,47 @@ async def _run_and_log(session, label: str, *cmd: str):
   return result
 
 
+def _generate_libreoffice_presigned_url() -> str:
+  """Generates a short-lived presigned GET URL for the LibreOffice archive.
+
+  Runs boto3 synchronously -- callers should invoke this via
+  asyncio.to_thread so it doesn't block the event loop.
+
+  This is the ONLY AWS/S3 interaction the host process performs for
+  LibreOffice provisioning. No archive bytes ever pass through this
+  process; boto3 here just signs a URL.
+  """
+
+  import boto3
+
+  s3 = boto3.client("s3")
+
+  return s3.generate_presigned_url(
+    "get_object",
+    Params={
+      "Bucket": LIBREOFFICE_S3_BUCKET,
+      "Key": LIBREOFFICE_S3_KEY,
+    },
+    ExpiresIn=LIBREOFFICE_PRESIGN_EXPIRY_SECONDS,
+  )
+
+
 async def provision_dependencies(session) -> None:
-  """Uploads conversion/inspection scripts and installs all dependencies
-  into the sandbox.
+  """Uploads conversion/inspection scripts, downloads LibreOffice into the
+  sandbox via a presigned S3 URL, and installs all dependencies.
 
   Python dependencies are installed with pip.
 
-  LibreOffice is downloaded directly from private S3 storage by the
-  sandbox after boto3 has been installed.
+  LibreOffice is downloaded FROM INSIDE THE SANDBOX via `curl` against a
+  short-lived presigned URL generated by the host process. The archive's
+  241MB of bytes are never read into the host (form-worker) process's
+  memory -- only a signed URL string is generated and handed to the
+  sandbox. This avoids the OOM the host process previously hit trying to
+  buffer the whole archive before re-uploading it via session.write().
+
+  It also avoids exposing long-lived AWS credentials inside the sandbox:
+  the presigned URL is scoped to a single GET of a single object and
+  expires after LIBREOFFICE_PRESIGN_EXPIRY_SECONDS.
 
   User documents are never sent to CloudConvert or another third-party
   conversion service.
@@ -762,7 +770,7 @@ async def provision_dependencies(session) -> None:
   conversion before snapshot creation continues.
 
   OCR is delegated to AWS Textract, which needs AWS credentials reachable
-  from the sandbox.
+  from the sandbox at *job run* time (unrelated to this function).
 
   Raises on any failure.
   """
@@ -810,9 +818,9 @@ async def provision_dependencies(session) -> None:
   # ------------------------------------------------------------------
 
   mkdir_result = await session.exec(
-    "mkdir",
-    "-p",
-    BIN_DIR,
+    "sh",
+    "-lc",
+    f'rm -rf "libreoffice" && mkdir -p "{BIN_DIR}" "libreoffice"',
   )
 
   if mkdir_result.exit_code != 0:
@@ -881,6 +889,93 @@ async def provision_dependencies(session) -> None:
       )
 
   # ------------------------------------------------------------------
+  # Generate a presigned URL and hand it to the sandbox.
+  #
+  # boto3 here does NOT download the archive -- it only signs a URL.
+  # This is a fast, constant-memory operation regardless of archive size.
+  # ------------------------------------------------------------------
+
+  logger.info(
+    "Generating presigned URL for LibreOffice archive "
+    "(expires in %ss)...",
+    LIBREOFFICE_PRESIGN_EXPIRY_SECONDS,
+  )
+
+  try:
+    presigned_url = await asyncio.to_thread(
+      _generate_libreoffice_presigned_url,
+    )
+  except Exception as exc:
+    raise RuntimeError(
+      "Failed to generate presigned URL for LibreOffice archive "
+      f"s3://{LIBREOFFICE_S3_BUCKET}/{LIBREOFFICE_S3_KEY}: "
+      f"{type(exc).__name__}: {exc}"
+    ) from exc
+
+  logger.info(
+    "Presigned URL generated. NOT logging the URL itself "
+    "(it is a bearer credential for the object)."
+  )
+
+  # Stage the URL inside the sandbox as a tiny env file. This is a KB of
+  # data, not 241MB, so session.write() here carries no meaningful memory
+  # cost on the host side.
+  url_env_contents = f"LO_URL='{presigned_url}'\n".encode("utf-8")
+
+  await session.write(
+    LIBREOFFICE_URL_ENV_PATH,
+    io.BytesIO(url_env_contents),
+  )
+
+  # Drop our own reference to the URL string as soon as we're done with it.
+  del presigned_url
+  del url_env_contents
+
+  # ------------------------------------------------------------------
+  # Have the sandbox download the archive itself via curl.
+  #
+  # This step deliberately does NOT go through _run_and_log, since that
+  # helper logs full stdout/stderr -- if curl ever echoed the resolved
+  # URL (e.g. on a redirect chain with -v) we don't want that in logs.
+  # LIBREOFFICE_DOWNLOAD_COMMAND itself avoids `set -x` for the same
+  # reason.
+  # ------------------------------------------------------------------
+
+  logger.info(
+    "Downloading LibreOffice archive inside sandbox via curl..."
+  )
+
+  download_result = await session.exec(
+    "sh",
+    "-lc",
+    LIBREOFFICE_DOWNLOAD_COMMAND,
+  )
+
+  download_stdout = download_result.stdout.decode(errors="replace")
+  download_stderr = download_result.stderr.decode(errors="replace")
+
+  logger.info(
+    "LibreOffice download stdout:\n%s",
+    download_stdout,
+  )
+
+  if download_stderr:
+    logger.warning(
+      "LibreOffice download stderr:\n%s",
+      download_stderr,
+    )
+
+  if download_result.exit_code != 0:
+    raise RuntimeError(
+      "Failed to download LibreOffice archive inside sandbox via "
+      f"presigned URL. Exit code: {download_result.exit_code}"
+    )
+
+  logger.info(
+    "LibreOffice archive downloaded successfully inside sandbox."
+  )
+
+  # ------------------------------------------------------------------
   # Make scripts executable.
   # ------------------------------------------------------------------
 
@@ -901,17 +996,10 @@ async def provision_dependencies(session) -> None:
 
   # ------------------------------------------------------------------
   # Install Python dependencies and LibreOffice.
-  #
-  # IMPORTANT:
-  #
-  # The LibreOffice archive is NO LONGER uploaded with session.write().
-  #
-  # INSTALL_COMMAND installs boto3 first, then the sandbox itself
-  # downloads the 241 MB archive directly from S3.
   # ------------------------------------------------------------------
 
   logger.info(
-    "Installing Python dependencies and LibreOffice..."
+    "Installing Python dependencies and LibreOffice ..."
   )
 
   result = await _run_and_log(
@@ -927,7 +1015,3 @@ async def provision_dependencies(session) -> None:
       "Dependency install failed with exit code "
       f"{result.exit_code}"
     )
-
-  logger.info(
-    "Dependency provisioning completed successfully."
-  )
