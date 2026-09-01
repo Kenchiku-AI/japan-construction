@@ -1,3 +1,44 @@
+import asyncio
+import io
+import logging
+import inspect
+import tarfile
+from pathlib import Path
+from typing import Any
+from uuid import UUID
+
+from agents import Runner
+from agents.run import RunConfig
+from agents.sandbox import (
+  SandboxAgent,
+  SandboxRunConfig
+)
+from agents.extensions.sandbox import (
+  VercelSandboxClientOptions,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services.forms.prompts import (
+  FORM_AGENT_INSTRUCTIONS,
+)
+from app.services.forms.sandbox import (
+  FORM_AGENT_SNAPSHOT_ID,
+  build_snapshot_client,
+  get_form_agent_snapshot,
+)
+from app.services.forms.scripts.snapshot_setup import provision_dependencies
+
+
+logger = logging.getLogger(__name__)
+
+
+def build_form_agent() -> SandboxAgent:
+  return SandboxAgent(
+    name="Kenchiku AI Form Agent",
+    instructions=FORM_AGENT_INSTRUCTIONS,
+  )
+
+
 async def run_form_agent(
   prompt: str,
   sandbox_client: Any,
@@ -582,3 +623,90 @@ echo "=== DONE ==="
         logger.exception(
           "Error closing form agent sandbox.",
         )
+
+
+async def _collect_sandbox_output_files(
+  sandbox,
+  output_dir: Path,
+) -> None:
+  output_dir.mkdir(
+    parents=True,
+    exist_ok=True,
+  )
+
+  find_result = await sandbox.exec(
+    "find",
+    "output",
+    "-type",
+    "f",
+    "-print",
+  )
+
+  stdout = find_result.stdout.decode(
+    errors="replace",
+  )
+
+  stderr = find_result.stderr.decode(
+    errors="replace",
+  )
+
+  if find_result.exit_code != 0:
+    raise RuntimeError(
+      "Failed to enumerate sandbox output files: "
+      f"{stderr}"
+    )
+
+  sandbox_files = [
+    line.strip()
+    for line in stdout.splitlines()
+    if line.strip()
+  ]
+
+  if not sandbox_files:
+    logger.warning(
+      "Sandbox output directory contains no files.",
+    )
+
+    return
+
+  logger.info(
+    "Found %d sandbox output file(s).",
+    len(sandbox_files),
+  )
+
+  for sandbox_file_string in sandbox_files:
+    sandbox_path = Path(
+      sandbox_file_string,
+    )
+
+    try:
+      relative_path = sandbox_path.relative_to(
+        Path("output"),
+      )
+    except ValueError:
+      raise RuntimeError(
+        "Sandbox returned a file outside output/: "
+        f"{sandbox_path}"
+      )
+
+    destination_path = (
+      output_dir / relative_path
+    )
+
+    destination_path.parent.mkdir(
+      parents=True,
+      exist_ok=True,
+    )
+
+    file_obj = await sandbox.read(
+      sandbox_path,
+    )
+
+    file_contents = file_obj.read()
+
+    with destination_path.open(
+      "wb",
+    ) as destination:
+      destination.write(
+        file_contents,
+      )
