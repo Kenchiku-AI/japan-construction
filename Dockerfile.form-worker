@@ -6,8 +6,6 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN python -m pip show openai-agents && python -m pip show vercel
-
 COPY fonts/NotoSansJP-Regular.ttf /usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf
 
 COPY . .
