@@ -128,6 +128,38 @@ class FormJobService:
           output_dir=output_dir,
         )
 
+        image_input_files = [
+          input_file
+          for input_file in input_files
+          if input_file.suffix.lower()
+          in {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".gif",
+          }
+        ]
+
+        if image_input_files:
+
+          image_edits = agent_output.get(
+            "image_edits",
+            [],
+          )
+
+          logger.info(
+            "Image form returned %d edit(s)",
+            len(image_edits),
+          )
+
+          for input_file in image_input_files:
+            self._apply_image_edits(
+              input_file=input_file,
+              image_edits=image_edits,
+              output_dir=output_dir,
+            )
+
         # The job may have been deleted while OpenAI was processing
         # the document.
         job_exists = await self.db.scalar(
@@ -150,6 +182,11 @@ class FormJobService:
           job,
           output_dir,
         )
+
+        if not output_files:
+          output_files = list(
+            output_dir.iterdir(),
+          )
 
         if not output_files:
           raise ValueError(
@@ -221,6 +258,18 @@ class FormJobService:
     uploaded_files = []
 
     try:
+      has_image = any(
+        input_file.suffix.lower()
+        in {
+          ".jpg",
+          ".jpeg",
+          ".png",
+          ".webp",
+          ".gif",
+        }
+        for input_file in input_files
+      )
+
       for input_file in input_files:
 
         logger.info(
@@ -295,6 +344,86 @@ class FormJobService:
             uploaded.id,
           )
 
+      if has_image:
+        image_instruction = """
+IMPORTANT: One or more uploaded files are images.
+
+For image forms, DO NOT attempt to create, modify, or save an output
+image using Code Interpreter.
+
+Instead, inspect the original image visually and determine exactly
+where each requested value should be placed.
+
+Return an "image_edits" array in your JSON response.
+
+Each image edit must contain:
+
+- "filename": the original image filename
+- "text": the exact text to place
+- "x": left coordinate in pixels
+- "y": top coordinate in pixels
+- "width": width of the field in pixels
+- "height": height of the field in pixels
+
+Coordinates must refer to the ORIGINAL uploaded image's pixel dimensions.
+
+The x/y coordinates identify the upper-left corner of the field
+where the text should be placed.
+
+Do not resize the coordinate system.
+
+Use the actual visible blank field on the form, not an approximate
+location elsewhere on the page.
+
+The text must be placed INSIDE the corresponding blank field.
+
+Do not fabricate fields or coordinates.
+
+Only create an image_edit when there is enough visual evidence to
+identify the correct field.
+
+If requested information cannot be located confidently, put that
+information in "missing_data" instead.
+
+For multiple images, keep edits associated with the correct
+filename.
+
+The image itself will be edited later by the application using
+Pillow. Your job is to identify the correct placement and return
+precise coordinates.
+
+Your response MUST be valid JSON with this structure:
+
+{
+  "summary": "...",
+  "completed": true,
+  "files": [],
+  "image_edits": [
+    {
+      "filename": "original.jpg",
+      "text": "Joe Smith",
+      "x": 100,
+      "y": 200,
+      "width": 250,
+      "height": 40
+    }
+  ],
+  "missing_data": [],
+  "recommendations": []
+}
+
+For an image job, "files" MUST remain an empty array because the
+application, rather than Code Interpreter, creates the completed
+image.
+"""
+
+        content.append(
+          {
+            "type": "input_text",
+            "text": image_instruction,
+          }
+        )
+
       tools = []
 
       if code_interpreter_file_ids:
@@ -348,6 +477,7 @@ class FormJobService:
           "type",
           None,
         ) == "message":
+
           logger.info(
             "OpenAI message output: %r",
             item,
@@ -383,11 +513,12 @@ class FormJobService:
         raw_output,
       )
 
-      self._extract_output_files_from_response(
-        response=response,
-        agent_output=agent_output,
-        output_dir=output_dir,
-      )
+      if not has_image:
+        self._extract_output_files_from_response(
+          response=response,
+          agent_output=agent_output,
+          output_dir=output_dir,
+        )
 
       return agent_output
 
@@ -402,6 +533,25 @@ class FormJobService:
             "Failed to delete OpenAI file %s",
             uploaded.id,
           )
+
+  def _find_font(
+    self,
+  ) -> str | None:
+
+    font_candidates = [
+      "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+      "/usr/share/fonts/opentype/noto/NotoSansCJKJP-Regular.otf",
+      "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+      "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf",
+      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+
+    for font_path in font_candidates:
+      if Path(font_path).exists():
+        return font_path
+
+    return None
+
 
   def _extract_output_files_from_response(
     self,
@@ -563,6 +713,285 @@ class FormJobService:
     logger.info(
       "========== END EXTRACTING CODE INTERPRETER OUTPUT FILES =========="
     )
+
+  def _apply_image_edits(
+    self,
+    input_file: Path,
+    image_edits: list[dict],
+    output_dir: Path,
+  ) -> Path:
+
+    from PIL import Image, ImageDraw, ImageFont
+
+    output_dir.mkdir(
+      parents=True,
+      exist_ok=True,
+    )
+
+    logger.info(
+      "Applying %d image edit(s) to %s",
+      len(image_edits),
+      input_file.name,
+    )
+
+    image = Image.open(
+      input_file,
+    )
+
+    image.load()
+
+    original_width, original_height = image.size
+
+    logger.info(
+      "Original image dimensions: %dx%d",
+      original_width,
+      original_height,
+    )
+
+    if image.mode not in {
+      "RGB",
+      "RGBA",
+    }:
+      image = image.convert(
+        "RGB",
+      )
+
+    draw = ImageDraw.Draw(
+      image,
+    )
+
+    font_path = self._find_font()
+
+    if font_path:
+      logger.info(
+        "Using image form font: %s",
+        font_path,
+      )
+    else:
+      logger.warning(
+        "No suitable system font found; using Pillow default font.",
+      )
+
+    applied_count = 0
+
+    for edit in image_edits:
+
+      filename = edit.get(
+        "filename",
+      )
+
+      if filename and filename != input_file.name:
+        continue
+
+      text = edit.get(
+        "text",
+      )
+
+      x = edit.get(
+        "x",
+      )
+
+      y = edit.get(
+        "y",
+      )
+
+      width = edit.get(
+        "width",
+      )
+
+      height = edit.get(
+        "height",
+      )
+
+      if not text:
+        logger.warning(
+          "Skipping image edit with no text: %s",
+          edit,
+        )
+        continue
+
+      try:
+        x = float(x)
+        y = float(y)
+        width = float(width)
+        height = float(height)
+      except (
+        TypeError,
+        ValueError,
+      ):
+        logger.warning(
+          "Skipping image edit with invalid coordinates: %s",
+          edit,
+        )
+        continue
+
+      if width <= 0 or height <= 0:
+        logger.warning(
+          "Skipping image edit with invalid dimensions: %s",
+          edit,
+        )
+        continue
+
+      if (
+        x < 0
+        or y < 0
+        or x >= original_width
+        or y >= original_height
+      ):
+        logger.warning(
+          "Skipping image edit outside image bounds: %s",
+          edit,
+        )
+        continue
+
+      max_width = min(
+        width,
+        original_width - x,
+      )
+
+      max_height = min(
+        height,
+        original_height - y,
+      )
+
+      if font_path:
+        font_size = max(
+          8,
+          int(
+            max_height * 0.70,
+          ),
+        )
+
+        while font_size >= 8:
+
+          font = ImageFont.truetype(
+            font_path,
+            font_size,
+          )
+
+          bbox = draw.textbbox(
+            (0, 0),
+            str(text),
+            font=font,
+          )
+
+          text_width = (
+            bbox[2] - bbox[0]
+          )
+
+          text_height = (
+            bbox[3] - bbox[1]
+          )
+
+          if (
+            text_width <= max_width
+            and text_height <= max_height
+          ):
+            break
+
+          font_size -= 1
+
+        if font_size < 8:
+          font = ImageFont.truetype(
+            font_path,
+            8,
+          )
+
+      else:
+        font = ImageFont.load_default()
+
+        bbox = draw.textbbox(
+          (0, 0),
+          str(text),
+          font=font,
+        )
+
+        text_width = (
+          bbox[2] - bbox[0]
+        )
+
+        text_height = (
+          bbox[3] - bbox[1]
+        )
+
+      bbox = draw.textbbox(
+        (0, 0),
+        str(text),
+        font=font,
+      )
+
+      text_width = (
+        bbox[2] - bbox[0]
+      )
+
+      text_height = (
+        bbox[3] - bbox[1]
+      )
+
+      text_x = (
+        x
+        + max(
+          0,
+          (max_width - text_width) / 2,
+        )
+      )
+
+      text_y = (
+        y
+        + max(
+          0,
+          (max_height - text_height) / 2,
+        )
+        - bbox[1]
+      )
+
+      logger.info(
+        "Applying image edit: text=%r x=%s y=%s width=%s height=%s",
+        text,
+        x,
+        y,
+        width,
+        height,
+      )
+
+      draw.text(
+        (
+          text_x,
+          text_y,
+        ),
+        str(text),
+        font=font,
+        fill=(0, 0, 0),
+      )
+
+      applied_count += 1
+
+    output_filename = (
+      f"{input_file.stem}_completed"
+      f"{input_file.suffix}"
+    )
+
+    output_path = (
+      output_dir / output_filename
+    )
+
+    image.save(
+      output_path,
+      quality=95,
+    )
+
+    logger.info(
+      "Saved completed image: %s",
+      output_path,
+    )
+
+    logger.info(
+      "Applied %d/%d image edit(s)",
+      applied_count,
+      len(image_edits),
+    )
+
+    return output_path
 
 
   def _parse_agent_output(
