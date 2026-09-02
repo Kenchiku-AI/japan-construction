@@ -1127,7 +1127,7 @@ PDF.
       applied_count += 1
 
     output_filename = (
-      f"{input_file.stem}_completed"
+      f"{input_file.stem}"
       f"{input_file.suffix}"
     )
 
@@ -1568,7 +1568,7 @@ PDF.
 
     output_path = (
       output_dir
-      / f"{input_file.stem}_completed.pdf"
+      / f"{input_file.stem}.pdf"
     )
 
     document.save(
@@ -2082,14 +2082,51 @@ For Excel:
 - fill the correct cells
 - save the completed workbook
 
-For Word:
+For Word documents (.docx):
 
-- inspect paragraphs
-- inspect tables
-- identify form fields
-- preserve formatting
-- fill the correct locations
-- save the completed document
+- The uploaded document is the actual form that must be completed.
+- Use Code Interpreter to inspect and edit the document.
+- Use Python and python-docx when appropriate.
+- Inspect paragraphs, runs, tables, cells, headers, footers, and
+  document structure as necessary.
+- Identify the actual location corresponding to each requested value.
+- Preserve the existing document structure and formatting.
+- Preserve existing text unless the form clearly requires replacement.
+- Do not recreate the document from scratch unless absolutely necessary.
+- Do not flatten the document into plain text.
+- Do not convert the document into a PDF as a substitute for completing
+  the Word document.
+- Fill the appropriate existing fields, table cells, blank lines, or
+  other form locations.
+- Preserve formatting such as:
+  - fonts
+  - font sizes
+  - bold and italic formatting
+  - alignment
+  - paragraph spacing
+  - table structure
+  - cell formatting
+  - borders
+  - page layout
+  - headers
+  - footers
+- Preserve Japanese text and Japanese document formatting.
+- Save the completed document as a .docx file in the output directory.
+
+Use Python and python-docx when appropriate, but first inspect the
+document structure to determine how the form is constructed.
+
+Do not assume that a blank area visible in the document corresponds
+to a normal paragraph or table cell.
+
+If the form uses Word-specific structures that python-docx cannot
+safely edit, use an appropriate available mechanism rather than
+recreating the document.
+
+After editing, reopen the saved .docx and verify that it can be read
+successfully and that the requested values were actually inserted.
+
+The completed .docx file is the primary output of the task.
 
 For PDF:
 
@@ -2348,8 +2385,76 @@ required document processing.
 
 For PDF jobs, the "pdf_edits" array is the primary output of the task.
 
-For non-PDF jobs, the completed document is the primary output of the
+For image jobs, the "image_edits" array is the primary output of the
 task.
+
+For non-PDF document jobs such as Word and Excel, the completed document
+file is the primary output of the task.============================================================
+VERIFICATION
+============================================================
+
+After processing the document, verify the work that you are responsible
+for performing.
+
+For non-PDF documents that you directly edit:
+
+1. Confirm that the completed output file exists.
+2. Confirm that it can be opened and read successfully.
+3. Confirm that the intended fields were populated.
+4. Confirm that values are in the correct locations.
+5. Confirm that Japanese text renders correctly.
+6. Confirm that existing labels remain intact.
+7. Confirm that existing values remain intact.
+8. Confirm that no information was invented.
+9. Confirm that the input file was not modified.
+
+For PDFs:
+
+1. Confirm that the PDF was inspected.
+2. Confirm that each requested value was matched to the correct
+   AcroForm field or coordinate location.
+3. Confirm that each PDF edit is explicitly included in "pdf_edits".
+4. Confirm that the field names used in AcroForm edits are the actual
+   field names found in the PDF.
+5. Confirm that no information was invented.
+6. Do not claim that the completed PDF file was created or modified.
+   The application will apply the PDF edits and create the completed
+   PDF after the agent finishes.
+
+For images:
+
+1. Confirm that the image was inspected.
+2. Confirm that each requested value was matched to the correct
+   location.
+3. Confirm that each image edit is explicitly included in "image_edits".
+4. Confirm that no information was invented.
+5. Do not claim that the final image file was created or modified.
+   The application will apply the image edits after the agent finishes.
+
+For documents where visual layout matters, visually inspect the
+document before completing the task.
+
+Pay particular attention to:
+
+- merged cells
+- row heights
+- column widths
+- tables
+- checkboxes
+- text clipping
+- Japanese characters
+- page breaks
+- PDF field locations
+- image dimensions
+
+Do not declare that a document was successfully completed merely because
+you identified the values that should be entered.
+
+For PDFs and images, successful processing means that the required
+machine-readable edits have been produced.
+
+For directly edited documents, successful processing means that the
+completed document has actually been created and verified.
 
 ============================================================
 EXISTING VALUES
@@ -2372,34 +2477,17 @@ Do not delete:
 Preserve the original structure and formatting.
 
 ============================================================
-OUTPUT
-============================================================
-
-Every completed document MUST be written into the output directory.
-
-Do not write completed documents elsewhere.
-
-Do not modify the original input files.
-
-Use clear filenames.
-
-For example:
-
-output/completed_form.xlsx
-
-or:
-
-output/施工体制台帳_completed.xlsx
-
-============================================================
 VERIFICATION
 ============================================================
 
-After editing every document:
+After processing the document, verify the work that you are responsible
+for performing.
 
-1. Confirm that the output file exists.
-2. Confirm that it can be opened/read.
-3. Confirm that intended fields were populated.
+For non-PDF documents that you directly edit:
+
+1. Confirm that the completed output file exists.
+2. Confirm that it can be opened and read successfully.
+3. Confirm that the intended fields were populated.
 4. Confirm that values are in the correct locations.
 5. Confirm that Japanese text renders correctly.
 6. Confirm that existing labels remain intact.
@@ -2407,8 +2495,31 @@ After editing every document:
 8. Confirm that no information was invented.
 9. Confirm that the input file was not modified.
 
+For PDFs:
+
+1. Confirm that the PDF was inspected.
+2. Confirm that each requested value was matched to the correct
+   AcroForm field or coordinate location.
+3. Confirm that each PDF edit is explicitly included in "pdf_edits".
+4. Confirm that the field names used in AcroForm edits are the actual
+   field names found in the PDF.
+5. Confirm that no information was invented.
+6. Do not claim that the completed PDF file was created or modified.
+   The application will apply the PDF edits and create the completed
+   PDF after the agent finishes.
+
+For images:
+
+1. Confirm that the image was inspected.
+2. Confirm that each requested value was matched to the correct
+   location.
+3. Confirm that each image edit is explicitly included in "image_edits".
+4. Confirm that no information was invented.
+5. Do not claim that the final image file was created or modified.
+   The application will apply the image edits after the agent finishes.
+
 For documents where visual layout matters, visually inspect the
-completed document.
+document before completing the task.
 
 Pay particular attention to:
 
@@ -2420,10 +2531,46 @@ Pay particular attention to:
 - text clipping
 - Japanese characters
 - page breaks
-- PDF layout
+- PDF field locations
 - image dimensions
 
-Do not declare success simply because a file was created.
+Do not declare that a document was successfully completed merely because
+you identified the values that should be entered.
+
+For PDFs and images, successful processing means that the required
+machine-readable edits have been produced.
+
+For directly edited documents, successful processing means that the
+completed document has actually been created and verified.
+
+============================================================
+OUTPUT FILENAMES
+============================================================
+
+For documents that you directly edit, preserve the original uploaded
+filename.
+
+Do not add suffixes such as:
+
+- "_completed"
+- "_edited"
+- "_filled"
+- "_processed"
+- "_final"
+
+For example:
+
+Input:
+施工体制台帳.docx
+
+Output:
+施工体制台帳.docx
+
+The completed document should use the same filename as the uploaded
+document unless the FORM DESCRIPTION explicitly instructs otherwise.
+
+Do not create multiple versions of the same document with different
+filenames.
 
 ============================================================
 OUTPUT LANGUAGE — JAPANESE ONLY
