@@ -128,6 +128,15 @@ class FormJobService:
           output_dir=output_dir,
         )
 
+        logger.info(
+          "FORM AGENT OUTPUT:\n%s",
+          json.dumps(
+            agent_output,
+            ensure_ascii=False,
+            indent=2,
+          ),
+        )
+
         image_input_files = [
           input_file
           for input_file in input_files
@@ -173,8 +182,13 @@ class FormJobService:
           )
 
           logger.info(
-            "PDF form returned %d edit(s)",
+            "PDF EDITS EXTRACTED: count=%d edits=%s",
             len(pdf_edits),
+            json.dumps(
+              pdf_edits,
+              ensure_ascii=False,
+              indent=2,
+            ),
           )
 
           for input_file in pdf_input_files:
@@ -1237,6 +1251,13 @@ PDF.
     # ------------------------------------------------------------
 
     for edit in pdf_edits:
+      logger.info(
+        "PROCESSING PDF EDIT: %s",
+        json.dumps(
+          edit,
+          ensure_ascii=False,
+        ),
+      )
 
       filename = edit.get(
         "filename",
@@ -1256,7 +1277,6 @@ PDF.
       if field_name:
 
         if field_name not in widgets_by_name:
-
           logger.warning(
             "AcroForm field %r was not found in %s",
             field_name,
@@ -2026,7 +2046,8 @@ PDF ACROFORM FIELDS
 ============================================================
 
 If the PDF contains editable AcroForm fields, use the actual AcroForm
-field names as the primary targets for edits.
+field names as the required targets for edits whenever a corresponding
+field exists.
 
 For every AcroForm field that should be changed, return a PDF edit using
 this structure:
@@ -2121,17 +2142,156 @@ For legacy XLS/DOC/PPT formats:
   appropriate usable format and clearly report that fact
 
 ============================================================
+ACROFORM FIELD SELECTION — HIGHEST PRIORITY
+============================================================
+
+If the uploaded PDF contains AcroForm fields, you MUST use those
+AcroForm fields for editing.
+
+If an AcroForm field exists, the PDF field name is the authoritative
+machine-readable target.
+
+You MUST output the exact field_name reported by the PDF.
+
+Do not convert, simplify, translate, rename, or reinterpret the field
+name.
+
+For example, if the PDF reports:
+
+applicant.name
+
+then the edit MUST contain:
+
+{{
+  "field_name": "applicant.name"
+}}
+
+Do not output a visual description such as "the applicant name field",
+"Name", "氏名", or coordinates instead of the actual field_name.
+
+The presence of an AcroForm field takes absolute priority over
+coordinate-based editing.
+
+You MUST NOT use x0, y0, x1, y1, page coordinates, or visual text
+placement for a value when a matching AcroForm field exists.
+
+For example, if the PDF contains these fields:
+
+- applicant.name
+- applicant.notes
+- applicant.subscribe
+- applicant.contact
+- applicant.country
+
+and the task requires entering the worker's name, you MUST return:
+
+{{
+  "filename": "sample-form.pdf",
+  "field_name": "applicant.name",
+  "value": "佐藤 健一"
+}}
+
+You MUST NOT return:
+
+{{
+  "filename": "sample-form.pdf",
+  "page": 1,
+  "x0": 180,
+  "y0": 126,
+  "x1": 468,
+  "y1": 148,
+  "text": "佐藤 健一"
+}}
+
+The second format is WRONG when an AcroForm field exists.
+
+For every piece of information you need to enter into the PDF:
+
+1. First determine whether an AcroForm field corresponds to that
+   information.
+2. If a matching AcroForm field exists, use its EXACT field_name.
+3. Return an edit using "field_name" and "value".
+4. Only use coordinate-based editing when NO suitable AcroForm field
+   exists anywhere in the PDF.
+
+NEVER choose coordinate editing merely because the field is visually
+located at the desired position.
+
+The actual AcroForm field name is the authoritative target.
+
+If you can identify the field but cannot determine its appropriate
+value, do not replace it with a coordinate edit. Report the missing
+information in "missing_data".
+
+For PDF forms containing AcroForm fields, coordinate edits should
+normally be ZERO unless the information genuinely has no corresponding
+AcroForm field.
+
+============================================================
+ACROFORM EXAMPLE
+============================================================
+
+Suppose the uploaded PDF contains these actual AcroForm fields:
+
+applicant.name
+applicant.notes
+applicant.subscribe
+applicant.contact
+applicant.country
+
+If the target worker is 佐藤 健一 and the form requires the worker's
+name, the required PDF edit is:
+
+{{
+  "filename": "sample-form.pdf",
+  "field_name": "applicant.name",
+  "value": "佐藤 健一"
+}}
+
+The model MUST NOT instead return a coordinate edit such as:
+
+{{
+  "filename": "sample-form.pdf",
+  "page": 1,
+  "x0": 180,
+  "y0": 126,
+  "x1": 468,
+  "y1": 148,
+  "text": "佐藤 健一"
+}}
+
+The coordinate version is incorrect because the PDF already contains
+the editable AcroForm field applicant.name.
+
+The application will apply the field_name/value instruction directly
+to the AcroForm field.
+
+Therefore, for every value that belongs to an existing AcroForm field,
+the model MUST produce a field_name/value PDF edit.
+
+============================================================
 IMPORTANT EDITING RULE
 ============================================================
 
 Do NOT merely describe how the form should be filled.
 
-Actually edit the uploaded document.
+For non-PDF documents that you are responsible for directly editing,
+actually edit the uploaded document and save the completed document.
 
-Do NOT return a hypothetical table of values instead of a completed
-document.
+For PDFs, do NOT create or modify the completed PDF yourself.
 
-The completed document is the primary output of this task.
+Instead, return the explicit machine-readable PDF edits required by the
+PDF instructions above.
+
+The application will apply those PDF edits and create the completed PDF.
+
+Do NOT return a hypothetical table of values instead of performing the
+required document processing.
+
+For PDF jobs, the "pdf_edits" array is the primary output of the task.
+
+For non-PDF jobs, the completed document is the primary output of the
+task.
 
 ============================================================
 EXISTING VALUES
@@ -2208,15 +2368,59 @@ Pay particular attention to:
 Do not declare success simply because a file was created.
 
 ============================================================
+OUTPUT LANGUAGE — JAPANESE ONLY
+============================================================
+
+ALL model-generated output MUST be in Japanese.
+
+This is a strict requirement. NEVER return English prose, explanations,
+summaries, recommendations, status messages, or error messages.
+
+Use Japanese for:
+- "summary"
+- "missing_data"
+- "recommendations"
+- Any descriptions of what was found or changed
+- Any explanations of problems or limitations
+- Any other human-readable text in the response
+
+The machine-readable JSON keys MUST remain exactly as specified in the
+output schema (for example: "summary", "completed", "files",
+"missing_data", and "recommendations"). Do not translate JSON keys.
+
+Values inside the JSON MUST be Japanese unless they are:
+- File paths
+- File names
+- Actual document content that must be preserved exactly
+- Proper nouns, names, addresses, company names, or other source data
+  that are originally written in another language
+- Technical identifiers such as PDF field names
+
+If source documents contain English text, preserve the original English
+when copying actual source data into the document or into a field where
+the source value itself must be preserved. However, all explanations
+about that data MUST be written in Japanese.
+
+If you are uncertain how to express something in Japanese, still write
+the response in Japanese. Do NOT fall back to English.
+
+Before returning your final response, verify that all human-readable
+output is Japanese.
+
+============================================================
 FINAL RESPONSE
 ============================================================
 
-After the actual files have been created, return ONLY valid JSON.
+Return ONLY valid JSON.
 
-Use exactly:
+All human-readable JSON values MUST be written in Japanese.
+
+The JSON keys below MUST remain in English exactly as shown.
+
+Success example:
 
 {{
-  "summary": "Brief description of what was actually completed.",
+  "summary": "フォームを正常に処理しました。",
   "completed": true,
   "files": [
     "output/example.xlsx"
@@ -2225,25 +2429,22 @@ Use exactly:
   "recommendations": []
 }}
 
-If the form is Japanese, summary, missing_data, and recommendations must
-be Japanese.
-
-"completed" is true only when a usable completed document was actually
-created.
-
-If the document could not be safely processed:
+Failure example:
 
 {{
   "summary": "フォームを安全に処理できませんでした。",
   "completed": false,
   "files": [],
   "missing_data": [
-    "具体的な理由"
+    "申請者の住所が確認できませんでした。"
   ],
   "recommendations": [
-    "必要な対応"
+    "申請者の住所を確認してから再度処理してください。"
   ]
 }}
 
-Do not claim success merely because an output file exists.
+NEVER produce an English value such as:
+"Unable to process the form."
+Instead, write:
+"フォームを安全に処理できませんでした。"
 """
