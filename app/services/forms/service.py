@@ -142,7 +142,6 @@ class FormJobService:
         ]
 
         if image_input_files:
-
           image_edits = agent_output.get(
             "image_edits",
             [],
@@ -157,6 +156,31 @@ class FormJobService:
             self._apply_image_edits(
               input_file=input_file,
               image_edits=image_edits,
+              output_dir=output_dir,
+            )
+
+        pdf_input_files = [
+          input_file
+          for input_file in input_files
+          if input_file.suffix.lower()
+          == ".pdf"
+        ]
+
+        if pdf_input_files:
+          pdf_edits = agent_output.get(
+            "pdf_edits",
+            [],
+          )
+
+          logger.info(
+            "PDF form returned %d edit(s)",
+            len(pdf_edits),
+          )
+
+          for input_file in pdf_input_files:
+            self._apply_pdf_edits(
+              input_file=input_file,
+              pdf_edits=pdf_edits,
               output_dir=output_dir,
             )
 
@@ -270,6 +294,12 @@ class FormJobService:
         for input_file in input_files
       )
 
+      has_pdf = any(
+        input_file.suffix.lower()
+        == ".pdf"
+        for input_file in input_files
+      )
+
       for input_file in input_files:
 
         logger.info(
@@ -340,11 +370,15 @@ class FormJobService:
             }
           )
 
-          code_interpreter_file_ids.append(
-            uploaded.id,
-          )
+          if suffix not in {
+            ".pdf",
+          }:
+            code_interpreter_file_ids.append(
+              uploaded.id,
+            )
 
       if has_image:
+
         image_instruction = """
 IMPORTANT: One or more uploaded files are images.
 
@@ -424,9 +458,130 @@ image.
           }
         )
 
+      if has_pdf:
+
+        pdf_instruction = """
+IMPORTANT: One or more uploaded files are PDF forms.
+
+The application, NOT Code Interpreter, will create the completed
+PDF.
+
+Your job is to inspect each PDF carefully and determine where each
+requested value belongs.
+
+You may use both the PDF's extracted text and its visual page
+layout.
+
+For every value that should be inserted into a PDF, return a
+"pdf_edits" entry.
+
+Each PDF edit MUST contain:
+
+- "filename": the original PDF filename
+- "page": the 1-based page number
+- "text": the exact text to insert
+- "x0": left coordinate of the field
+- "y0": top coordinate of the field
+- "x1": right coordinate of the field
+- "y1": bottom coordinate of the field
+
+IMPORTANT COORDINATE RULES:
+
+Coordinates must be expressed in PDF points.
+
+The coordinate system must use the TOP-LEFT corner of the page as
+the origin.
+
+x0/y0 is the upper-left corner of the field.
+
+x1/y1 is the lower-right corner of the field.
+
+Do NOT use pixel coordinates.
+
+Do NOT use normalized coordinates such as 0.0 to 1.0.
+
+Use the actual dimensions and coordinate system of the uploaded PDF.
+
+Identify the actual blank field where the value belongs.
+
+Do not simply place the text near the label.
+
+For example, if the PDF contains:
+
+氏名: ____________________
+
+and the requested value is:
+
+Joe Smith
+
+the bounding box should cover the blank area after 氏名:, not the
+label itself.
+
+Pay particular attention to:
+
+- Japanese labels
+- tables
+- checkboxes
+- signatures
+- dates
+- addresses
+- company names
+- employee names
+- numeric fields
+- multi-line fields
+
+Do not fabricate fields.
+
+Only return a pdf_edit when you can confidently identify the
+corresponding field.
+
+If requested information cannot be located confidently, put that
+information in "missing_data".
+
+The application will use PyMuPDF to insert the text into the
+returned bounding boxes.
+
+Do not create a completed PDF yourself.
+
+Do not use Code Interpreter to create the PDF.
+
+Your response MUST be valid JSON with this structure:
+
+{
+  "summary": "...",
+  "completed": true,
+  "files": [],
+  "pdf_edits": [
+    {
+      "filename": "form.pdf",
+      "page": 1,
+      "text": "Joe Smith",
+      "x0": 125,
+      "y0": 210,
+      "x1": 305,
+      "y1": 240
+    }
+  ],
+  "missing_data": [],
+  "recommendations": []
+}
+
+For a PDF job, "files" MUST remain an empty array because the
+application, rather than Code Interpreter, creates the completed
+PDF.
+"""
+
+        content.append(
+          {
+            "type": "input_text",
+            "text": pdf_instruction,
+          }
+        )
+
       tools = []
 
       if code_interpreter_file_ids:
+
         tools.append(
           {
             "type": "code_interpreter",
@@ -462,6 +617,7 @@ image.
       for index, item in enumerate(
         response.output,
       ):
+
         logger.info(
           "OpenAI response output[%s]: type=%s",
           index,
@@ -513,7 +669,8 @@ image.
         raw_output,
       )
 
-      if not has_image:
+      if not has_image and not has_pdf:
+
         self._extract_output_files_from_response(
           response=response,
           agent_output=agent_output,
@@ -523,16 +680,22 @@ image.
       return agent_output
 
     finally:
+
       for _, uploaded in uploaded_files:
+
         try:
+
           self.openai.files.delete(
             uploaded.id,
           )
+
         except Exception:
+
           logger.exception(
             "Failed to delete OpenAI file %s",
             uploaded.id,
           )
+
 
   def _extract_output_files_from_response(
     self,
@@ -976,6 +1139,181 @@ image.
 
     return output_path
 
+  
+  def _apply_pdf_edits(
+    self,
+    input_file: Path,
+    pdf_edits: list[dict],
+    output_dir: Path,
+  ) -> Path:
+
+    import fitz
+
+    output_dir.mkdir(
+      parents=True,
+      exist_ok=True,
+    )
+
+    logger.info(
+      "Applying %d PDF edit(s) to %s",
+      len(pdf_edits),
+      input_file.name,
+    )
+
+    document = fitz.open(
+      input_file,
+    )
+
+    font_path = (
+      "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf"
+    )
+
+    if not font_path:
+      document.close()
+
+      raise ValueError(
+        "Required NotoSansJP-Regular.ttf font was not found.",
+      )
+
+    logger.info(
+      "Using PDF form font: %s",
+      font_path,
+    )
+
+    applied_count = 0
+
+    for edit in pdf_edits:
+
+      filename = edit.get(
+        "filename",
+      )
+
+      if filename and filename != input_file.name:
+        continue
+
+      page_number = edit.get(
+        "page",
+      )
+
+      text = edit.get(
+        "text",
+      )
+
+      try:
+
+        page_number = int(
+          page_number,
+        )
+
+        x0 = float(
+          edit.get("x0"),
+        )
+
+        y0 = float(
+          edit.get("y0"),
+        )
+
+        x1 = float(
+          edit.get("x1"),
+        )
+
+        y1 = float(
+          edit.get("y1"),
+        )
+
+      except (
+        TypeError,
+        ValueError,
+      ):
+
+        logger.warning(
+          "Skipping PDF edit with invalid values: %s",
+          edit,
+        )
+
+        continue
+
+      if not text:
+        continue
+
+      page_index = (
+        page_number - 1
+      )
+
+      if (
+        page_index < 0
+        or page_index >= document.page_count
+      ):
+
+        logger.warning(
+          "Skipping PDF edit with invalid page: %s",
+          edit,
+        )
+
+        continue
+
+      page = document[
+        page_index
+      ]
+
+      rect = fitz.Rect(
+        x0,
+        y0,
+        x1,
+        y1,
+      )
+
+      font_size = max(
+        6,
+        rect.height * 0.70,
+      )
+
+      logger.info(
+        "Applying PDF edit: page=%s text=%r bbox=%s font_size=%s",
+        page_number,
+        text,
+        rect,
+        font_size,
+      )
+
+      page.insert_textbox(
+        rect,
+        str(text),
+        fontname="NotoSansJP",
+        fontfile=font_path,
+        fontsize=font_size,
+        color=(0, 0, 0),
+        align=fitz.TEXT_ALIGN_CENTER,
+        overlay=True,
+      )
+
+      applied_count += 1
+
+    output_path = (
+      output_dir
+      / f"{input_file.stem}_completed.pdf"
+    )
+
+    document.save(
+      output_path,
+      garbage=4,
+      deflate=True,
+    )
+
+    document.close()
+
+    logger.info(
+      "Saved completed PDF: %s",
+      output_path,
+    )
+
+    logger.info(
+      "Applied %d/%d PDF edit(s)",
+      applied_count,
+      len(pdf_edits),
+    )
+
+    return output_path
 
   def _parse_agent_output(
     self,

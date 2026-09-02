@@ -25,5 +25,3 @@ botocore[crt]
 stripe
 
 Pillow
-
-openai-agents[vercel]
