@@ -2031,11 +2031,11 @@ field names as the primary targets for edits.
 For every AcroForm field that should be changed, return a PDF edit using
 this structure:
 
-{
+{{
   "filename": "example.pdf",
   "field_name": "applicant.name",
   "value": "佐藤 健一"
-}
+}}
 
 The "field_name" must be the actual field name from the PDF.
 
@@ -2046,25 +2046,25 @@ AcroForm field is available.
 
 Examples:
 
-{
+{{
   "filename": "sample-form.pdf",
   "field_name": "applicant.name",
   "value": "佐藤 健一"
-}
+}}
 
-{
+{{
   "filename": "sample-form.pdf",
   "field_name": "applicant.notes",
   "value": "現場作業員"
-}
+}}
 
 For checkboxes, use a boolean value when possible:
 
-{
+{{
   "filename": "sample-form.pdf",
   "field_name": "applicant.subscribe",
   "value": true
-}
+}}
 
 For radio buttons and dropdowns, use the actual option value represented
 by the PDF field.
@@ -2083,7 +2083,7 @@ edits for fields that can be reliably located.
 
 Coordinate-based PDF edits must use this structure:
 
-{
+{{
   "filename": "example.pdf",
   "page": 1,
   "x0": 100,
@@ -2091,7 +2091,7 @@ Coordinate-based PDF edits must use this structure:
   "x1": 300,
   "y1": 230,
   "text": "佐藤 健一"
-}
+}}
 
 Use coordinate-based edits only when an actual editable AcroForm field
 does not exist for the target field.
