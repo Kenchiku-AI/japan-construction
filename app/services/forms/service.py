@@ -534,25 +534,6 @@ image.
             uploaded.id,
           )
 
-  def _find_font(
-    self,
-  ) -> str | None:
-
-    font_candidates = [
-      "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-      "/usr/share/fonts/opentype/noto/NotoSansCJKJP-Regular.otf",
-      "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
-      "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf",
-      "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ]
-
-    for font_path in font_candidates:
-      if Path(font_path).exists():
-        return font_path
-
-    return None
-
-
   def _extract_output_files_from_response(
     self,
     response,
@@ -760,7 +741,9 @@ image.
       image,
     )
 
-    font_path = self._find_font()
+    font_path = (
+      "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf"
+    )
 
     if font_path:
       logger.info(
