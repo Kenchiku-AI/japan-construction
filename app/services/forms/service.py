@@ -325,21 +325,19 @@ class FormJobService:
         "OpenAI form processing completed",
       )
 
+      raw_output = response.output_text
+
+      agent_output = self._parse_agent_output(
+        raw_output,
+      )
+
       self._extract_output_files_from_response(
         response=response,
+        agent_output=agent_output,
         output_dir=output_dir,
       )
 
-      raw_output = response.output_text
-
-      logger.info(
-        "OpenAI final response: %s",
-        raw_output,
-      )
-
-      return self._parse_agent_output(
-        raw_output,
-      )
+      return agent_output
 
     finally:
       for uploaded in uploaded_files:
@@ -357,6 +355,7 @@ class FormJobService:
   def _extract_output_files_from_response(
     self,
     response,
+    agent_output: dict,
     output_dir: Path,
   ) -> None:
 
@@ -365,122 +364,133 @@ class FormJobService:
       exist_ok=True,
     )
 
-    container_files = []
+    requested_files = agent_output.get(
+      "files",
+      [],
+    )
 
-    # The model's final text can contain container_file_citation
-    # annotations for files it created in Code Interpreter.
+    if not requested_files:
+      logger.warning(
+        "OpenAI response did not report any output files."
+      )
+      return
+
+    logger.info(
+      "Model reported output files: %s",
+      requested_files,
+    )
+
+    container_id = None
+
     for item in response.output:
 
       if getattr(
         item,
         "type",
         None,
-      ) != "message":
+      ) != "code_interpreter_call":
         continue
 
-      for content in getattr(
+      container_id = getattr(
         item,
-        "content",
-        [],
-      ):
-
-        if getattr(
-          content,
-          "type",
-          None,
-        ) != "output_text":
-          continue
-
-        for annotation in getattr(
-          content,
-          "annotations",
-          [],
-        ):
-
-          if getattr(
-            annotation,
-            "type",
-            None,
-          ) != "container_file_citation":
-            continue
-
-          container_id = getattr(
-            annotation,
-            "container_id",
-            None,
-          )
-
-          file_id = getattr(
-            annotation,
-            "file_id",
-            None,
-          )
-
-          filename = getattr(
-            annotation,
-            "filename",
-            None,
-          )
-
-          if not container_id or not file_id:
-            continue
-
-          container_files.append(
-            (
-              container_id,
-              file_id,
-              filename,
-            )
-          )
-
-    # Remove duplicates while preserving order.
-    seen = set()
-
-    unique_container_files = []
-
-    for container_id, file_id, filename in container_files:
-
-      key = (
-        container_id,
-        file_id,
+        "container_id",
+        None,
       )
 
-      if key in seen:
-        continue
+      if container_id:
+        break
 
-      seen.add(key)
-
-      unique_container_files.append(
-        (
-          container_id,
-          file_id,
-          filename,
-        )
+    if not container_id:
+      raise ValueError(
+        "OpenAI Code Interpreter response did not contain "
+        "a container ID."
       )
 
-    if not unique_container_files:
-      logger.warning(
-        "No container_file_citation annotations found in "
-        "OpenAI response."
-      )
-
-      return
-
-    for (
+    logger.info(
+      "Using Code Interpreter container: %s",
       container_id,
-      file_id,
-      filename,
-    ) in unique_container_files:
+    )
 
-      if not filename:
-        filename = f"output-{file_id}"
+    response_files = (
+      self.openai.containers.files.list(
+        container_id,
+      )
+    )
+
+    container_files = list(
+      response_files.data
+    )
+
+    logger.info(
+      "Code Interpreter container contains %d files",
+      len(container_files),
+    )
+
+    for container_file in container_files:
 
       logger.info(
-        "Downloading Code Interpreter output: "
+        "Container file: id=%s filename=%s",
+        getattr(
+          container_file,
+          "id",
+          None,
+        ),
+        getattr(
+          container_file,
+          "filename",
+          None,
+        ),
+      )
+
+    for requested_path in requested_files:
+
+      requested_filename = Path(
+        requested_path
+      ).name
+
+      matching_file = None
+
+      for container_file in container_files:
+
+        container_filename = getattr(
+          container_file,
+          "filename",
+          None,
+        )
+
+        if container_filename == requested_filename:
+          matching_file = container_file
+          break
+
+      if matching_file is None:
+
+        logger.warning(
+          "Could not find requested output file in "
+          "Code Interpreter container: %s",
+          requested_filename,
+        )
+
+        continue
+
+      file_id = getattr(
+        matching_file,
+        "id",
+        None,
+      )
+
+      if not file_id:
+        logger.warning(
+          "Container file has no file ID: %s",
+          requested_filename,
+        )
+        continue
+
+      logger.info(
+        "Downloading requested Code Interpreter output: "
         "container=%s file=%s filename=%s",
         container_id,
         file_id,
-        filename,
+        requested_filename,
       )
 
       file_content = (
@@ -491,7 +501,7 @@ class FormJobService:
       )
 
       destination = (
-        output_dir / filename
+        output_dir / requested_filename
       )
 
       destination.parent.mkdir(
