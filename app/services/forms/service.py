@@ -347,6 +347,16 @@ class FormJobService:
           item,
           "type",
           None,
+        ) == "message":
+          logger.info(
+            "OpenAI message output: %r",
+            item,
+          )
+
+        if getattr(
+          item,
+          "type",
+          None,
         ) == "code_interpreter_call":
 
           logger.info(
