@@ -364,163 +364,84 @@ class FormJobService:
       exist_ok=True,
     )
 
-    requested_files = agent_output.get(
-      "files",
-      [],
+    logger.info(
+      "========== CODE INTERPRETER OUTPUT DEBUG =========="
     )
-
-    if not requested_files:
-      logger.warning(
-        "OpenAI response did not report any output files."
-      )
-      return
 
     logger.info(
-      "Model reported output files: %s",
-      requested_files,
+      "Agent reported files: %s",
+      agent_output.get("files"),
     )
 
-    container_id = None
-
     for item in response.output:
+
+      logger.info(
+        "Response output item: type=%s",
+        getattr(
+          item,
+          "type",
+          None,
+        ),
+      )
+
+      logger.info(
+        "Response output item repr: %r",
+        item,
+      )
 
       if getattr(
         item,
         "type",
         None,
-      ) != "code_interpreter_call":
-        continue
+      ) == "code_interpreter_call":
 
-      container_id = getattr(
-        item,
-        "container_id",
-        None,
-      )
-
-      if container_id:
-        break
-
-    if not container_id:
-      raise ValueError(
-        "OpenAI Code Interpreter response did not contain "
-        "a container ID."
-      )
-
-    logger.info(
-      "Using Code Interpreter container: %s",
-      container_id,
-    )
-
-    response_files = (
-      self.openai.containers.files.list(
-        container_id,
-      )
-    )
-
-    container_files = list(
-      response_files.data
-    )
-
-    logger.info(
-      "Code Interpreter container contains %d files",
-      len(container_files),
-    )
-
-    for container_file in container_files:
-
-      logger.info(
-        "Container file: id=%s filename=%s",
-        getattr(
-          container_file,
-          "id",
-          None,
-        ),
-        getattr(
-          container_file,
-          "filename",
-          None,
-        ),
-      )
-
-    for requested_path in requested_files:
-
-      requested_filename = Path(
-        requested_path
-      ).name
-
-      matching_file = None
-
-      for container_file in container_files:
-
-        container_filename = getattr(
-          container_file,
-          "filename",
+        container_id = getattr(
+          item,
+          "container_id",
           None,
         )
 
-        if container_filename == requested_filename:
-          matching_file = container_file
-          break
-
-      if matching_file is None:
-
-        logger.warning(
-          "Could not find requested output file in "
-          "Code Interpreter container: %s",
-          requested_filename,
-        )
-
-        continue
-
-      file_id = getattr(
-        matching_file,
-        "id",
-        None,
-      )
-
-      if not file_id:
-        logger.warning(
-          "Container file has no file ID: %s",
-          requested_filename,
-        )
-        continue
-
-      logger.info(
-        "Downloading requested Code Interpreter output: "
-        "container=%s file=%s filename=%s",
-        container_id,
-        file_id,
-        requested_filename,
-      )
-
-      file_content = (
-        self.openai.containers.files.content(
+        logger.info(
+          "Code Interpreter container ID: %s",
           container_id,
-          file_id,
-        )
-      )
-
-      destination = (
-        output_dir / requested_filename
-      )
-
-      destination.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-      )
-
-      with destination.open(
-        "wb",
-      ) as file_handle:
-
-        file_handle.write(
-          file_content.read(),
         )
 
-      logger.info(
-        "Saved Code Interpreter output: %s",
-        destination,
-      )
+        if not container_id:
+          continue
+
+        response_files = (
+          self.openai.containers.files.list(
+            container_id,
+          )
+        )
+
+        logger.info(
+          "Container file list response: %r",
+          response_files,
+        )
+
+        for container_file in response_files.data:
+
+          logger.info(
+            "CONTAINER FILE: id=%s filename=%s repr=%r",
+            getattr(
+              container_file,
+              "id",
+              None,
+            ),
+            getattr(
+              container_file,
+              "filename",
+              None,
+            ),
+            container_file,
+          )
+
+    logger.info(
+      "========== END CODE INTERPRETER OUTPUT DEBUG =========="
+    )
+
+    return
 
 
   def _parse_agent_output(
