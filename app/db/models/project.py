@@ -48,20 +48,6 @@ class Project(Base):
     cascade="all, delete-orphan",
   )
 
-  users = relationship(
-    "User",
-    secondary="project_user_links",
-    primaryjoin="Project.id == ProjectUserLink.project_id",
-    secondaryjoin="User.id == ProjectUserLink.user_id",
-    viewonly=True,
-  )
-
-  user_links = relationship(
-    "ProjectUserLink",
-    back_populates="project",
-    cascade="all, delete-orphan",
-  )
-
   guest_links = relationship(
     "ProjectGuestLink",
     back_populates="project",
