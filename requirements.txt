@@ -1,6 +1,7 @@
 fastapi
 gunicorn
 uvicorn[standard]
+httpx
 
 sqlalchemy>=2.0
 asyncpg
