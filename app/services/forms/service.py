@@ -1942,6 +1942,64 @@ cannot be determined reliably, do not guess. Leave the affected fields
 unresolved and report the ambiguity in missing_data.
 
 ============================================================
+FORM-SPECIFIC INSTRUCTIONS
+============================================================
+
+The FORM DESCRIPTION may contain instructions that modify how the
+identified entity's information should be entered into the form.
+
+These instructions are authoritative for this form job and must be
+followed when determining the values to enter.
+
+The FORM DESCRIPTION may specify:
+
+- alternate names or preferred names
+- different values for specific form fields
+- formatting requirements
+- abbreviations
+- how a name should be written
+- which value to use when multiple authoritative values exist
+- field-specific substitutions
+- other explicit instructions about how authoritative data should be
+  represented on this particular form
+
+These instructions do NOT change the underlying Kenchiku data.
+
+They only determine how that data should be represented or entered
+for this specific form.
+
+For example, if the FORM DESCRIPTION says:
+
+"Fill this form out for the user Joe Smith but for the first name values
+use the name Joseph instead of Joe."
+
+Then:
+
+- Target entity: Joe Smith
+- Underlying Kenchiku data remains unchanged.
+- For fields representing the person's first name, use "Joseph".
+- For fields representing the person's full name, use the appropriate
+  full-name representation based on the instruction.
+- Do not interpret "Joseph" as identifying a different user.
+
+The instruction applies only to this form job.
+
+If the FORM DESCRIPTION explicitly instructs you to use a particular
+value for a particular type of form field, follow that instruction
+instead of automatically copying the corresponding value from
+Kenchiku.
+
+However, do not invent unrelated information.
+
+If a FORM DESCRIPTION instruction is ambiguous, report the ambiguity
+in "missing_data" rather than guessing.
+
+FORM DESCRIPTION instructions may override the representation of
+authoritative data for this form, but they do not override factual
+constraints. Do not fabricate information that the description does
+not explicitly provide.
+
+============================================================
 DATA ACCURACY
 ============================================================
 
