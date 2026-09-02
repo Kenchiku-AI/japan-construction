@@ -365,83 +365,153 @@ class FormJobService:
     )
 
     logger.info(
-      "========== CODE INTERPRETER OUTPUT DEBUG =========="
+      "========== EXTRACTING CODE INTERPRETER OUTPUT FILES =========="
+    )
+
+    # Prefer the files the agent said it created when determining
+    # which filenames we ultimately expect.
+    reported_files = agent_output.get(
+      "files",
+      [],
     )
 
     logger.info(
       "Agent reported files: %s",
-      agent_output.get("files"),
+      reported_files,
     )
 
+    container_ids = []
+
     for item in response.output:
-
-      logger.info(
-        "Response output item: type=%s",
-        getattr(
-          item,
-          "type",
-          None,
-        ),
-      )
-
-      logger.info(
-        "Response output item repr: %r",
-        item,
-      )
-
       if getattr(
         item,
         "type",
         None,
-      ) == "code_interpreter_call":
+      ) != "code_interpreter_call":
+        continue
 
-        container_id = getattr(
-          item,
-          "container_id",
+      container_id = getattr(
+        item,
+        "container_id",
+        None,
+      )
+
+      if (
+        container_id
+        and container_id not in container_ids
+      ):
+        container_ids.append(
+          container_id,
+        )
+
+    if not container_ids:
+      logger.warning(
+        "No Code Interpreter container IDs found in response.",
+      )
+      return
+
+    extracted_files = []
+
+    for container_id in container_ids:
+
+      logger.info(
+        "Listing files in Code Interpreter container: %s",
+        container_id,
+      )
+
+      response_files = (
+        self.openai.containers.files.list(
+          container_id,
+        )
+      )
+
+      for container_file in response_files.data:
+
+        file_id = getattr(
+          container_file,
+          "id",
+          None,
+        )
+
+        file_path = getattr(
+          container_file,
+          "path",
+          None,
+        )
+
+        source = getattr(
+          container_file,
+          "source",
           None,
         )
 
         logger.info(
-          "Code Interpreter container ID: %s",
-          container_id,
+          "Container file: id=%s path=%s source=%s",
+          file_id,
+          file_path,
+          source,
         )
 
-        if not container_id:
+        if not file_id or not file_path:
           continue
 
-        response_files = (
-          self.openai.containers.files.list(
-            container_id,
-          )
+        # Only retrieve files that the agent placed in its
+        # designated output directory.
+        if not file_path.startswith(
+          "/mnt/data/output/",
+        ):
+          continue
+
+        filename = Path(
+          file_path,
+        ).name
+
+        if not filename:
+          continue
+
+        local_path = (
+          output_dir / filename
         )
 
         logger.info(
-          "Container file list response: %r",
-          response_files,
+          "Downloading generated output file: %s -> %s",
+          file_path,
+          local_path,
         )
 
-        for container_file in response_files.data:
+        file_content = (
+          self.openai.containers.files.content.retrieve(
+            container_id=container_id,
+            file_id=file_id,
+          )
+        )
 
-          logger.info(
-            "CONTAINER FILE: id=%s filename=%s repr=%r",
-            getattr(
-              container_file,
-              "id",
-              None,
-            ),
-            getattr(
-              container_file,
-              "filename",
-              None,
-            ),
-            container_file,
+        with open(
+          local_path,
+          "wb",
+        ) as f:
+          f.write(
+            file_content.content,
           )
 
+        extracted_files.append(
+          str(local_path),
+        )
+
+        logger.info(
+          "Successfully extracted output file: %s",
+          local_path,
+        )
+
     logger.info(
-      "========== END CODE INTERPRETER OUTPUT DEBUG =========="
+      "Extracted %d output file(s): %s",
+      len(extracted_files),
+      extracted_files,
     )
 
-    return
+    logger.info(
+      "========== END EXTRACTING CODE INTERPRETER OUTPUT FILES =========="
+    )
 
 
   def _parse_agent_output(
