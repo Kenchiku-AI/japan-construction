@@ -20,7 +20,6 @@ from app.db.models import (
   ConversationItem,
   ConversationItemType,
   ConversationItemTypeLink,
-  ProjectUserLink,
   CustomField,
   CustomFieldDefinition,
   CustomFieldProjectLink,
@@ -318,7 +317,6 @@ async def build_project_response(
     conversation_items=conversation_items,
     custom_fields=custom_fields,
     custom_relationships=custom_relationships,
-    users=project.users,
   )
 
 @router.get("", response_model=List[ProjectWithCompanyName])
@@ -411,7 +409,6 @@ async def get_project(
       .where(Project.id == project_id)
       .options(
         selectinload(Project.reports),
-        selectinload(Project.users),
         selectinload(Project.conversations)
           .selectinload(LineConversation.item_type_links)
           .selectinload(ConversationItemTypeLink.item_type),
@@ -439,7 +436,6 @@ async def get_project(
       .where(Project.id == project_id)
       .options(
         selectinload(Project.reports),
-        selectinload(Project.users),
         selectinload(Project.conversations)
           .selectinload(LineConversation.item_type_links)
           .selectinload(ConversationItemTypeLink.item_type),
@@ -505,7 +501,6 @@ async def create_project(
     .where(Project.id == project.id)
     .options(
       selectinload(Project.reports),
-      selectinload(Project.users),
       selectinload(Project.conversations)
         .selectinload(LineConversation.item_type_links)
         .selectinload(ConversationItemTypeLink.item_type),
@@ -561,7 +556,6 @@ async def update_project(
     .where(Project.id == project_id)
     .options(
       selectinload(Project.reports),
-      selectinload(Project.users),
       selectinload(Project.conversations)
         .selectinload(LineConversation.item_type_links)
         .selectinload(ConversationItemTypeLink.item_type),
@@ -656,116 +650,3 @@ async def delete_project(
   await db.commit()
 
   return None
-
-@router.put(
-  "/{project_id}/users",
-  response_model=List[UserRead],
-)
-async def set_project_users(
-  project_id: UUID,
-  payload: ProjectSetUsers,
-  db: AsyncSession = Depends(get_db),
-  current_user: User = Depends(get_current_user),
-):
-  project = await db.get(Project, project_id)
-
-  if not project:
-    raise HTTPException(
-      status_code=status.HTTP_404_NOT_FOUND,
-      detail="Project not found",
-    )
-
-  if current_user.role != "admin":
-    require_company_manager(
-      current_user,
-      project.company_id,
-    )
-
-  user_ids = list(set(payload.user_ids))
-
-  if user_ids:
-    result = await db.execute(
-      select(User).where(
-        User.id.in_(user_ids),
-        User.company_id == project.company_id,
-      )
-    )
-
-    users = result.scalars().all()
-
-    found_user_ids = {
-      user.id
-      for user in users
-    }
-
-    missing_user_ids = [
-      user_id
-      for user_id in user_ids
-      if user_id not in found_user_ids
-    ]
-
-    if missing_user_ids:
-      raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="One or more users do not belong to the project company",
-      )
-  else:
-    users = []
-
-  result = await db.execute(
-    select(ProjectUserLink).where(
-      ProjectUserLink.project_id == project_id
-    )
-  )
-
-  existing_links = result.scalars().all()
-
-  existing_user_ids = {
-    link.user_id
-    for link in existing_links
-  }
-
-  requested_user_ids = set(user_ids)
-
-  links_to_delete = [
-    link
-    for link in existing_links
-    if link.user_id not in requested_user_ids
-  ]
-
-  links_to_create = [
-    user_id
-    for user_id in requested_user_ids
-    if user_id not in existing_user_ids
-  ]
-
-  for link in links_to_delete:
-    await db.delete(link)
-
-  for user_id in links_to_create:
-    db.add(
-      ProjectUserLink(
-        project_id=project_id,
-        user_id=user_id,
-      )
-    )
-
-  await db.commit()
-
-  result = await db.execute(
-    select(User)
-    .join(
-      ProjectUserLink,
-      ProjectUserLink.user_id == User.id,
-    )
-    .where(
-      ProjectUserLink.project_id == project_id,
-    )
-    .order_by(
-      User.first_name,
-      User.last_name,
-      User.email,
-    )
-  )
-
-  return result.scalars().all()
