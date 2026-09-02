@@ -211,187 +211,187 @@ class FormJobService:
       raise
 
 
-    async def _run_openai_form_agent(
-      self,
-      prompt: str,
-      input_files: list[Path],
-      output_dir: Path,
-    ) -> dict:
+  async def _run_openai_form_agent(
+    self,
+    prompt: str,
+    input_files: list[Path],
+    output_dir: Path,
+  ) -> dict:
 
-      uploaded_files = []
+    uploaded_files = []
 
-      try:
-        for input_file in input_files:
+    try:
+      for input_file in input_files:
+
+        logger.info(
+          "Uploading form file to OpenAI: %s",
+          input_file.name,
+        )
+
+        with input_file.open(
+          "rb",
+        ) as file_handle:
+
+          uploaded = self.openai.files.create(
+            file=file_handle,
+            purpose="user_data",
+          )
+
+        uploaded_files.append(
+          (
+            input_file,
+            uploaded,
+          ),
+        )
+
+      content = [
+        {
+          "type": "input_text",
+          "text": prompt,
+        },
+      ]
+
+      code_interpreter_file_ids = []
+
+      for input_file, uploaded in uploaded_files:
+
+        suffix = input_file.suffix.lower()
+
+        if suffix in {
+          ".jpg",
+          ".jpeg",
+          ".png",
+          ".webp",
+          ".gif",
+        }:
 
           logger.info(
-            "Uploading form file to OpenAI: %s",
+            "Adding image to OpenAI vision input: %s",
             input_file.name,
           )
 
-          with input_file.open(
-            "rb",
-          ) as file_handle:
-
-            uploaded = self.openai.files.create(
-              file=file_handle,
-              purpose="user_data",
-            )
-
-          uploaded_files.append(
-            (
-              input_file,
-              uploaded,
-            ),
-          )
-
-        content = [
-          {
-            "type": "input_text",
-            "text": prompt,
-          },
-        ]
-
-        code_interpreter_file_ids = []
-
-        for input_file, uploaded in uploaded_files:
-
-          suffix = input_file.suffix.lower()
-
-          if suffix in {
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".webp",
-            ".gif",
-          }:
-
-            logger.info(
-              "Adding image to OpenAI vision input: %s",
-              input_file.name,
-            )
-
-            content.append(
-              {
-                "type": "input_image",
-                "file_id": uploaded.id,
-              }
-            )
-
-          else:
-
-            logger.info(
-              "Adding document to OpenAI input: %s",
-              input_file.name,
-            )
-
-            content.append(
-              {
-                "type": "input_file",
-                "file_id": uploaded.id,
-              }
-            )
-
-            code_interpreter_file_ids.append(
-              uploaded.id,
-            )
-
-        tools = []
-
-        if code_interpreter_file_ids:
-          tools.append(
+          content.append(
             {
-              "type": "code_interpreter",
-              "container": {
-                "type": "auto",
-                "file_ids": code_interpreter_file_ids,
-              },
+              "type": "input_image",
+              "file_id": uploaded.id,
             }
           )
 
-        response = self.openai.responses.create(
-          model="gpt-5.6",
-          reasoning={
-            "effort": "high",
-          },
-          include=[
-            "code_interpreter_call.outputs",
-          ],
-          tools=tools,
-          input=[
-            {
-              "role": "user",
-              "content": content,
-            },
-          ],
-        )
+        else:
 
-        logger.info(
-          "OpenAI response status: %s",
-          response.status,
-        )
-
-        for index, item in enumerate(
-          response.output,
-        ):
           logger.info(
-            "OpenAI response output[%s]: type=%s",
-            index,
+            "Adding document to OpenAI input: %s",
+            input_file.name,
+          )
+
+          content.append(
+            {
+              "type": "input_file",
+              "file_id": uploaded.id,
+            }
+          )
+
+          code_interpreter_file_ids.append(
+            uploaded.id,
+          )
+
+      tools = []
+
+      if code_interpreter_file_ids:
+        tools.append(
+          {
+            "type": "code_interpreter",
+            "container": {
+              "type": "auto",
+              "file_ids": code_interpreter_file_ids,
+            },
+          }
+        )
+
+      response = self.openai.responses.create(
+        model="gpt-5.6",
+        reasoning={
+          "effort": "high",
+        },
+        include=[
+          "code_interpreter_call.outputs",
+        ],
+        tools=tools,
+        input=[
+          {
+            "role": "user",
+            "content": content,
+          },
+        ],
+      )
+
+      logger.info(
+        "OpenAI response status: %s",
+        response.status,
+      )
+
+      for index, item in enumerate(
+        response.output,
+      ):
+        logger.info(
+          "OpenAI response output[%s]: type=%s",
+          index,
+          getattr(
+            item,
+            "type",
+            None,
+          ),
+        )
+
+        if getattr(
+          item,
+          "type",
+          None,
+        ) == "code_interpreter_call":
+
+          logger.info(
+            "Code Interpreter container_id=%s outputs=%s",
             getattr(
               item,
-              "type",
+              "container_id",
+              None,
+            ),
+            getattr(
+              item,
+              "outputs",
               None,
             ),
           )
 
-          if getattr(
-            item,
-            "type",
-            None,
-          ) == "code_interpreter_call":
+      logger.info(
+        "OpenAI form processing completed",
+      )
 
-            logger.info(
-              "Code Interpreter container_id=%s outputs=%s",
-              getattr(
-                item,
-                "container_id",
-                None,
-              ),
-              getattr(
-                item,
-                "outputs",
-                None,
-              ),
-            )
+      raw_output = response.output_text
 
-        logger.info(
-          "OpenAI form processing completed",
-        )
+      agent_output = self._parse_agent_output(
+        raw_output,
+      )
 
-        raw_output = response.output_text
+      self._extract_output_files_from_response(
+        response=response,
+        agent_output=agent_output,
+        output_dir=output_dir,
+      )
 
-        agent_output = self._parse_agent_output(
-          raw_output,
-        )
+      return agent_output
 
-        self._extract_output_files_from_response(
-          response=response,
-          agent_output=agent_output,
-          output_dir=output_dir,
-        )
-
-        return agent_output
-
-      finally:
-        for _, uploaded in uploaded_files:
-          try:
-            self.openai.files.delete(
-              uploaded.id,
-            )
-          except Exception:
-            logger.exception(
-              "Failed to delete OpenAI file %s",
-              uploaded.id,
-            )
+    finally:
+      for _, uploaded in uploaded_files:
+        try:
+          self.openai.files.delete(
+            uploaded.id,
+          )
+        except Exception:
+          logger.exception(
+            "Failed to delete OpenAI file %s",
+            uploaded.id,
+          )
 
   def _extract_output_files_from_response(
     self,
