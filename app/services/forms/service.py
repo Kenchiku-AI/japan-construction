@@ -238,7 +238,10 @@ class FormJobService:
           )
 
         uploaded_files.append(
-          uploaded,
+          (
+            input_file,
+            uploaded,
+          ),
         )
 
       content = [
@@ -248,11 +251,60 @@ class FormJobService:
         },
       ]
 
-      for uploaded in uploaded_files:
-        content.append(
+      code_interpreter_file_ids = []
+
+      for input_file, uploaded in uploaded_files:
+
+        suffix = input_file.suffix.lower()
+
+        if suffix in {
+          ".jpg",
+          ".jpeg",
+          ".png",
+          ".webp",
+          ".gif",
+        }:
+
+          logger.info(
+            "Adding image to OpenAI vision input: %s",
+            input_file.name,
+          )
+
+          content.append(
+            {
+              "type": "input_image",
+              "file_id": uploaded.id,
+            }
+          )
+
+        else:
+
+          logger.info(
+            "Adding document to OpenAI input: %s",
+            input_file.name,
+          )
+
+          content.append(
+            {
+              "type": "input_file",
+              "file_id": uploaded.id,
+            }
+          )
+
+          code_interpreter_file_ids.append(
+            uploaded.id,
+          )
+
+      tools = []
+
+      if code_interpreter_file_ids:
+        tools.append(
           {
-            "type": "input_file",
-            "file_id": uploaded.id,
+            "type": "code_interpreter",
+            "container": {
+              "type": "auto",
+              "file_ids": code_interpreter_file_ids,
+            },
           }
         )
 
@@ -264,18 +316,7 @@ class FormJobService:
         include=[
           "code_interpreter_call.outputs",
         ],
-        tools=[
-          {
-            "type": "code_interpreter",
-            "container": {
-              "type": "auto",
-              "file_ids": [
-                uploaded.id
-                for uploaded in uploaded_files
-              ],
-            },
-          },
-        ],
+        tools=tools,
         input=[
           {
             "role": "user",
@@ -307,6 +348,7 @@ class FormJobService:
           "type",
           None,
         ) == "code_interpreter_call":
+
           logger.info(
             "Code Interpreter container_id=%s outputs=%s",
             getattr(
@@ -340,7 +382,7 @@ class FormJobService:
       return agent_output
 
     finally:
-      for uploaded in uploaded_files:
+      for _, uploaded in uploaded_files:
         try:
           self.openai.files.delete(
             uploaded.id,
@@ -350,7 +392,6 @@ class FormJobService:
             "Failed to delete OpenAI file %s",
             uploaded.id,
           )
-
 
   def _extract_output_files_from_response(
     self,
