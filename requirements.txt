@@ -26,3 +26,4 @@ botocore[crt]
 stripe
 
 Pillow
+PyMuPDF

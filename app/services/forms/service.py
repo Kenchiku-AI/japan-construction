@@ -1561,19 +1561,85 @@ Do not retrieve additional Kenchiku information.
 ENTITY SELECTION
 ============================================================
 
-When determining which Kenchiku entity should provide a value:
+The FORM DESCRIPTION may identify the specific Kenchiku entity that the
+form should be completed for.
 
-1. Start with the primary project when one exists.
-2. Follow explicit relationships from that project.
-3. Use the semantic meaning of each relationship.
-4. Follow relevant relationships to users, companies, and custom objects.
-5. Use custom fields belonging to the relevant entity.
-6. Use company information for company-level fields.
+The description may identify the target entity:
+
+- directly by name
+- by entity type
+- by role
+- by occupation
+- by referring to an explicit custom relationship
+
+Examples:
+
+- "Fill this out for the user Joe Smith."
+- "Fill this out for Joe Smith."
+- "Fill this out for the supervisor."
+- "Complete this for the project supervisor."
+- "Fill this out for the subcontractor."
+- "Complete this for the crane assigned to this project."
+
+When the FORM DESCRIPTION explicitly identifies a target entity, resolve
+that entity before selecting other entities to provide form values.
+
+If the description identifies an entity by name, use that named entity
+as the target.
+
+If the description refers to a role or relationship, use the explicit
+relationships in the Kenchiku graph to resolve the target entity.
+
+For example, if the graph contains:
+
+P-12345678 --[supervisor]--> U-87654321
+
+and U-87654321 is Joe Smith, and the FORM DESCRIPTION says:
+
+"Fill this out for the supervisor."
+
+then Joe Smith is the target entity for the form.
+
+The relationship definition and its semantic meaning should be used when
+determining whether a relationship matches the description.
+
+The wording does not need to exactly match the relationship name if the
+relationship definition clearly establishes the same meaning.
+
+For example, "project supervisor" may refer to a relationship named
+"supervisor" when the relationship definition establishes that meaning.
+
+A role mentioned alongside a person's name describes that person and
+does not create a separate target entity.
+
+For example:
+
+"Fill this out for Joe Smith, the supervisor."
+
+means:
+
+Target entity: Joe Smith
+Role/context: supervisor
+
+Use Joe Smith as the target entity.
+
+Once the target entity has been identified, use that entity's own fields
+and its explicit relationships to determine the values that should be
+entered into the form.
+
+If no target entity is specified in the description, use the primary
+project and its explicit relationships to determine the appropriate
+entities.
 
 Do not assume that every company user or object is relevant to the
 project.
 
 Relationships are explicit.
+
+Relationship direction matters.
+
+Always interpret a relationship using the actual source and target shown
+in the graph.
 
 Do not infer relationships from:
 
@@ -1585,6 +1651,10 @@ Do not infer relationships from:
 - appearing in the same graph section
 
 Only explicit relationships establish an association.
+
+If multiple entities could satisfy the description and the correct entity
+cannot be determined reliably, do not guess. Leave the affected fields
+unresolved and report the ambiguity in missing_data.
 
 ============================================================
 DATA ACCURACY
