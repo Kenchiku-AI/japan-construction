@@ -1251,6 +1251,7 @@ PDF.
     # ------------------------------------------------------------
 
     for edit in pdf_edits:
+
       logger.info(
         "PROCESSING PDF EDIT: %s",
         json.dumps(
@@ -1277,6 +1278,7 @@ PDF.
       if field_name:
 
         if field_name not in widgets_by_name:
+
           logger.warning(
             "AcroForm field %r was not found in %s",
             field_name,
@@ -1308,9 +1310,474 @@ PDF.
           field_name
         ]
 
+        # --------------------------------------------------------
+        # Determine field type from first widget.
+        #
+        # Radio buttons are special because multiple widgets can
+        # share the same field name and represent one logical field.
+        # --------------------------------------------------------
+
+        field_type = widgets[0][1].field_type
+
+        # --------------------------------------------------------
+        # Radio button
+        # --------------------------------------------------------
+
+        if field_type == (
+          fitz.PDF_WIDGET_TYPE_RADIOBUTTON
+        ):
+
+          requested_value = str(
+            value
+          ).strip()
+
+          logger.info(
+            "Applying radio-button group: "
+            "field=%r requested_value=%r widgets=%d",
+            field_name,
+            requested_value,
+            len(widgets),
+          )
+
+          selected_widget = None
+          selected_on_state = None
+
+          # ------------------------------------------------------
+          # Inspect every widget in the radio group.
+          #
+          # For PDFs like:
+          #
+          # /Opt [email phone]
+          # /Kids [widget_email widget_phone]
+          #
+          # the widget order corresponds to the option order.
+          #
+          # The actual widget appearance values may instead be:
+          #
+          # email -> "0"
+          # phone -> "1"
+          #
+          # button_states() exposes those actual appearance values.
+          # ------------------------------------------------------
+
+          for widget_index, (
+            page_index,
+            widget,
+          ) in enumerate(
+            widgets
+          ):
+
+            option_value = None
+
+            # ----------------------------------------------------
+            # Try to obtain the radio widget's actual "on" state.
+            # ----------------------------------------------------
+
+            try:
+
+              button_states = widget.button_states()
+
+              normal_states = (
+                button_states.get(
+                  "normal",
+                  [],
+                )
+              )
+
+              for state in normal_states:
+
+                if str(
+                  state
+                ) != "Off":
+
+                  option_value = str(
+                    state
+                  )
+
+                  break
+
+            except Exception:
+
+              logger.exception(
+                "Could not inspect radio button states: "
+                "field=%r page=%d widget_index=%d",
+                field_name,
+                page_index + 1,
+                widget_index,
+              )
+
+            # ----------------------------------------------------
+            # The logical value may already equal the actual PDF
+            # appearance value.
+            # ----------------------------------------------------
+
+            if (
+              option_value is not None
+              and requested_value == option_value
+            ):
+
+              selected_widget = widget
+              selected_on_state = option_value
+
+              logger.info(
+                "Matched radio value directly: "
+                "field=%r value=%r on_state=%r",
+                field_name,
+                requested_value,
+                option_value,
+              )
+
+              break
+
+            # ----------------------------------------------------
+            # If the PDF exposes field options, use the widget
+            # position to map:
+            #
+            #   option[0] -> widget[0]
+            #   option[1] -> widget[1]
+            #
+            # PyMuPDF may expose these through the widget object.
+            # ----------------------------------------------------
+
+            field_value = widget.field_value
+
+            logger.info(
+              "Radio widget inspection: "
+              "field=%r page=%d widget_index=%d "
+              "field_value=%r option_value=%r",
+              field_name,
+              page_index + 1,
+              widget_index,
+              field_value,
+              option_value,
+            )
+
+          # ------------------------------------------------------
+          # Try matching against the widget's current field value
+          # as a fallback.
+          # ------------------------------------------------------
+
+          if selected_widget is None:
+
+            for (
+              page_index,
+              widget,
+            ) in widgets:
+
+              current_value = widget.field_value
+
+              if (
+                current_value is not None
+                and str(
+                  current_value
+                ).strip()
+                == requested_value
+              ):
+
+                selected_widget = widget
+
+                try:
+
+                  button_states = (
+                    widget.button_states()
+                  )
+
+                  normal_states = (
+                    button_states.get(
+                      "normal",
+                      [],
+                    )
+                  )
+
+                  for state in normal_states:
+
+                    if str(
+                      state
+                    ) != "Off":
+
+                      selected_on_state = str(
+                        state
+                      )
+
+                      break
+
+                except Exception:
+
+                  pass
+
+                logger.info(
+                  "Matched radio value against "
+                  "current widget value: "
+                  "field=%r value=%r",
+                  field_name,
+                  requested_value,
+                )
+
+                break
+
+          # ------------------------------------------------------
+          # For PDFs where the human-readable values are stored in
+          # /Opt and the widget appearance states are numeric
+          # ("0", "1", etc.), use the option ordering.
+          #
+          # PyMuPDF's widget object does not always expose /Opt
+          # directly, so inspect the underlying PDF field through
+          # the widget's xref.
+          # ------------------------------------------------------
+
+          if selected_widget is None:
+
+            try:
+
+              # Find the parent field object.
+              #
+              # Radio children contain /Parent pointing to the
+              # logical field. The parent contains /Opt.
+              widget_xref = selected_widget.xref if selected_widget else None
+
+              if widget_xref is None:
+
+                # Find the first radio widget xref.
+                widget_xref = widgets[0][1].xref
+
+              widget_source = document.xref_object(
+                widget_xref,
+                compressed=False,
+              )
+
+              parent_match = None
+
+              import re
+
+              parent_match = re.search(
+                r"/Parent\s+(\d+)\s+0\s+R",
+                widget_source,
+              )
+
+              if parent_match:
+
+                parent_xref = int(
+                  parent_match.group(1)
+                )
+
+                parent_source = document.xref_object(
+                  parent_xref,
+                  compressed=False,
+                )
+
+                opt_match = re.search(
+                  r"/Opt\s*\[(.*?)\]",
+                  parent_source,
+                  re.DOTALL,
+                )
+
+                if opt_match:
+
+                  opt_contents = (
+                    opt_match.group(1)
+                  )
+
+                  opt_values = re.findall(
+                    r"<FEFF([0-9A-Fa-f]+)>",
+                    opt_contents,
+                  )
+
+                  decoded_options = []
+
+                  for hex_value in opt_values:
+
+                    try:
+
+                      decoded_options.append(
+                        bytes.fromhex(
+                          hex_value
+                        ).decode(
+                          "utf-16-be"
+                        )
+                      )
+
+                    except Exception:
+
+                      decoded_options.append(
+                        None
+                      )
+
+                  logger.info(
+                    "Radio group options: "
+                    "field=%r options=%r",
+                    field_name,
+                    decoded_options,
+                  )
+
+                  for option_index, option in enumerate(
+                    decoded_options
+                  ):
+
+                    if (
+                      option is None
+                      or option.strip()
+                      != requested_value
+                    ):
+
+                      continue
+
+                    if option_index >= len(
+                      widgets
+                    ):
+
+                      break
+
+                    selected_page_index, selected_widget_candidate = (
+                      widgets[
+                        option_index
+                      ]
+                    )
+
+                    selected_widget = (
+                      selected_widget_candidate
+                    )
+
+                    try:
+
+                      button_states = (
+                        selected_widget.button_states()
+                      )
+
+                      normal_states = (
+                        button_states.get(
+                          "normal",
+                          [],
+                        )
+                      )
+
+                      for state in normal_states:
+
+                        if str(
+                          state
+                        ) != "Off":
+
+                          selected_on_state = str(
+                            state
+                          )
+
+                          break
+
+                    except Exception:
+
+                      selected_on_state = None
+
+                    logger.info(
+                      "Matched radio option by /Opt ordering: "
+                      "field=%r requested=%r "
+                      "option_index=%d on_state=%r",
+                      field_name,
+                      requested_value,
+                      option_index,
+                      selected_on_state,
+                    )
+
+                    break
+
+            except Exception:
+
+              logger.exception(
+                "Failed to inspect underlying PDF "
+                "radio-button options: field=%r",
+                field_name,
+              )
+
+          # ------------------------------------------------------
+          # Apply the radio selection.
+          # ------------------------------------------------------
+
+          if selected_widget is None:
+
+            logger.warning(
+              "Could not map radio-button value %r "
+              "to a widget in field %r",
+              requested_value,
+              field_name,
+            )
+
+            continue
+
+          if selected_on_state is None:
+
+            logger.warning(
+              "Could not determine the on-state for "
+              "radio-button field %r value %r",
+              field_name,
+              requested_value,
+            )
+
+            continue
+
+          try:
+
+            # Turn every widget in the group off first.
+            for (
+              page_index,
+              widget,
+            ) in widgets:
+
+              try:
+
+                widget.field_value = "Off"
+                widget.update()
+
+                logger.info(
+                  "Turned radio widget off: "
+                  "field=%r page=%d",
+                  field_name,
+                  page_index + 1,
+                )
+
+              except Exception:
+
+                logger.exception(
+                  "Failed to turn radio widget off: "
+                  "field=%r page=%d",
+                  field_name,
+                  page_index + 1,
+                )
+
+            # Turn the requested widget on using its actual PDF
+            # appearance state (for example "0" or "1").
+            selected_widget.field_value = (
+              selected_on_state
+            )
+
+            selected_widget.update()
+
+            logger.info(
+              "Selected radio option: "
+              "field=%r requested=%r actual_on_state=%r",
+              field_name,
+              requested_value,
+              selected_on_state,
+            )
+
+            applied_count += 1
+
+          except Exception:
+
+            logger.exception(
+              "Failed to apply radio-button edit: %s",
+              edit,
+            )
+
+          continue
+
+        # --------------------------------------------------------
+        # Non-radio AcroForm fields
+        # --------------------------------------------------------
+
         applied_this_edit = False
 
-        for page_index, widget in widgets:
+        for (
+          page_index,
+          widget,
+        ) in widgets:
 
           field_type = widget.field_type
 
@@ -1374,22 +1841,6 @@ PDF.
 
               widget.field_value = (
                 checked
-              )
-
-              widget.update()
-
-              applied_this_edit = True
-
-            # ----------------------------------------------------
-            # Radio button
-            # ----------------------------------------------------
-
-            elif field_type == (
-              fitz.PDF_WIDGET_TYPE_RADIOBUTTON
-            ):
-
-              widget.field_value = str(
-                value
               )
 
               widget.update()
@@ -1566,9 +2017,13 @@ PDF.
 
       applied_count += 1
 
+    # ------------------------------------------------------------
+    # Save completed PDF
+    # ------------------------------------------------------------
+
     output_path = (
       output_dir
-      / f"{input_file.stem}.pdf"
+      / input_file.name
     )
 
     document.save(
@@ -1591,7 +2046,6 @@ PDF.
     )
 
     return output_path
-
 
   def _parse_agent_output(
     self,
@@ -1654,7 +2108,6 @@ PDF.
         "missing_data": [],
         "recommendations": [],
       }
-
 
   async def _collect_output_files(
     self,
