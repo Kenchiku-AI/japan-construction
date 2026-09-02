@@ -2047,6 +2047,67 @@ PDF.
 
     return output_path
 
+  def _parse_agent_output(
+    self,
+    raw_output: str,
+  ) -> dict:
+
+    if not raw_output:
+      return {
+        "summary": "フォーム処理が完了しました。",
+        "completed": True,
+        "files": [],
+        "missing_data": [],
+        "recommendations": [],
+      }
+
+    cleaned = raw_output.strip()
+
+    if cleaned.startswith(
+      "```json"
+    ):
+      cleaned = cleaned[
+        len("```json"):
+      ].strip()
+
+    if cleaned.endswith(
+      "```"
+    ):
+      cleaned = cleaned[
+        :-len("```")
+      ].strip()
+
+    try:
+      parsed = json.loads(
+        cleaned,
+      )
+
+      if not isinstance(
+        parsed,
+        dict,
+      ):
+        raise ValueError(
+          "OpenAI output was not a JSON object."
+        )
+
+      return parsed
+
+    except (
+      json.JSONDecodeError,
+      ValueError,
+    ):
+
+      logger.warning(
+        "OpenAI returned non-JSON form output.",
+      )
+
+      return {
+        "summary": raw_output,
+        "completed": True,
+        "files": [],
+        "missing_data": [],
+        "recommendations": [],
+      }
 
   async def _collect_output_files(
     self,
