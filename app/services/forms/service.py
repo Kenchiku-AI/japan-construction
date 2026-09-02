@@ -1168,19 +1168,73 @@ PDF.
       "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf"
     )
 
-    if not font_path:
-      document.close()
+    applied_count = 0
 
-      raise ValueError(
-        "Required NotoSansJP-Regular.ttf font was not found.",
-      )
+    # ------------------------------------------------------------
+    # Inspect AcroForm widgets
+    # ------------------------------------------------------------
 
-    logger.info(
-      "Using PDF form font: %s",
-      font_path,
+    widgets_by_name = {}
+
+    for page_index in range(
+      document.page_count
+    ):
+
+      page = document[
+        page_index
+      ]
+
+      widgets = page.widgets()
+
+      if not widgets:
+        continue
+
+      for widget in widgets:
+
+        field_name = widget.field_name
+
+        if not field_name:
+          continue
+
+        widgets_by_name.setdefault(
+          field_name,
+          [],
+        ).append(
+          (
+            page_index,
+            widget,
+          )
+        )
+
+        logger.info(
+          "Found PDF form field: page=%d name=%r type=%s value=%r",
+          page_index + 1,
+          field_name,
+          widget.field_type,
+          widget.field_value,
+        )
+
+    has_acroform = bool(
+      widgets_by_name
     )
 
-    applied_count = 0
+    if has_acroform:
+
+      logger.info(
+        "PDF contains %d AcroForm field name(s).",
+        len(widgets_by_name),
+      )
+
+    else:
+
+      logger.info(
+        "PDF contains no AcroForm widgets. "
+        "Coordinate-based PDF edits will be used.",
+      )
+
+    # ------------------------------------------------------------
+    # Apply edits
+    # ------------------------------------------------------------
 
     for edit in pdf_edits:
 
@@ -1190,6 +1244,195 @@ PDF.
 
       if filename and filename != input_file.name:
         continue
+
+      # ----------------------------------------------------------
+      # AcroForm edit
+      # ----------------------------------------------------------
+
+      field_name = edit.get(
+        "field_name",
+      )
+
+      if field_name:
+
+        if field_name not in widgets_by_name:
+
+          logger.warning(
+            "AcroForm field %r was not found in %s",
+            field_name,
+            input_file.name,
+          )
+
+          continue
+
+        value = edit.get(
+          "value",
+        )
+
+        if value is None:
+
+          value = edit.get(
+            "text",
+          )
+
+        if value is None:
+
+          logger.warning(
+            "Skipping AcroForm edit with no value: %s",
+            edit,
+          )
+
+          continue
+
+        widgets = widgets_by_name[
+          field_name
+        ]
+
+        applied_this_edit = False
+
+        for page_index, widget in widgets:
+
+          field_type = widget.field_type
+
+          logger.info(
+            "Applying AcroForm edit: "
+            "page=%d field=%r type=%s value=%r",
+            page_index + 1,
+            field_name,
+            field_type,
+            value,
+          )
+
+          try:
+
+            # ----------------------------------------------------
+            # Text / multiline text
+            # ----------------------------------------------------
+
+            if field_type in (
+              fitz.PDF_WIDGET_TYPE_TEXT,
+            ):
+
+              widget.field_value = str(
+                value
+              )
+
+              widget.update()
+
+              applied_this_edit = True
+
+            # ----------------------------------------------------
+            # Checkbox
+            # ----------------------------------------------------
+
+            elif field_type == (
+              fitz.PDF_WIDGET_TYPE_CHECKBOX
+            ):
+
+              if isinstance(
+                value,
+                bool,
+              ):
+
+                checked = value
+
+              else:
+
+                checked = str(
+                  value
+                ).strip().lower() in {
+                  "true",
+                  "1",
+                  "yes",
+                  "y",
+                  "on",
+                  "checked",
+                  "check",
+                  "✓",
+                  "☑",
+                }
+
+              widget.field_value = (
+                checked
+              )
+
+              widget.update()
+
+              applied_this_edit = True
+
+            # ----------------------------------------------------
+            # Radio button
+            # ----------------------------------------------------
+
+            elif field_type == (
+              fitz.PDF_WIDGET_TYPE_RADIOBUTTON
+            ):
+
+              widget.field_value = str(
+                value
+              )
+
+              widget.update()
+
+              applied_this_edit = True
+
+            # ----------------------------------------------------
+            # Combo box / dropdown
+            # ----------------------------------------------------
+
+            elif field_type == (
+              fitz.PDF_WIDGET_TYPE_COMBOBOX
+            ):
+
+              widget.field_value = str(
+                value
+              )
+
+              widget.update()
+
+              applied_this_edit = True
+
+            # ----------------------------------------------------
+            # List box
+            # ----------------------------------------------------
+
+            elif field_type == (
+              fitz.PDF_WIDGET_TYPE_LISTBOX
+            ):
+
+              widget.field_value = str(
+                value
+              )
+
+              widget.update()
+
+              applied_this_edit = True
+
+            else:
+
+              logger.warning(
+                "Unsupported AcroForm field type %s "
+                "for field %r",
+                field_type,
+                field_name,
+              )
+
+          except Exception:
+
+            logger.exception(
+              "Failed to apply AcroForm edit: %s",
+              edit,
+            )
+
+        if applied_this_edit:
+
+          applied_count += 1
+
+        continue
+
+      # ----------------------------------------------------------
+      # Coordinate-based overlay fallback
+      # ----------------------------------------------------------
 
       page_number = edit.get(
         "page",
@@ -1269,23 +1512,37 @@ PDF.
       )
 
       logger.info(
-        "Applying PDF edit: page=%s text=%r bbox=%s font_size=%s",
+        "Applying coordinate PDF edit: "
+        "page=%s text=%r bbox=%s font_size=%s",
         page_number,
         text,
         rect,
         font_size,
       )
 
-      page.insert_textbox(
-        rect,
-        str(text),
-        fontname="NotoSansJP",
-        fontfile=font_path,
-        fontsize=font_size,
-        color=(0, 0, 0),
-        align=fitz.TEXT_ALIGN_CENTER,
-        overlay=True,
-      )
+      if font_path:
+
+        page.insert_textbox(
+          rect,
+          str(text),
+          fontname="NotoSansJP",
+          fontfile=font_path,
+          fontsize=font_size,
+          color=(0, 0, 0),
+          align=fitz.TEXT_ALIGN_CENTER,
+          overlay=True,
+        )
+
+      else:
+
+        page.insert_textbox(
+          rect,
+          str(text),
+          fontsize=font_size,
+          color=(0, 0, 0),
+          align=fitz.TEXT_ALIGN_CENTER,
+          overlay=True,
+        )
 
       applied_count += 1
 
@@ -1314,6 +1571,7 @@ PDF.
     )
 
     return output_path
+
 
   def _parse_agent_output(
     self,
@@ -1523,9 +1781,16 @@ You have been given one or more uploaded documents.
 
 You MUST inspect the actual uploaded documents.
 
-You MUST modify the documents themselves.
+For documents that the application edits directly, return explicit
+machine-readable edit instructions as required below.
 
-You MUST create the completed documents as output files.
+For non-PDF documents that you are responsible for directly editing,
+actually modify the document and save the completed file.
+
+For PDFs, do NOT create or modify the completed PDF yourself.
+Instead, return explicit machine-readable PDF edits using the
+PDF instructions below. The application will apply those edits and
+create the completed PDF.
 
 ============================================================
 FORM JOB
@@ -1713,8 +1978,17 @@ Do not translate:
 DOCUMENT PROCESSING
 ============================================================
 
-Use the Code Interpreter environment to inspect and edit the uploaded
-documents.
+Use the Code Interpreter environment to inspect the uploaded
+documents and determine the required edits.
+
+For PDFs, provide explicit machine-readable PDF edits in your output
+when the application will apply those edits.
+
+Do not assume that describing an edit means that the application has
+applied it.
+
+For non-PDF documents that you are responsible for directly editing,
+actually modify the document and save the completed file.
 
 You may use Python and appropriate document libraries.
 
@@ -1741,13 +2015,95 @@ For Word:
 
 For PDF:
 
-- determine whether it contains editable form fields
+- determine whether the PDF contains AcroForm fields
+- inspect the actual PDF form fields and their field names
 - inspect text and page structure
-- inspect scanned pages visually
+- inspect scanned pages visually when necessary
 - use OCR when necessary
-- fill AcroForm fields when available
-- otherwise overlay text/checkmarks at the appropriate locations
-- preserve the PDF
+
+============================================================
+PDF ACROFORM FIELDS
+============================================================
+
+If the PDF contains editable AcroForm fields, use the actual AcroForm
+field names as the primary targets for edits.
+
+For every AcroForm field that should be changed, return a PDF edit using
+this structure:
+
+{
+  "filename": "example.pdf",
+  "field_name": "applicant.name",
+  "value": "佐藤 健一"
+}
+
+The "field_name" must be the actual field name from the PDF.
+
+Do not invent field names.
+
+Do not use page coordinates for an AcroForm field when the actual
+AcroForm field is available.
+
+Examples:
+
+{
+  "filename": "sample-form.pdf",
+  "field_name": "applicant.name",
+  "value": "佐藤 健一"
+}
+
+{
+  "filename": "sample-form.pdf",
+  "field_name": "applicant.notes",
+  "value": "現場作業員"
+}
+
+For checkboxes, use a boolean value when possible:
+
+{
+  "filename": "sample-form.pdf",
+  "field_name": "applicant.subscribe",
+  "value": true
+}
+
+For radio buttons and dropdowns, use the actual option value represented
+by the PDF field.
+
+Only create an edit when you can reliably determine the correct value.
+
+Preserve existing AcroForm values unless the form clearly requires
+replacement.
+
+If an AcroForm field cannot be reliably matched to the requested data,
+leave it unchanged and report the missing or ambiguous information in
+"missing_data".
+
+If the PDF does not contain AcroForm fields, use coordinate-based
+edits for fields that can be reliably located.
+
+Coordinate-based PDF edits must use this structure:
+
+{
+  "filename": "example.pdf",
+  "page": 1,
+  "x0": 100,
+  "y0": 200,
+  "x1": 300,
+  "y1": 230,
+  "text": "佐藤 健一"
+}
+
+Use coordinate-based edits only when an actual editable AcroForm field
+does not exist for the target field.
+
+The PDF edit information is machine-readable input to the application.
+Do not merely describe what should be filled.
+
+When PDF edits are needed, return explicit field_name/value edits or
+explicit coordinate/text edits.
+
+Do not claim that a PDF field was updated unless you have actually
+identified the corresponding field and provided an explicit edit for it.
 
 For images:
 
