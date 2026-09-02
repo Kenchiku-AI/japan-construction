@@ -32,7 +32,6 @@ from app.schemas.project import (
   ProjectUpdate,
   ProjectWithCompanyName,
   ProjectWithLists,
-  ProjectSetUsers,
 )
 from app.schemas.custom_field import CustomFieldRead
 from app.schemas.custom_relationship import CustomRelationshipRead
