@@ -487,6 +487,50 @@ class FormJobService:
 
     return normalized_files
 
+  def _is_likely_camera_photo(
+    self,
+    input_file: Path,
+  ) -> bool:
+
+    from PIL import Image
+
+    try:
+      with Image.open(input_file) as image:
+        exif = image.getexif()
+
+        camera_make = exif.get(271)
+        camera_model = exif.get(272)
+        lens_model = exif.get(42036)
+        date_time_original = exif.get(36867)
+        focal_length = exif.get(37386)
+        exposure_time = exif.get(33434)
+        iso = exif.get(34855)
+
+        camera_signals = sum(
+          value is not None
+          for value in [
+            camera_make,
+            camera_model,
+            lens_model,
+            date_time_original,
+            focal_length,
+            exposure_time,
+            iso,
+          ]
+        )
+
+        if camera_make or camera_model or lens_model:
+          return True
+
+        return camera_signals >= 3
+
+    except Exception:
+      logger.exception(
+        "Could not inspect image metadata: %s",
+        input_file,
+      )
+      return False
+
   def _clean_image_files(
     self,
     input_files: list[Path],
@@ -600,6 +644,38 @@ class FormJobService:
 
       pil_image = ImageOps.exif_transpose(
         pil_image,
+      )
+
+      is_camera_photo = self._is_likely_camera_photo(
+        input_file,
+      )
+
+      if not is_camera_photo:
+        logger.info(
+          "Image %s does not appear to be a camera photo. "
+          "Skipping image cleanup.",
+          input_file.name,
+        )
+
+        output_file.parent.mkdir(
+          parents=True,
+          exist_ok=True,
+        )
+
+        pil_image.convert(
+          "RGB",
+        ).save(
+          output_file,
+          "JPEG",
+          quality=95,
+        )
+
+        return
+
+      logger.info(
+        "Image %s appears to be a camera photo. "
+        "Applying image cleanup.",
+        input_file.name,
       )
 
       pil_image = pil_image.convert(
