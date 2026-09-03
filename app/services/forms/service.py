@@ -97,9 +97,11 @@ class FormJobService:
         workspace = Path(temp_dir)
 
         input_dir = workspace / "input"
+        normalized_dir = workspace / "normalized"
         output_dir = workspace / "output"
 
         input_dir.mkdir()
+        normalized_dir.mkdir()
         output_dir.mkdir()
 
         input_files = await self._download_input_files(
@@ -111,6 +113,11 @@ class FormJobService:
           raise ValueError(
             "The form job does not contain any input files."
           )
+
+        input_files = self._normalize_input_files(
+          input_files=input_files,
+          output_dir=normalized_dir,
+        )
 
         prompt = await self._build_prompt(
           job,
@@ -285,6 +292,122 @@ class FormJobService:
 
       raise
 
+  def _normalize_input_files(
+    self,
+    input_files: list[Path],
+    output_dir: Path,
+  ) -> list[Path]:
+    import subprocess
+    import tempfile
+
+    normalized_files = []
+
+    output_dir.mkdir(
+      parents=True,
+      exist_ok=True,
+    )
+
+    for input_file in input_files:
+      suffix = input_file.suffix.lower()
+
+      if suffix not in {
+        ".doc",
+        ".xls",
+      }:
+        normalized_files.append(
+          input_file,
+        )
+        continue
+
+      if suffix == ".doc":
+        target_extension = ".docx"
+        convert_format = "docx"
+      else:
+        target_extension = ".xlsx"
+        convert_format = "xlsx"
+
+      expected_output = (
+        output_dir
+        / f"{input_file.stem}{target_extension}"
+      )
+
+      with tempfile.TemporaryDirectory() as profile_dir:
+        command = [
+          "libreoffice",
+          "--headless",
+          "--nologo",
+          "--nodefault",
+          "--norestore",
+          "--nolockcheck",
+          f"-env:UserInstallation=file://{profile_dir}",
+          "--convert-to",
+          convert_format,
+          "--outdir",
+          str(output_dir),
+          str(input_file),
+        ]
+
+        logger.info(
+          "Converting legacy Office file %s → %s",
+          input_file.name,
+          expected_output.name,
+        )
+
+        try:
+          result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+          )
+        except subprocess.TimeoutExpired as exc:
+          raise ValueError(
+            f"LibreOffice timed out while converting "
+            f"{input_file.name}"
+          ) from exc
+
+      if result.returncode != 0:
+        logger.error(
+          "LibreOffice conversion failed for %s. "
+          "returncode=%s stdout=%s stderr=%s",
+          input_file,
+          result.returncode,
+          result.stdout,
+          result.stderr,
+        )
+
+        raise ValueError(
+          f"LibreOffice failed to convert "
+          f"{input_file.name}: "
+          f"{result.stderr.strip()}"
+        )
+
+      if not expected_output.exists():
+        logger.error(
+          "LibreOffice reported success but output file "
+          "does not exist: %s. stdout=%s stderr=%s",
+          expected_output,
+          result.stdout,
+          result.stderr,
+        )
+
+        raise ValueError(
+          f"LibreOffice did not produce the expected "
+          f"output file for {input_file.name}"
+        )
+
+      logger.info(
+        "LibreOffice conversion successful: %s → %s",
+        input_file.name,
+        expected_output.name,
+      )
+
+      normalized_files.append(
+        expected_output,
+      )
+
+    return normalized_files
 
   async def _run_openai_form_agent(
     self,

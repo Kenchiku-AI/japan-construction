@@ -2,11 +2,21 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    libreoffice \
+    libreoffice-writer \
+    libreoffice-calc \
+    fonts-noto-cjk \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY fonts/NotoSansJP-Regular.ttf /usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf
+
+RUN fc-cache -f -v
 
 COPY . .
 
