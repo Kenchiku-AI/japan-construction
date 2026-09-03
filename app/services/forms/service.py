@@ -1308,6 +1308,12 @@ class FormJobService:
       cv2.COLOR_BGR2GRAY,
     )
 
+    deskew_gray = cv2.GaussianBlur(
+      deskew_gray,
+      (5, 5),
+      0,
+    )
+
     deskew_edges = cv2.Canny(
       deskew_gray,
       50,
@@ -1337,14 +1343,24 @@ class FormJobService:
 
     if lines is not None:
 
+      # Flatten the Hough result into individual line
+      # segments regardless of whether OpenCV returns
+      # shape (N, 1, 4) or (N, 4).
+      lines = np.asarray(
+        lines,
+      ).reshape(
+        -1,
+        4,
+      )
+
       for line in lines:
 
         x1, y1, x2, y2 = (
-          line[0]
+          line
         )
 
-        dx = x2 - x1
-        dy = y2 - y1
+        dx = float(x2 - x1)
+        dy = float(y2 - y1)
 
         if dx == 0 and dy == 0:
           continue
@@ -1356,25 +1372,26 @@ class FormJobService:
           )
         )
 
-        # Normalize to [-90, 90]
+        # Normalize to [-90, 90].
         while angle > 90:
           angle -= 180
 
         while angle < -90:
           angle += 180
 
-        # Ignore lines that are too close to vertical.
-        # We mainly want the dominant horizontal form rules.
+        # Only consider lines that are reasonably close
+        # to horizontal. These are generally the strongest
+        # indicators of a form being slightly tilted.
         if abs(angle) <= 20:
           angles.append(
-            angle,
+            float(angle),
           )
 
     if len(angles) >= 3:
 
       median_angle = float(
         np.median(
-          np.array(
+          np.asarray(
             angles,
             dtype=np.float32,
           )
@@ -1382,6 +1399,9 @@ class FormJobService:
       )
 
       # Only deskew meaningful small rotations.
+      #
+      # 90-degree orientation problems were already handled
+      # above and should never reach this branch.
       if (
         abs(median_angle) >= 0.7
         and abs(median_angle) <= 8.0
@@ -1447,6 +1467,21 @@ class FormJobService:
           "Deskewed form by %.2f degrees",
           median_angle,
         )
+
+      else:
+
+        logger.info(
+          "No significant deskew required "
+          "(median angle %.2f degrees)",
+          median_angle,
+        )
+
+    else:
+
+      logger.info(
+        "Insufficient line segments for deskew; "
+        "keeping current rotation",
+      )
 
     # ---------------------------------------------------------
     # 6. Prevent excessively large output images
