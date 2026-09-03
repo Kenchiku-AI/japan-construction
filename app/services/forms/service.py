@@ -717,6 +717,8 @@ PDF.
     output_dir: Path,
   ) -> None:
 
+    import re
+
     output_dir.mkdir(
       parents=True,
       exist_ok=True,
@@ -729,11 +731,15 @@ PDF.
     # ------------------------------------------------------------
     # Determine which files the agent says it created.
     #
-    # For directly edited documents such as DOCX/XLSX, the agent
-    # may save the completed file anywhere under /mnt/data rather
-    # than specifically under /mnt/data/output/.
+    # The model may return either:
     #
-    # Therefore we must not require /mnt/data/output/.
+    #   /mnt/data/example.docx
+    #
+    # or:
+    #
+    #   [example.docx](sandbox:/mnt/data/example.docx)
+    #
+    # Normalize both forms to the actual filename.
     # ------------------------------------------------------------
 
     reported_files = agent_output.get(
@@ -746,13 +752,80 @@ PDF.
       reported_files,
     )
 
-    reported_filenames = {
-      Path(
-        str(file_path)
-      ).name
-      for file_path in reported_files
-      if file_path
-    }
+    reported_filenames = set()
+
+    for file_entry in reported_files:
+
+      if not file_entry:
+        continue
+
+      file_entry = str(
+        file_entry
+      ).strip()
+
+      # ----------------------------------------------------------
+      # Handle Markdown links such as:
+      #
+      # [作業員名簿_5089.docx](sandbox:/mnt/data/作業員名簿_5089.docx)
+      #
+      # Prefer the actual sandbox path inside the link.
+      # ----------------------------------------------------------
+
+      sandbox_match = re.search(
+        r"\(sandbox:/mnt/data/([^)]+)\)",
+        file_entry,
+      )
+
+      if sandbox_match:
+
+        filename = Path(
+          sandbox_match.group(1)
+        ).name
+
+      else:
+
+        # --------------------------------------------------------
+        # Handle ordinary filesystem paths.
+        # --------------------------------------------------------
+
+        filename = Path(
+          file_entry
+        ).name
+
+        # --------------------------------------------------------
+        # Handle a Markdown link if it wasn't a sandbox link.
+        #
+        # Example:
+        #
+        # [example.docx](...)
+        # --------------------------------------------------------
+
+        markdown_match = re.match(
+          r"\[([^\]]+)\]\(",
+          file_entry,
+        )
+
+        if markdown_match:
+
+          filename = Path(
+            markdown_match.group(1)
+          ).name
+
+      if not filename:
+        continue
+
+      # ----------------------------------------------------------
+      # Remove accidental surrounding whitespace.
+      # ----------------------------------------------------------
+
+      filename = filename.strip()
+
+      if not filename:
+        continue
+
+      reported_filenames.add(
+        filename,
+      )
 
     logger.info(
       "Agent reported filenames: %s",
@@ -856,17 +929,6 @@ PDF.
 
         # --------------------------------------------------------
         # Only extract files explicitly reported by the agent.
-        #
-        # This prevents us from accidentally downloading:
-        #
-        # - the original uploaded file
-        # - rendered verification PDFs
-        # - rendered PNGs
-        # - temporary files
-        # - unrelated Code Interpreter files
-        #
-        # The agent's "files" array identifies the completed
-        # document(s) that should become application output.
         # --------------------------------------------------------
 
         if filename not in reported_filenames:
@@ -929,8 +991,7 @@ PDF.
     )
 
     # ------------------------------------------------------------
-    # Detect when the agent reported a file but we could not
-    # actually retrieve it.
+    # Detect files that were reported but could not be extracted.
     # ------------------------------------------------------------
 
     extracted_filenames = {
