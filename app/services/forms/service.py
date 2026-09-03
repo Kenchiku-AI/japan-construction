@@ -1290,198 +1290,198 @@ class FormJobService:
         "counter-clockwise",
       )
 
-      # ---------------------------------------------------------
-      # 5. Rotation deskew
-      #
-      # Correct small residual rotations such as:
-      #
-      #   2°
-      #   -3°
-      #   5°
-      #
-      # Do NOT use this to handle 90-degree rotations. Those
-      # were already handled above.
-      # ---------------------------------------------------------
+    # ---------------------------------------------------------
+    # 5. Rotation deskew
+    #
+    # Correct small residual rotations such as:
+    #
+    #   2°
+    #   -3°
+    #   5°
+    #
+    # Do NOT use this to handle 90-degree rotations. Those
+    # were already handled above.
+    # ---------------------------------------------------------
 
-      deskew_gray = cv2.cvtColor(
-        image,
-        cv2.COLOR_BGR2GRAY,
-      )
+    deskew_gray = cv2.cvtColor(
+      image,
+      cv2.COLOR_BGR2GRAY,
+    )
 
-      deskew_gray = cv2.GaussianBlur(
-        deskew_gray,
-        (5, 5),
-        0,
-      )
+    deskew_gray = cv2.GaussianBlur(
+      deskew_gray,
+      (5, 5),
+      0,
+    )
 
-      deskew_edges = cv2.Canny(
-        deskew_gray,
+    deskew_edges = cv2.Canny(
+      deskew_gray,
+      50,
+      150,
+    )
+
+    lines = cv2.HoughLinesP(
+      deskew_edges,
+      1,
+      np.pi / 180,
+      threshold=max(
         50,
-        150,
+        min(
+          image.shape[:2]
+        ) // 5,
+      ),
+      minLineLength=max(
+        100,
+        min(
+          image.shape[:2]
+        ) // 4,
+      ),
+      maxLineGap=20,
+    )
+
+    angles = []
+
+    if lines is not None:
+
+      # Flatten the Hough result into individual line
+      # segments regardless of whether OpenCV returns
+      # shape (N, 1, 4) or (N, 4).
+      lines = np.asarray(
+        lines,
+      ).reshape(
+        -1,
+        4,
       )
 
-      lines = cv2.HoughLinesP(
-        deskew_edges,
-        1,
-        np.pi / 180,
-        threshold=max(
-          50,
-          min(
-            image.shape[:2]
-          ) // 5,
-        ),
-        minLineLength=max(
-          100,
-          min(
-            image.shape[:2]
-          ) // 4,
-        ),
-        maxLineGap=20,
-      )
+      for line in lines:
 
-      angles = []
-
-      if lines is not None:
-
-        # Flatten the Hough result into individual line
-        # segments regardless of whether OpenCV returns
-        # shape (N, 1, 4) or (N, 4).
-        lines = np.asarray(
-          lines,
-        ).reshape(
-          -1,
-          4,
+        x1, y1, x2, y2 = (
+          line
         )
 
-        for line in lines:
+        dx = float(x2 - x1)
+        dy = float(y2 - y1)
 
-          x1, y1, x2, y2 = (
-            line
-          )
+        if dx == 0 and dy == 0:
+          continue
 
-          dx = float(x2 - x1)
-          dy = float(y2 - y1)
-
-          if dx == 0 and dy == 0:
-            continue
-
-          angle = np.degrees(
-            np.arctan2(
-              dy,
-              dx,
-            )
-          )
-
-          # Normalize to [-90, 90].
-          while angle > 90:
-            angle -= 180
-
-          while angle < -90:
-            angle += 180
-
-          # Only consider lines that are reasonably close
-          # to horizontal. These are generally the strongest
-          # indicators of a form being slightly tilted.
-          if abs(angle) <= 20:
-            angles.append(
-              float(angle),
-            )
-
-      if len(angles) >= 3:
-
-        median_angle = float(
-          np.median(
-            np.asarray(
-              angles,
-              dtype=np.float32,
-            )
+        angle = np.degrees(
+          np.arctan2(
+            dy,
+            dx,
           )
         )
 
-        # Only deskew meaningful small rotations.
-        #
-        # 90-degree orientation problems were already handled
-        # above and should never reach this branch.
-        if (
-          abs(median_angle) >= 0.7
-          and abs(median_angle) <= 8.0
-        ):
+        # Normalize to [-90, 90].
+        while angle > 90:
+          angle -= 180
 
-          height, width = (
-            image.shape[:2]
+        while angle < -90:
+          angle += 180
+
+        # Only consider lines that are reasonably close
+        # to horizontal. These are generally the strongest
+        # indicators of a form being slightly tilted.
+        if abs(angle) <= 20:
+          angles.append(
+            float(angle),
           )
 
-          center = (
-            width / 2.0,
-            height / 2.0,
-          )
+    if len(angles) >= 3:
 
-          rotation_matrix = (
-            cv2.getRotationMatrix2D(
-              center,
-              median_angle,
-              1.0,
-            )
+      median_angle = float(
+        np.median(
+          np.asarray(
+            angles,
+            dtype=np.float32,
           )
+        )
+      )
 
-          cos = abs(
-            rotation_matrix[0, 0]
-          )
+      # Only deskew meaningful small rotations.
+      #
+      # 90-degree orientation problems were already handled
+      # above and should never reach this branch.
+      if (
+        abs(median_angle) >= 0.7
+        and abs(median_angle) <= 8.0
+      ):
 
-          sin = abs(
-            rotation_matrix[0, 1]
-          )
+        height, width = (
+          image.shape[:2]
+        )
 
-          new_width = int(
-            height * sin
-            + width * cos
-          )
+        center = (
+          width / 2.0,
+          height / 2.0,
+        )
 
-          new_height = int(
-            height * cos
-            + width * sin
-          )
-
-          rotation_matrix[0, 2] += (
-            new_width / 2
-            - center[0]
-          )
-
-          rotation_matrix[1, 2] += (
-            new_height / 2
-            - center[1]
-          )
-
-          image = cv2.warpAffine(
-            image,
-            rotation_matrix,
-            (
-              new_width,
-              new_height,
-            ),
-            flags=cv2.INTER_CUBIC,
-            borderMode=cv2.BORDER_REPLICATE,
-          )
-
-          logger.info(
-            "Deskewed form by %.2f degrees",
+        rotation_matrix = (
+          cv2.getRotationMatrix2D(
+            center,
             median_angle,
+            1.0,
           )
+        )
 
-        else:
+        cos = abs(
+          rotation_matrix[0, 0]
+        )
 
-          logger.info(
-            "No significant deskew required "
-            "(median angle %.2f degrees)",
-            median_angle,
-          )
+        sin = abs(
+          rotation_matrix[0, 1]
+        )
+
+        new_width = int(
+          height * sin
+          + width * cos
+        )
+
+        new_height = int(
+          height * cos
+          + width * sin
+        )
+
+        rotation_matrix[0, 2] += (
+          new_width / 2
+          - center[0]
+        )
+
+        rotation_matrix[1, 2] += (
+          new_height / 2
+          - center[1]
+        )
+
+        image = cv2.warpAffine(
+          image,
+          rotation_matrix,
+          (
+            new_width,
+            new_height,
+          ),
+          flags=cv2.INTER_CUBIC,
+          borderMode=cv2.BORDER_REPLICATE,
+        )
+
+        logger.info(
+          "Deskewed form by %.2f degrees",
+          median_angle,
+        )
 
       else:
 
         logger.info(
-          "Insufficient line segments for deskew; "
-          "keeping current rotation",
+          "No significant deskew required "
+          "(median angle %.2f degrees)",
+          median_angle,
         )
+
+    else:
+
+      logger.info(
+        "Insufficient line segments for deskew; "
+        "keeping current rotation",
+      )
 
     # ---------------------------------------------------------
     # 6. Prevent excessively large output images
