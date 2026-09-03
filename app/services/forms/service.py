@@ -478,10 +478,420 @@ class FormJobService:
     from PIL import Image, ImageOps
 
     # ---------------------------------------------------------
+    # Helper: rotate image by 90 degrees
+    # ---------------------------------------------------------
+
+    def rotate_90(
+      image,
+      clockwise=True,
+    ):
+      if clockwise:
+        return cv2.rotate(
+          image,
+          cv2.ROTATE_90_CLOCKWISE,
+        )
+
+      return cv2.rotate(
+        image,
+        cv2.ROTATE_90_COUNTERCLOCKWISE,
+      )
+
+    # ---------------------------------------------------------
+    # Helper: order four corner points
+    # ---------------------------------------------------------
+
+    def order_points(
+      points,
+    ):
+      ordered = np.zeros(
+        (4, 2),
+        dtype=np.float32,
+      )
+
+      sums = points.sum(
+        axis=1,
+      )
+
+      differences = np.diff(
+        points,
+        axis=1,
+      ).reshape(-1)
+
+      ordered[0] = points[
+        np.argmin(sums)
+      ]
+
+      ordered[2] = points[
+        np.argmax(sums)
+      ]
+
+      ordered[1] = points[
+        np.argmin(differences)
+      ]
+
+      ordered[3] = points[
+        np.argmax(differences)
+      ]
+
+      return ordered
+
+    # ---------------------------------------------------------
+    # Helper: detect the dominant orientation of form content
+    #
+    # Returns:
+    #
+    #   "portrait"
+    #   "landscape"
+    #   None
+    #
+    # This intentionally examines horizontal/vertical line
+    # structure rather than relying only on the page dimensions.
+    # ---------------------------------------------------------
+
+    def detect_form_orientation(
+      image,
+    ):
+      height, width = image.shape[:2]
+
+      # Work on a reasonably small copy.
+      max_dimension = 1600
+
+      scale = min(
+        1.0,
+        max_dimension / max(
+          width,
+          height,
+        ),
+      )
+
+      if scale < 1.0:
+        working = cv2.resize(
+          image,
+          (
+            int(width * scale),
+            int(height * scale),
+          ),
+          interpolation=cv2.INTER_AREA,
+        )
+      else:
+        working = image.copy()
+
+      gray = cv2.cvtColor(
+        working,
+        cv2.COLOR_BGR2GRAY,
+      )
+
+      # Adaptive threshold works better than simply looking
+      # for edges because forms tend to contain many thin
+      # horizontal/vertical rules.
+      binary = cv2.adaptiveThreshold(
+        gray,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        31,
+        9,
+      )
+
+      h, w = binary.shape[:2]
+
+      # -----------------------------------------------------
+      # Detect horizontal lines
+      # -----------------------------------------------------
+
+      horizontal_kernel_length = max(
+        20,
+        w // 25,
+      )
+
+      horizontal_kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (
+          horizontal_kernel_length,
+          1,
+        ),
+      )
+
+      horizontal_lines = cv2.morphologyEx(
+        binary,
+        cv2.MORPH_OPEN,
+        horizontal_kernel,
+      )
+
+      # -----------------------------------------------------
+      # Detect vertical lines
+      # -----------------------------------------------------
+
+      vertical_kernel_length = max(
+        20,
+        h // 25,
+      )
+
+      vertical_kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (
+          1,
+          vertical_kernel_length,
+        ),
+      )
+
+      vertical_lines = cv2.morphologyEx(
+        binary,
+        cv2.MORPH_OPEN,
+        vertical_kernel,
+      )
+
+      horizontal_pixels = cv2.countNonZero(
+        horizontal_lines,
+      )
+
+      vertical_pixels = cv2.countNonZero(
+        vertical_lines,
+      )
+
+      total_pixels = max(
+        1,
+        h * w,
+      )
+
+      horizontal_density = (
+        horizontal_pixels / total_pixels
+      )
+
+      vertical_density = (
+        vertical_pixels / total_pixels
+      )
+
+      # -----------------------------------------------------
+      # Find individual long line segments.
+      #
+      # This gives us additional information beyond simple
+      # pixel density.
+      # -----------------------------------------------------
+
+      horizontal_contours, _ = cv2.findContours(
+        horizontal_lines,
+        cv2.RETR_LIST,
+        cv2.CHAIN_APPROX_SIMPLE,
+      )
+
+      vertical_contours, _ = cv2.findContours(
+        vertical_lines,
+        cv2.RETR_LIST,
+        cv2.CHAIN_APPROX_SIMPLE,
+      )
+
+      horizontal_lengths = []
+
+      for contour in horizontal_contours:
+
+        x, y, line_width, line_height = (
+          cv2.boundingRect(contour)
+        )
+
+        if line_width < w * 0.10:
+          continue
+
+        if line_width <= line_height:
+          continue
+
+        horizontal_lengths.append(
+          line_width,
+        )
+
+      vertical_lengths = []
+
+      for contour in vertical_contours:
+
+        x, y, line_width, line_height = (
+          cv2.boundingRect(contour)
+        )
+
+        if line_height < h * 0.10:
+          continue
+
+        if line_height <= line_width:
+          continue
+
+        vertical_lengths.append(
+          line_height,
+        )
+
+      horizontal_strength = (
+        sum(horizontal_lengths)
+        / max(1, w)
+      )
+
+      vertical_strength = (
+        sum(vertical_lengths)
+        / max(1, h)
+      )
+
+      # -----------------------------------------------------
+      # Also inspect the amount of structure in the two
+      # dimensions.
+      #
+      # A portrait form generally contains:
+      #
+      #   - many horizontal rows
+      #   - relatively shorter horizontal lines
+      #   - vertical divisions
+      #
+      # A landscape form generally has substantially more
+      # horizontal span in its major structural lines.
+      # -----------------------------------------------------
+
+      horizontal_count = len(
+        horizontal_lengths,
+      )
+
+      vertical_count = len(
+        vertical_lengths,
+      )
+
+      # Page aspect ratio is useful as a supporting signal,
+      # but NOT the primary signal.
+      page_ratio = w / max(
+        1,
+        h,
+      )
+
+      # -----------------------------------------------------
+      # Score the two possible orientations.
+      #
+      # The scoring intentionally combines multiple weak
+      # signals rather than trusting one measurement.
+      # -----------------------------------------------------
+
+      landscape_score = 0.0
+      portrait_score = 0.0
+
+      if page_ratio > 1.15:
+        landscape_score += 2.0
+
+      elif page_ratio < 0.87:
+        portrait_score += 2.0
+
+      if horizontal_strength > vertical_strength * 1.20:
+        landscape_score += 1.5
+
+      elif vertical_strength > horizontal_strength * 1.20:
+        portrait_score += 1.5
+
+      if horizontal_density > vertical_density * 1.20:
+        landscape_score += 1.0
+
+      elif vertical_density > horizontal_density * 1.20:
+        portrait_score += 1.0
+
+      if horizontal_count > vertical_count * 1.20:
+        landscape_score += 0.75
+
+      elif vertical_count > horizontal_count * 1.20:
+        portrait_score += 0.75
+
+      logger.info(
+        "Form orientation analysis: "
+        "page_ratio=%.3f "
+        "horizontal_density=%.5f "
+        "vertical_density=%.5f "
+        "horizontal_strength=%.3f "
+        "vertical_strength=%.3f "
+        "horizontal_count=%d "
+        "vertical_count=%d "
+        "landscape_score=%.2f "
+        "portrait_score=%.2f",
+        page_ratio,
+        horizontal_density,
+        vertical_density,
+        horizontal_strength,
+        vertical_strength,
+        horizontal_count,
+        vertical_count,
+        landscape_score,
+        portrait_score,
+      )
+
+      score_difference = abs(
+        landscape_score
+        - portrait_score
+      )
+
+      # If the signals are too close, don't rotate.
+      if score_difference < 1.25:
+        logger.info(
+          "Form orientation is ambiguous; "
+          "keeping current orientation",
+        )
+
+        return None
+
+      if landscape_score > portrait_score:
+        return "landscape"
+
+      return "portrait"
+
+    # ---------------------------------------------------------
+    # Helper: determine whether the current page is sideways
+    # relative to the original photograph.
+    #
+    # This is deliberately conservative.
+    # ---------------------------------------------------------
+
+    def determine_required_rotation(
+      image,
+    ):
+      orientation = detect_form_orientation(
+        image,
+      )
+
+      if orientation is None:
+        return None
+
+      height, width = image.shape[:2]
+
+      image_is_landscape = (
+        width > height
+      )
+
+      image_is_portrait = (
+        height > width
+      )
+
+      if (
+        orientation == "landscape"
+        and image_is_portrait
+      ):
+        logger.info(
+          "Detected landscape form inside portrait image; "
+          "rotating 90 degrees",
+        )
+
+        return "clockwise"
+
+      if (
+        orientation == "portrait"
+        and image_is_landscape
+      ):
+        logger.info(
+          "Detected portrait form inside landscape image; "
+          "rotating 90 degrees",
+        )
+
+        return "clockwise"
+
+      logger.info(
+        "Form orientation already matches image orientation",
+      )
+
+      return None
+
+    # ---------------------------------------------------------
     # 1. Load image and correct EXIF orientation
     # ---------------------------------------------------------
 
     try:
+
       pil_image = Image.open(
         input_file,
       )
@@ -500,6 +910,7 @@ class FormJobService:
       )
 
     except Exception as exc:
+
       raise ValueError(
         f"Could not read image: {input_file}"
       ) from exc
@@ -520,9 +931,6 @@ class FormJobService:
 
     detection_image = image.copy()
 
-    # Resize only the temporary detection image so that
-    # contour detection remains reasonably fast on very
-    # high-resolution phone photos.
     detection_max_dimension = 1500
 
     detection_scale = min(
@@ -534,11 +942,18 @@ class FormJobService:
     )
 
     if detection_scale < 1.0:
+
       detection_image = cv2.resize(
         detection_image,
         (
-          int(original_width * detection_scale),
-          int(original_height * detection_scale),
+          int(
+            original_width
+            * detection_scale
+          ),
+          int(
+            original_height
+            * detection_scale
+          ),
         ),
         interpolation=cv2.INTER_AREA,
       )
@@ -552,8 +967,6 @@ class FormJobService:
       cv2.COLOR_BGR2GRAY,
     )
 
-    # Light blur reduces noise from the photograph without
-    # destroying the relatively strong edges of the paper.
     gray = cv2.GaussianBlur(
       gray,
       (5, 5),
@@ -566,7 +979,6 @@ class FormJobService:
       150,
     )
 
-    # Connect broken document edges.
     kernel = cv2.getStructuringElement(
       cv2.MORPH_RECT,
       (7, 7),
@@ -597,9 +1009,6 @@ class FormJobService:
         contour,
       )
 
-      # The form should occupy a meaningful portion of
-      # the photograph, but don't require it to dominate
-      # the entire image.
       if contour_area < image_area * 0.20:
         continue
 
@@ -634,7 +1043,6 @@ class FormJobService:
         )
       )
 
-      # Calculate the candidate's bounding box.
       x, y, w, h = cv2.boundingRect(
         approximation,
       )
@@ -645,21 +1053,19 @@ class FormJobService:
       bounding_area = w * h
 
       rectangularity = (
-        contour_area / bounding_area
+        contour_area
+        / bounding_area
       )
 
-      # Reject shapes that are extremely irregular.
       if rectangularity < 0.65:
         continue
 
-      # Reject candidates touching the image boundary
-      # on too many sides. This helps avoid treating the
-      # edge of the photograph itself as the form.
       margin = int(
         min(
           detection_width,
           detection_height,
-        ) * 0.01
+        )
+        * 0.01
       )
 
       touching_edges = 0
@@ -670,18 +1076,24 @@ class FormJobService:
       if y <= margin:
         touching_edges += 1
 
-      if x + w >= detection_width - margin:
+      if (
+        x + w
+        >= detection_width - margin
+      ):
         touching_edges += 1
 
-      if y + h >= detection_height - margin:
+      if (
+        y + h
+        >= detection_height - margin
+      ):
         touching_edges += 1
 
       if touching_edges >= 3:
         continue
 
-      # Score larger, more rectangular candidates higher.
       area_score = (
-        contour_area / image_area
+        contour_area
+        / image_area
       )
 
       score = (
@@ -698,6 +1110,8 @@ class FormJobService:
 
     document_found = False
 
+    document_points = None
+
     if candidates:
 
       candidates.sort(
@@ -705,18 +1119,20 @@ class FormJobService:
         reverse=True,
       )
 
-      best_score, document_points = (
+      best_score, detected_points = (
         candidates[0]
       )
 
-      # Require a reasonably strong candidate.
       if best_score >= 0.18:
 
         document_found = True
 
-        # Convert detection-image coordinates back
-        # into coordinates of the original image.
+        document_points = (
+          detected_points
+        )
+
         if detection_scale != 1.0:
+
           document_points = (
             document_points
             / detection_scale
@@ -728,45 +1144,10 @@ class FormJobService:
         )
 
     # ---------------------------------------------------------
-    # 3. Perspective-correct and crop the form
+    # 3. Perspective correction / crop
     # ---------------------------------------------------------
 
     if document_found:
-
-      def order_points(
-        points,
-      ):
-        ordered = np.zeros(
-          (4, 2),
-          dtype=np.float32,
-        )
-
-        sums = points.sum(
-          axis=1,
-        )
-
-        differences = np.diff(
-          points,
-          axis=1,
-        ).reshape(-1)
-
-        ordered[0] = points[
-          np.argmin(sums)
-        ]
-
-        ordered[2] = points[
-          np.argmax(sums)
-        ]
-
-        ordered[1] = points[
-          np.argmin(differences)
-        ]
-
-        ordered[3] = points[
-          np.argmax(differences)
-        ]
-
-        return ordered
 
       points = order_points(
         document_points,
@@ -807,7 +1188,6 @@ class FormJobService:
         )
       )
 
-      # Protect against malformed geometry.
       if (
         output_width >= 500
         and output_height >= 500
@@ -837,9 +1217,11 @@ class FormJobService:
           dtype=np.float32,
         )
 
-        transform = cv2.getPerspectiveTransform(
-          points,
-          destination,
+        transform = (
+          cv2.getPerspectiveTransform(
+            points,
+            destination,
+          )
         )
 
         image = cv2.warpPerspective(
@@ -874,7 +1256,200 @@ class FormJobService:
       )
 
     # ---------------------------------------------------------
-    # 4. Prevent excessively large output images
+    # 4. Detect form-content orientation
+    #
+    # This happens AFTER perspective correction so that the
+    # orientation detector sees the actual form rather than
+    # the camera photograph.
+    # ---------------------------------------------------------
+
+    rotation = determine_required_rotation(
+      image,
+    )
+
+    if rotation == "clockwise":
+
+      image = rotate_90(
+        image,
+        clockwise=True,
+      )
+
+      logger.info(
+        "Rotated normalized form 90 degrees clockwise",
+      )
+
+    elif rotation == "counterclockwise":
+
+      image = rotate_90(
+        image,
+        clockwise=False,
+      )
+
+      logger.info(
+        "Rotated normalized form 90 degrees "
+        "counter-clockwise",
+      )
+
+    # ---------------------------------------------------------
+    # 5. Rotation deskew
+    #
+    # Correct small residual rotations such as:
+    #
+    #   2°
+    #   -3°
+    #   5°
+    #
+    # Do NOT use this to handle 90-degree rotations. Those
+    # were already handled above.
+    # ---------------------------------------------------------
+
+    deskew_gray = cv2.cvtColor(
+      image,
+      cv2.COLOR_BGR2GRAY,
+    )
+
+    deskew_edges = cv2.Canny(
+      deskew_gray,
+      50,
+      150,
+    )
+
+    lines = cv2.HoughLinesP(
+      deskew_edges,
+      1,
+      np.pi / 180,
+      threshold=max(
+        50,
+        min(
+          image.shape[:2]
+        ) // 5,
+      ),
+      minLineLength=max(
+        100,
+        min(
+          image.shape[:2]
+        ) // 4,
+      ),
+      maxLineGap=20,
+    )
+
+    angles = []
+
+    if lines is not None:
+
+      for line in lines:
+
+        x1, y1, x2, y2 = (
+          line[0]
+        )
+
+        dx = x2 - x1
+        dy = y2 - y1
+
+        if dx == 0 and dy == 0:
+          continue
+
+        angle = np.degrees(
+          np.arctan2(
+            dy,
+            dx,
+          )
+        )
+
+        # Normalize to [-90, 90]
+        while angle > 90:
+          angle -= 180
+
+        while angle < -90:
+          angle += 180
+
+        # Ignore lines that are too close to vertical.
+        # We mainly want the dominant horizontal form rules.
+        if abs(angle) <= 20:
+          angles.append(
+            angle,
+          )
+
+    if len(angles) >= 3:
+
+      median_angle = float(
+        np.median(
+          np.array(
+            angles,
+            dtype=np.float32,
+          )
+        )
+      )
+
+      # Only deskew meaningful small rotations.
+      if (
+        abs(median_angle) >= 0.7
+        and abs(median_angle) <= 8.0
+      ):
+
+        height, width = (
+          image.shape[:2]
+        )
+
+        center = (
+          width / 2.0,
+          height / 2.0,
+        )
+
+        rotation_matrix = (
+          cv2.getRotationMatrix2D(
+            center,
+            median_angle,
+            1.0,
+          )
+        )
+
+        cos = abs(
+          rotation_matrix[0, 0]
+        )
+
+        sin = abs(
+          rotation_matrix[0, 1]
+        )
+
+        new_width = int(
+          height * sin
+          + width * cos
+        )
+
+        new_height = int(
+          height * cos
+          + width * sin
+        )
+
+        rotation_matrix[0, 2] += (
+          new_width / 2
+          - center[0]
+        )
+
+        rotation_matrix[1, 2] += (
+          new_height / 2
+          - center[1]
+        )
+
+        image = cv2.warpAffine(
+          image,
+          rotation_matrix,
+          (
+            new_width,
+            new_height,
+          ),
+          flags=cv2.INTER_CUBIC,
+          borderMode=cv2.BORDER_REPLICATE,
+        )
+
+        logger.info(
+          "Deskewed form by %.2f degrees",
+          median_angle,
+        )
+
+    # ---------------------------------------------------------
+    # 6. Prevent excessively large output images
     # ---------------------------------------------------------
 
     height, width = image.shape[:2]
@@ -901,7 +1476,7 @@ class FormJobService:
       )
 
     # ---------------------------------------------------------
-    # 5. Lighting / paper normalization
+    # 7. Lighting / paper normalization
     # ---------------------------------------------------------
 
     lab = cv2.cvtColor(
@@ -926,7 +1501,7 @@ class FormJobService:
     )
 
     # ---------------------------------------------------------
-    # 6. Gentle local contrast enhancement
+    # 8. Gentle local contrast enhancement
     # ---------------------------------------------------------
 
     clahe = cv2.createCLAHE(
@@ -939,7 +1514,7 @@ class FormJobService:
     )
 
     # ---------------------------------------------------------
-    # 7. Light sharpening
+    # 9. Light sharpening
     # ---------------------------------------------------------
 
     blurred = cv2.GaussianBlur(
@@ -957,7 +1532,7 @@ class FormJobService:
     )
 
     # ---------------------------------------------------------
-    # 8. Recombine while preserving original colors
+    # 10. Recombine while preserving original colors
     # ---------------------------------------------------------
 
     cleaned_lab = cv2.merge(
@@ -974,7 +1549,7 @@ class FormJobService:
     )
 
     # ---------------------------------------------------------
-    # 9. Save
+    # 11. Save
     # ---------------------------------------------------------
 
     success = cv2.imwrite(
@@ -987,6 +1562,7 @@ class FormJobService:
     )
 
     if not success:
+
       raise ValueError(
         f"Could not save cleaned image: {output_file}"
       )
