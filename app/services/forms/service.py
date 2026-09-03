@@ -165,6 +165,12 @@ class FormJobService:
         ]
 
         if image_input_files:
+
+          image_orientation = agent_output.get(
+            "image_orientation",
+            {},
+          )
+
           image_edits = agent_output.get(
             "image_edits",
             [],
@@ -176,6 +182,71 @@ class FormJobService:
           )
 
           for input_file in image_input_files:
+
+            orientation = image_orientation.get(
+              input_file.name,
+              {},
+            )
+
+            rotation_degrees = orientation.get(
+              "rotation_degrees",
+              0,
+            )
+
+            try:
+              rotation_degrees = int(
+                rotation_degrees,
+              )
+            except (
+              TypeError,
+              ValueError,
+            ):
+              logger.warning(
+                "Invalid rotation_degrees for %s: %r. "
+                "Using 0.",
+                input_file.name,
+                rotation_degrees,
+              )
+
+              rotation_degrees = 0
+
+            if rotation_degrees not in {
+              0,
+              90,
+              180,
+              270,
+            }:
+              logger.warning(
+                "Unsupported rotation_degrees for %s: %r. "
+                "Using 0.",
+                input_file.name,
+                rotation_degrees,
+              )
+
+              rotation_degrees = 0
+
+            if rotation_degrees != 0:
+
+              logger.info(
+                "OpenAI requested %d° clockwise rotation "
+                "for image %s",
+                rotation_degrees,
+                input_file.name,
+              )
+
+              self._rotate_image_for_form_editing(
+                input_file=input_file,
+                rotation_degrees=rotation_degrees,
+              )
+
+            else:
+
+              logger.info(
+                "OpenAI determined no rotation is required "
+                "for image %s",
+                input_file.name,
+              )
+
             self._apply_image_edits(
               input_file=input_file,
               image_edits=image_edits,
@@ -477,24 +548,6 @@ class FormJobService:
     import numpy as np
     from PIL import Image, ImageOps
 
-    # ---------------------------------------------------------
-    # Helper: rotate image by 90 degrees
-    # ---------------------------------------------------------
-
-    def rotate_90(
-      image,
-      clockwise=True,
-    ):
-      if clockwise:
-        return cv2.rotate(
-          image,
-          cv2.ROTATE_90_CLOCKWISE,
-        )
-
-      return cv2.rotate(
-        image,
-        cv2.ROTATE_90_COUNTERCLOCKWISE,
-      )
 
     # ---------------------------------------------------------
     # Helper: order four corner points
@@ -534,357 +587,6 @@ class FormJobService:
       ]
 
       return ordered
-
-    # ---------------------------------------------------------
-    # Helper: detect the dominant orientation of form content
-    #
-    # Returns:
-    #
-    #   "portrait"
-    #   "landscape"
-    #   None
-    #
-    # This intentionally examines horizontal/vertical line
-    # structure rather than relying only on the page dimensions.
-    # ---------------------------------------------------------
-
-    def detect_form_orientation(
-      image,
-    ):
-      height, width = image.shape[:2]
-
-      # Work on a reasonably small copy.
-      max_dimension = 1600
-
-      scale = min(
-        1.0,
-        max_dimension / max(
-          width,
-          height,
-        ),
-      )
-
-      if scale < 1.0:
-        working = cv2.resize(
-          image,
-          (
-            int(width * scale),
-            int(height * scale),
-          ),
-          interpolation=cv2.INTER_AREA,
-        )
-      else:
-        working = image.copy()
-
-      gray = cv2.cvtColor(
-        working,
-        cv2.COLOR_BGR2GRAY,
-      )
-
-      # Adaptive threshold works better than simply looking
-      # for edges because forms tend to contain many thin
-      # horizontal/vertical rules.
-      binary = cv2.adaptiveThreshold(
-        gray,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV,
-        31,
-        9,
-      )
-
-      h, w = binary.shape[:2]
-
-      # -----------------------------------------------------
-      # Detect horizontal lines
-      # -----------------------------------------------------
-
-      horizontal_kernel_length = max(
-        20,
-        w // 25,
-      )
-
-      horizontal_kernel = cv2.getStructuringElement(
-        cv2.MORPH_RECT,
-        (
-          horizontal_kernel_length,
-          1,
-        ),
-      )
-
-      horizontal_lines = cv2.morphologyEx(
-        binary,
-        cv2.MORPH_OPEN,
-        horizontal_kernel,
-      )
-
-      # -----------------------------------------------------
-      # Detect vertical lines
-      # -----------------------------------------------------
-
-      vertical_kernel_length = max(
-        20,
-        h // 25,
-      )
-
-      vertical_kernel = cv2.getStructuringElement(
-        cv2.MORPH_RECT,
-        (
-          1,
-          vertical_kernel_length,
-        ),
-      )
-
-      vertical_lines = cv2.morphologyEx(
-        binary,
-        cv2.MORPH_OPEN,
-        vertical_kernel,
-      )
-
-      horizontal_pixels = cv2.countNonZero(
-        horizontal_lines,
-      )
-
-      vertical_pixels = cv2.countNonZero(
-        vertical_lines,
-      )
-
-      total_pixels = max(
-        1,
-        h * w,
-      )
-
-      horizontal_density = (
-        horizontal_pixels / total_pixels
-      )
-
-      vertical_density = (
-        vertical_pixels / total_pixels
-      )
-
-      # -----------------------------------------------------
-      # Find individual long line segments.
-      #
-      # This gives us additional information beyond simple
-      # pixel density.
-      # -----------------------------------------------------
-
-      horizontal_contours, _ = cv2.findContours(
-        horizontal_lines,
-        cv2.RETR_LIST,
-        cv2.CHAIN_APPROX_SIMPLE,
-      )
-
-      vertical_contours, _ = cv2.findContours(
-        vertical_lines,
-        cv2.RETR_LIST,
-        cv2.CHAIN_APPROX_SIMPLE,
-      )
-
-      horizontal_lengths = []
-
-      for contour in horizontal_contours:
-
-        x, y, line_width, line_height = (
-          cv2.boundingRect(contour)
-        )
-
-        if line_width < w * 0.10:
-          continue
-
-        if line_width <= line_height:
-          continue
-
-        horizontal_lengths.append(
-          line_width,
-        )
-
-      vertical_lengths = []
-
-      for contour in vertical_contours:
-
-        x, y, line_width, line_height = (
-          cv2.boundingRect(contour)
-        )
-
-        if line_height < h * 0.10:
-          continue
-
-        if line_height <= line_width:
-          continue
-
-        vertical_lengths.append(
-          line_height,
-        )
-
-      horizontal_strength = (
-        sum(horizontal_lengths)
-        / max(1, w)
-      )
-
-      vertical_strength = (
-        sum(vertical_lengths)
-        / max(1, h)
-      )
-
-      # -----------------------------------------------------
-      # Also inspect the amount of structure in the two
-      # dimensions.
-      #
-      # A portrait form generally contains:
-      #
-      #   - many horizontal rows
-      #   - relatively shorter horizontal lines
-      #   - vertical divisions
-      #
-      # A landscape form generally has substantially more
-      # horizontal span in its major structural lines.
-      # -----------------------------------------------------
-
-      horizontal_count = len(
-        horizontal_lengths,
-      )
-
-      vertical_count = len(
-        vertical_lengths,
-      )
-
-      # Page aspect ratio is useful as a supporting signal,
-      # but NOT the primary signal.
-      page_ratio = w / max(
-        1,
-        h,
-      )
-
-      # -----------------------------------------------------
-      # Score the two possible orientations.
-      #
-      # The scoring intentionally combines multiple weak
-      # signals rather than trusting one measurement.
-      # -----------------------------------------------------
-
-      landscape_score = 0.0
-      portrait_score = 0.0
-
-      if page_ratio > 1.15:
-        landscape_score += 2.0
-
-      elif page_ratio < 0.87:
-        portrait_score += 2.0
-
-      if horizontal_strength > vertical_strength * 1.20:
-        landscape_score += 1.5
-
-      elif vertical_strength > horizontal_strength * 1.20:
-        portrait_score += 1.5
-
-      if horizontal_density > vertical_density * 1.20:
-        landscape_score += 1.0
-
-      elif vertical_density > horizontal_density * 1.20:
-        portrait_score += 1.0
-
-      if horizontal_count > vertical_count * 1.20:
-        landscape_score += 0.75
-
-      elif vertical_count > horizontal_count * 1.20:
-        portrait_score += 0.75
-
-      logger.info(
-        "Form orientation analysis: "
-        "page_ratio=%.3f "
-        "horizontal_density=%.5f "
-        "vertical_density=%.5f "
-        "horizontal_strength=%.3f "
-        "vertical_strength=%.3f "
-        "horizontal_count=%d "
-        "vertical_count=%d "
-        "landscape_score=%.2f "
-        "portrait_score=%.2f",
-        page_ratio,
-        horizontal_density,
-        vertical_density,
-        horizontal_strength,
-        vertical_strength,
-        horizontal_count,
-        vertical_count,
-        landscape_score,
-        portrait_score,
-      )
-
-      score_difference = abs(
-        landscape_score
-        - portrait_score
-      )
-
-      # If the signals are too close, don't rotate.
-      if score_difference < 1.25:
-        logger.info(
-          "Form orientation is ambiguous; "
-          "keeping current orientation",
-        )
-
-        return None
-
-      if landscape_score > portrait_score:
-        return "landscape"
-
-      return "portrait"
-
-    # ---------------------------------------------------------
-    # Helper: determine whether the current page is sideways
-    # relative to the original photograph.
-    #
-    # This is deliberately conservative.
-    # ---------------------------------------------------------
-
-    def determine_required_rotation(
-      image,
-    ):
-      orientation = detect_form_orientation(
-        image,
-      )
-
-      if orientation is None:
-        return None
-
-      height, width = image.shape[:2]
-
-      image_is_landscape = (
-        width > height
-      )
-
-      image_is_portrait = (
-        height > width
-      )
-
-      if (
-        orientation == "landscape"
-        and image_is_portrait
-      ):
-        logger.info(
-          "Detected landscape form inside portrait image; "
-          "rotating 90 degrees",
-        )
-
-        return "clockwise"
-
-      if (
-        orientation == "portrait"
-        and image_is_landscape
-      ):
-        logger.info(
-          "Detected portrait form inside landscape image; "
-          "rotating 90 degrees",
-        )
-
-        return "clockwise"
-
-      logger.info(
-        "Form orientation already matches image orientation",
-      )
-
-      return None
 
     # ---------------------------------------------------------
     # 1. Load image and correct EXIF orientation
@@ -1256,42 +958,7 @@ class FormJobService:
       )
 
     # ---------------------------------------------------------
-    # 4. Detect form-content orientation
-    #
-    # This happens AFTER perspective correction so that the
-    # orientation detector sees the actual form rather than
-    # the camera photograph.
-    # ---------------------------------------------------------
-
-    rotation = determine_required_rotation(
-      image,
-    )
-
-    if rotation == "clockwise":
-
-      image = rotate_90(
-        image,
-        clockwise=True,
-      )
-
-      logger.info(
-        "Rotated normalized form 90 degrees clockwise",
-      )
-
-    elif rotation == "counterclockwise":
-
-      image = rotate_90(
-        image,
-        clockwise=False,
-      )
-
-      logger.info(
-        "Rotated normalized form 90 degrees "
-        "counter-clockwise",
-      )
-
-    # ---------------------------------------------------------
-    # 5. Rotation deskew
+    # 4. Rotation deskew
     #
     # Correct small residual rotations such as:
     #
@@ -1299,8 +966,9 @@ class FormJobService:
     #   -3°
     #   5°
     #
-    # Do NOT use this to handle 90-degree rotations. Those
-    # were already handled above.
+    # Do NOT use this to handle 90-degree rotations.
+    # Large orientation changes are determined by OpenAI and
+    # applied after this cleaning step.
     # ---------------------------------------------------------
 
     deskew_gray = cv2.cvtColor(
@@ -1400,8 +1068,9 @@ class FormJobService:
 
       # Only deskew meaningful small rotations.
       #
-      # 90-degree orientation problems were already handled
-      # above and should never reach this branch.
+      # 90-degree orientation problems are handled by OpenAI
+      # after this cleaning step and should never be handled
+      # by this deskew logic.
       if (
         abs(median_angle) >= 0.7
         and abs(median_angle) <= 8.0
@@ -1484,7 +1153,7 @@ class FormJobService:
       )
 
     # ---------------------------------------------------------
-    # 6. Prevent excessively large output images
+    # 5. Prevent excessively large output images
     # ---------------------------------------------------------
 
     height, width = image.shape[:2]
@@ -1511,7 +1180,7 @@ class FormJobService:
       )
 
     # ---------------------------------------------------------
-    # 7. Lighting / paper normalization
+    # 6. Lighting / paper normalization
     # ---------------------------------------------------------
 
     lab = cv2.cvtColor(
@@ -1536,7 +1205,7 @@ class FormJobService:
     )
 
     # ---------------------------------------------------------
-    # 8. Gentle local contrast enhancement
+    # 7. Gentle local contrast enhancement
     # ---------------------------------------------------------
 
     clahe = cv2.createCLAHE(
@@ -1549,7 +1218,7 @@ class FormJobService:
     )
 
     # ---------------------------------------------------------
-    # 9. Light sharpening
+    # 8. Light sharpening
     # ---------------------------------------------------------
 
     blurred = cv2.GaussianBlur(
@@ -1567,7 +1236,7 @@ class FormJobService:
     )
 
     # ---------------------------------------------------------
-    # 10. Recombine while preserving original colors
+    # 9. Recombine while preserving original colors
     # ---------------------------------------------------------
 
     cleaned_lab = cv2.merge(
@@ -1584,7 +1253,7 @@ class FormJobService:
     )
 
     # ---------------------------------------------------------
-    # 11. Save
+    # 10. Save
     # ---------------------------------------------------------
 
     success = cv2.imwrite(
@@ -1611,6 +1280,72 @@ class FormJobService:
       output_file,
       cleaned_width,
       cleaned_height,
+    )
+
+  def _rotate_image_for_form_editing(
+    self,
+    input_file: Path,
+    rotation_degrees: int,
+  ) -> None:
+
+    import cv2
+
+    image = cv2.imread(
+      str(input_file),
+      cv2.IMREAD_COLOR,
+    )
+
+    if image is None:
+      raise ValueError(
+        f"Could not read image for rotation: {input_file}"
+      )
+
+    if rotation_degrees == 90:
+
+      image = cv2.rotate(
+        image,
+        cv2.ROTATE_90_CLOCKWISE,
+      )
+
+    elif rotation_degrees == 180:
+
+      image = cv2.rotate(
+        image,
+        cv2.ROTATE_180,
+      )
+
+    elif rotation_degrees == 270:
+
+      image = cv2.rotate(
+        image,
+        cv2.ROTATE_90_COUNTERCLOCKWISE,
+      )
+
+    elif rotation_degrees != 0:
+
+      raise ValueError(
+        f"Unsupported image rotation: "
+        f"{rotation_degrees} degrees"
+      )
+
+    success = cv2.imwrite(
+      str(input_file),
+      image,
+      [
+        cv2.IMWRITE_JPEG_QUALITY,
+        92,
+      ],
+    )
+
+    if not success:
+      raise ValueError(
+        f"Could not save rotated image: {input_file}"
+      )
+
+    logger.info(
+      "Rotated image %s by %d° clockwise",
+      input_file.name,
+      rotation_degrees,
     )
 
   async def _run_openai_form_agent(
@@ -1726,10 +1461,71 @@ IMPORTANT: One or more uploaded files are images.
 For image forms, DO NOT attempt to create, modify, or save an output
 image using Code Interpreter.
 
-Instead, inspect the original image visually and determine exactly
-where each requested value should be placed.
+Before determining any text coordinates, you MUST first determine
+whether each image is correctly oriented for reading and form-field
+placement.
 
-Return an "image_edits" array in your JSON response.
+The uploaded photograph may contain a form that has been rotated
+90 degrees relative to the image.
+
+For each image, inspect the ACTUAL FORM CONTENT, including:
+
+- Japanese text direction
+- English text direction
+- form labels
+- table structure
+- field labels
+- headings
+- checkboxes
+- signatures
+- dates
+- other visually meaningful form elements
+
+Do NOT determine orientation solely from whether the image dimensions
+are portrait or landscape.
+
+A portrait image may contain a landscape form rotated 90 degrees.
+Likewise, a landscape image may contain a portrait form rotated 90
+degrees.
+
+Determine the orientation in which the form content is naturally
+readable and the form fields should be positioned.
+
+For every image, return an "image_orientation" object containing:
+
+- "needs_rotation": boolean
+- "rotation_degrees": one of 0, 90, 180, or 270
+
+The rotation_degrees value specifies the clockwise rotation that the
+APPLICATION must apply to the uploaded image BEFORE placing any text.
+
+Use:
+
+0   = image is already correctly oriented
+90  = rotate clockwise 90 degrees
+180 = rotate clockwise 180 degrees
+270 = rotate clockwise 270 degrees
+
+If the image is already correctly oriented, return:
+
+"needs_rotation": false
+"rotation_degrees": 0
+
+If the form is sideways, return the rotation required to make the
+form naturally readable.
+
+IMPORTANT:
+
+Make the orientation determination BEFORE determining any x/y
+coordinates.
+
+All image-edit coordinates MUST correspond to the image AFTER the
+specified rotation has been applied.
+
+Do not return coordinates for the unrotated image when
+rotation_degrees is non-zero.
+
+After determining orientation, return the image edits.
 
 Each image edit must contain:
 
@@ -1740,15 +1536,13 @@ Each image edit must contain:
 - "width": width of the field in pixels
 - "height": height of the field in pixels
 
-Coordinates must refer to the ORIGINAL uploaded image's pixel dimensions.
-
-The x/y coordinates identify the upper-left corner of the field
-where the text should be placed.
+Coordinates must refer to the image AFTER the application applies
+rotation_degrees.
 
 Do not resize the coordinate system.
 
-Use the actual visible blank field on the form, not an approximate
-location elsewhere on the page.
+The x/y coordinates identify the upper-left corner of the field
+where the text should be placed.
 
 The text must be placed INSIDE the corresponding blank field.
 
@@ -1760,12 +1554,12 @@ identify the correct field.
 If requested information cannot be located confidently, put that
 information in "missing_data" instead.
 
-For multiple images, keep edits associated with the correct
-filename.
+For multiple images, keep orientation information and edits
+associated with the correct filename.
 
-The image itself will be edited later by the application using
-Pillow. Your job is to identify the correct placement and return
-precise coordinates.
+The image itself will be rotated and edited later by the application.
+Your job is to determine the required rotation and precise placement
+coordinates.
 
 Your response MUST be valid JSON with this structure:
 
@@ -1773,9 +1567,15 @@ Your response MUST be valid JSON with this structure:
   "summary": "...",
   "completed": true,
   "files": [],
+  "image_orientation": {
+    "filename.jpg": {
+      "needs_rotation": false,
+      "rotation_degrees": 0,
+    }
+  },
   "image_edits": [
     {
-      "filename": "original.jpg",
+      "filename": "filename.jpg",
       "text": "Joe Smith",
       "x": 100,
       "y": 200,
@@ -4316,7 +4116,9 @@ For image jobs, the "image_edits" array is the primary output of the
 task.
 
 For non-PDF document jobs such as Word and Excel, the completed document
-file is the primary output of the task.============================================================
+file is the primary output of the task.
+
+============================================================
 VERIFICATION
 ============================================================
 
@@ -4402,73 +4204,6 @@ Do not delete:
 - static explanatory text
 
 Preserve the original structure and formatting.
-
-============================================================
-VERIFICATION
-============================================================
-
-After processing the document, verify the work that you are responsible
-for performing.
-
-For non-PDF documents that you directly edit:
-
-1. Confirm that the completed output file exists.
-2. Confirm that it can be opened and read successfully.
-3. Confirm that the intended fields were populated.
-4. Confirm that values are in the correct locations.
-5. Confirm that Japanese text renders correctly.
-6. Confirm that existing labels remain intact.
-7. Confirm that existing values remain intact.
-8. Confirm that no information was invented.
-9. Confirm that the input file was not modified.
-
-For PDFs:
-
-1. Confirm that the PDF was inspected.
-2. Confirm that each requested value was matched to the correct
-   AcroForm field or coordinate location.
-3. Confirm that each PDF edit is explicitly included in "pdf_edits".
-4. Confirm that the field names used in AcroForm edits are the actual
-   field names found in the PDF.
-5. Confirm that no information was invented.
-6. Do not claim that the completed PDF file was created or modified.
-   The application will apply the PDF edits and create the completed
-   PDF after the agent finishes.
-
-For images:
-
-1. Confirm that the image was inspected.
-2. Confirm that each requested value was matched to the correct
-   location.
-3. Confirm that each image edit is explicitly included in "image_edits".
-4. Confirm that no information was invented.
-5. Do not claim that the final image file was created or modified.
-   The application will apply the image edits after the agent finishes.
-
-For documents where visual layout matters, visually inspect the
-document before completing the task.
-
-Pay particular attention to:
-
-- merged cells
-- row heights
-- column widths
-- tables
-- checkboxes
-- text clipping
-- Japanese characters
-- page breaks
-- PDF field locations
-- image dimensions
-
-Do not declare that a document was successfully completed merely because
-you identified the values that should be entered.
-
-For PDFs and images, successful processing means that the required
-machine-readable edits have been produced.
-
-For directly edited documents, successful processing means that the
-completed document has actually been created and verified.
 
 ============================================================
 OUTPUT FILENAMES
