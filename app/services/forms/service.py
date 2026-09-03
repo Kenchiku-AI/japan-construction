@@ -98,10 +98,12 @@ class FormJobService:
 
         input_dir = workspace / "input"
         normalized_dir = workspace / "normalized"
+        cleaned_dir = workspace / "cleaned"
         output_dir = workspace / "output"
 
         input_dir.mkdir()
         normalized_dir.mkdir()
+        cleaned_dir.mkdir()
         output_dir.mkdir()
 
         input_files = await self._download_input_files(
@@ -117,6 +119,11 @@ class FormJobService:
         input_files = self._normalize_input_files(
           input_files=input_files,
           output_dir=normalized_dir,
+        )
+
+        input_files = self._clean_image_files(
+          input_files=input_files,
+          output_dir=cleaned_dir,
         )
 
         prompt = await self._build_prompt(
@@ -408,6 +415,217 @@ class FormJobService:
       )
 
     return normalized_files
+
+  def _clean_image_files(
+    self,
+    input_files: list[Path],
+    output_dir: Path,
+  ) -> list[Path]:
+
+    output_dir.mkdir(
+      parents=True,
+      exist_ok=True,
+    )
+
+    image_suffixes = {
+      ".jpg",
+      ".jpeg",
+      ".png",
+      ".webp",
+      ".gif",
+    }
+
+    cleaned_files = []
+
+    for input_file in input_files:
+
+      if input_file.suffix.lower() not in image_suffixes:
+        cleaned_files.append(
+          input_file,
+        )
+        continue
+
+      cleaned_path = (
+        output_dir
+        / f"{input_file.stem}.jpg"
+      )
+
+      logger.info(
+        "Cleaning form image: %s → %s",
+        input_file.name,
+        cleaned_path.name,
+      )
+
+      self._clean_form_image(
+        input_file=input_file,
+        output_file=cleaned_path,
+      )
+
+      cleaned_files.append(
+        cleaned_path,
+      )
+
+    return cleaned_files
+
+  def _clean_form_image(
+    self,
+    input_file: Path,
+    output_file: Path,
+  ) -> None:
+
+    import cv2
+
+    image = cv2.imread(
+      str(input_file),
+      cv2.IMREAD_COLOR,
+    )
+
+    if image is None:
+      raise ValueError(
+        f"Could not read image: {input_file}"
+      )
+
+    original_height, original_width = (
+      image.shape[:2]
+    )
+
+    logger.info(
+      "Original image dimensions: %dx%d",
+      original_width,
+      original_height,
+    )
+
+    # ------------------------------------------------------------
+    # Safety resize.
+    # ------------------------------------------------------------
+
+    max_dimension = 3000
+
+    scale = min(
+      1.0,
+      max_dimension / max(
+        original_width,
+        original_height,
+      ),
+    )
+
+    if scale < 1.0:
+
+      image = cv2.resize(
+        image,
+        (
+          int(original_width * scale),
+          int(original_height * scale),
+        ),
+        interpolation=cv2.INTER_AREA,
+      )
+
+    # ------------------------------------------------------------
+    # Work in LAB color space so we can improve brightness and
+    # contrast without throwing away color information.
+    # ------------------------------------------------------------
+
+    lab = cv2.cvtColor(
+      image,
+      cv2.COLOR_BGR2LAB,
+    )
+
+    l_channel, a_channel, b_channel = (
+      cv2.split(lab)
+    )
+
+    # ------------------------------------------------------------
+    # Normalize uneven lighting.
+    # ------------------------------------------------------------
+
+    background = cv2.GaussianBlur(
+      l_channel,
+      (0, 0),
+      25,
+    )
+
+    normalized_l = cv2.divide(
+      l_channel,
+      background,
+      scale=255,
+    )
+
+    # ------------------------------------------------------------
+    # Improve local contrast.
+    # ------------------------------------------------------------
+
+    clahe = cv2.createCLAHE(
+      clipLimit=2.0,
+      tileGridSize=(8, 8),
+    )
+
+    enhanced_l = clahe.apply(
+      normalized_l,
+    )
+
+    # ------------------------------------------------------------
+    # Light sharpening.
+    # ------------------------------------------------------------
+
+    blurred = cv2.GaussianBlur(
+      enhanced_l,
+      (0, 0),
+      1.0,
+    )
+
+    sharpened_l = cv2.addWeighted(
+      enhanced_l,
+      1.2,
+      blurred,
+      -0.2,
+      0,
+    )
+
+    # ------------------------------------------------------------
+    # Recombine while preserving the original color channels.
+    # ------------------------------------------------------------
+
+    cleaned_lab = cv2.merge(
+      [
+        sharpened_l,
+        a_channel,
+        b_channel,
+      ],
+    )
+
+    cleaned = cv2.cvtColor(
+      cleaned_lab,
+      cv2.COLOR_LAB2BGR,
+    )
+
+    # ------------------------------------------------------------
+    # Save.
+    # ------------------------------------------------------------
+
+    success = cv2.imwrite(
+      str(output_file),
+      cleaned,
+      [
+        cv2.IMWRITE_JPEG_QUALITY,
+        92,
+      ],
+    )
+
+    if not success:
+      raise ValueError(
+        f"Could not save cleaned image: {output_file}"
+      )
+
+    cleaned_height, cleaned_width = (
+      cleaned.shape[:2]
+    )
+
+    logger.info(
+      "Cleaned image saved: %s (%dx%d)",
+      output_file,
+      cleaned_width,
+      cleaned_height,
+    )
 
   async def _run_openai_form_agent(
     self,
