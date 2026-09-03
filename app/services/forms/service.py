@@ -730,9 +730,9 @@ PDF.
         )
 
       response = self.openai.responses.create(
-        model="gpt-5.6",
+        model="gpt-5.6-luna",
         reasoning={
-          "effort": "high",
+          "effort": "medium",
         },
         include=[
           "code_interpreter_call.outputs",
