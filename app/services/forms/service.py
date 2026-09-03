@@ -474,16 +474,35 @@ class FormJobService:
   ) -> None:
 
     import cv2
+    import numpy as np
+    from PIL import Image, ImageOps
 
-    image = cv2.imread(
-      str(input_file),
-      cv2.IMREAD_COLOR,
-    )
+    # ---------------------------------------------------------
+    # 1. Load image and correct EXIF orientation
+    # ---------------------------------------------------------
 
-    if image is None:
+    try:
+      pil_image = Image.open(
+        input_file,
+      )
+
+      pil_image = ImageOps.exif_transpose(
+        pil_image,
+      )
+
+      pil_image = pil_image.convert(
+        "RGB",
+      )
+
+      image = cv2.cvtColor(
+        np.array(pil_image),
+        cv2.COLOR_RGB2BGR,
+      )
+
+    except Exception as exc:
       raise ValueError(
         f"Could not read image: {input_file}"
-      )
+      ) from exc
 
     original_height, original_width = (
       image.shape[:2]
@@ -495,17 +514,378 @@ class FormJobService:
       original_height,
     )
 
-    # ------------------------------------------------------------
-    # Safety resize.
-    # ------------------------------------------------------------
+    # ---------------------------------------------------------
+    # 2. Detect the form/document boundary
+    # ---------------------------------------------------------
+
+    detection_image = image.copy()
+
+    # Resize only the temporary detection image so that
+    # contour detection remains reasonably fast on very
+    # high-resolution phone photos.
+    detection_max_dimension = 1500
+
+    detection_scale = min(
+      1.0,
+      detection_max_dimension / max(
+        original_width,
+        original_height,
+      ),
+    )
+
+    if detection_scale < 1.0:
+      detection_image = cv2.resize(
+        detection_image,
+        (
+          int(original_width * detection_scale),
+          int(original_height * detection_scale),
+        ),
+        interpolation=cv2.INTER_AREA,
+      )
+
+    detection_height, detection_width = (
+      detection_image.shape[:2]
+    )
+
+    gray = cv2.cvtColor(
+      detection_image,
+      cv2.COLOR_BGR2GRAY,
+    )
+
+    # Light blur reduces noise from the photograph without
+    # destroying the relatively strong edges of the paper.
+    gray = cv2.GaussianBlur(
+      gray,
+      (5, 5),
+      0,
+    )
+
+    edges = cv2.Canny(
+      gray,
+      50,
+      150,
+    )
+
+    # Connect broken document edges.
+    kernel = cv2.getStructuringElement(
+      cv2.MORPH_RECT,
+      (7, 7),
+    )
+
+    edges = cv2.morphologyEx(
+      edges,
+      cv2.MORPH_CLOSE,
+      kernel,
+    )
+
+    contours, _ = cv2.findContours(
+      edges,
+      cv2.RETR_LIST,
+      cv2.CHAIN_APPROX_SIMPLE,
+    )
+
+    candidates = []
+
+    image_area = (
+      detection_width
+      * detection_height
+    )
+
+    for contour in contours:
+
+      contour_area = cv2.contourArea(
+        contour,
+      )
+
+      # The form should occupy a meaningful portion of
+      # the photograph, but don't require it to dominate
+      # the entire image.
+      if contour_area < image_area * 0.20:
+        continue
+
+      perimeter = cv2.arcLength(
+        contour,
+        True,
+      )
+
+      if perimeter <= 0:
+        continue
+
+      approximation = cv2.approxPolyDP(
+        contour,
+        0.02 * perimeter,
+        True,
+      )
+
+      if len(approximation) != 4:
+        continue
+
+      if not cv2.isContourConvex(
+        approximation,
+      ):
+        continue
+
+      points = (
+        approximation.reshape(
+          4,
+          2,
+        ).astype(
+          np.float32,
+        )
+      )
+
+      # Calculate the candidate's bounding box.
+      x, y, w, h = cv2.boundingRect(
+        approximation,
+      )
+
+      if w <= 0 or h <= 0:
+        continue
+
+      bounding_area = w * h
+
+      rectangularity = (
+        contour_area / bounding_area
+      )
+
+      # Reject shapes that are extremely irregular.
+      if rectangularity < 0.65:
+        continue
+
+      # Reject candidates touching the image boundary
+      # on too many sides. This helps avoid treating the
+      # edge of the photograph itself as the form.
+      margin = int(
+        min(
+          detection_width,
+          detection_height,
+        ) * 0.01
+      )
+
+      touching_edges = 0
+
+      if x <= margin:
+        touching_edges += 1
+
+      if y <= margin:
+        touching_edges += 1
+
+      if x + w >= detection_width - margin:
+        touching_edges += 1
+
+      if y + h >= detection_height - margin:
+        touching_edges += 1
+
+      if touching_edges >= 3:
+        continue
+
+      # Score larger, more rectangular candidates higher.
+      area_score = (
+        contour_area / image_area
+      )
+
+      score = (
+        area_score * 0.70
+        + rectangularity * 0.30
+      )
+
+      candidates.append(
+        (
+          score,
+          points,
+        ),
+      )
+
+    document_found = False
+
+    if candidates:
+
+      candidates.sort(
+        key=lambda item: item[0],
+        reverse=True,
+      )
+
+      best_score, document_points = (
+        candidates[0]
+      )
+
+      # Require a reasonably strong candidate.
+      if best_score >= 0.18:
+
+        document_found = True
+
+        # Convert detection-image coordinates back
+        # into coordinates of the original image.
+        if detection_scale != 1.0:
+          document_points = (
+            document_points
+            / detection_scale
+          )
+
+        logger.info(
+          "Detected form boundary with score %.3f",
+          best_score,
+        )
+
+    # ---------------------------------------------------------
+    # 3. Perspective-correct and crop the form
+    # ---------------------------------------------------------
+
+    if document_found:
+
+      def order_points(
+        points,
+      ):
+        ordered = np.zeros(
+          (4, 2),
+          dtype=np.float32,
+        )
+
+        sums = points.sum(
+          axis=1,
+        )
+
+        differences = np.diff(
+          points,
+          axis=1,
+        ).reshape(-1)
+
+        ordered[0] = points[
+          np.argmin(sums)
+        ]
+
+        ordered[2] = points[
+          np.argmax(sums)
+        ]
+
+        ordered[1] = points[
+          np.argmin(differences)
+        ]
+
+        ordered[3] = points[
+          np.argmax(differences)
+        ]
+
+        return ordered
+
+      points = order_points(
+        document_points,
+      )
+
+      top_left = points[0]
+      top_right = points[1]
+      bottom_right = points[2]
+      bottom_left = points[3]
+
+      top_width = np.linalg.norm(
+        top_right - top_left,
+      )
+
+      bottom_width = np.linalg.norm(
+        bottom_right - bottom_left,
+      )
+
+      left_height = np.linalg.norm(
+        bottom_left - top_left,
+      )
+
+      right_height = np.linalg.norm(
+        bottom_right - top_right,
+      )
+
+      output_width = int(
+        max(
+          top_width,
+          bottom_width,
+        )
+      )
+
+      output_height = int(
+        max(
+          left_height,
+          right_height,
+        )
+      )
+
+      # Protect against malformed geometry.
+      if (
+        output_width >= 500
+        and output_height >= 500
+        and output_width <= 10000
+        and output_height <= 10000
+      ):
+
+        destination = np.array(
+          [
+            [
+              0,
+              0,
+            ],
+            [
+              output_width - 1,
+              0,
+            ],
+            [
+              output_width - 1,
+              output_height - 1,
+            ],
+            [
+              0,
+              output_height - 1,
+            ],
+          ],
+          dtype=np.float32,
+        )
+
+        transform = cv2.getPerspectiveTransform(
+          points,
+          destination,
+        )
+
+        image = cv2.warpPerspective(
+          image,
+          transform,
+          (
+            output_width,
+            output_height,
+          ),
+          flags=cv2.INTER_CUBIC,
+          borderMode=cv2.BORDER_REPLICATE,
+        )
+
+        logger.info(
+          "Perspective corrected form: %dx%d",
+          output_width,
+          output_height,
+        )
+
+      else:
+
+        logger.warning(
+          "Detected form geometry was invalid; "
+          "keeping original image framing",
+        )
+
+    else:
+
+      logger.info(
+        "No confident form boundary detected; "
+        "keeping original image framing",
+      )
+
+    # ---------------------------------------------------------
+    # 4. Prevent excessively large output images
+    # ---------------------------------------------------------
+
+    height, width = image.shape[:2]
 
     max_dimension = 3000
 
     scale = min(
       1.0,
       max_dimension / max(
-        original_width,
-        original_height,
+        width,
+        height,
       ),
     )
 
@@ -514,16 +894,15 @@ class FormJobService:
       image = cv2.resize(
         image,
         (
-          int(original_width * scale),
-          int(original_height * scale),
+          int(width * scale),
+          int(height * scale),
         ),
         interpolation=cv2.INTER_AREA,
       )
 
-    # ------------------------------------------------------------
-    # Work in LAB color space so we can improve brightness and
-    # contrast without throwing away color information.
-    # ------------------------------------------------------------
+    # ---------------------------------------------------------
+    # 5. Lighting / paper normalization
+    # ---------------------------------------------------------
 
     lab = cv2.cvtColor(
       image,
@@ -533,10 +912,6 @@ class FormJobService:
     l_channel, a_channel, b_channel = (
       cv2.split(lab)
     )
-
-    # ------------------------------------------------------------
-    # Normalize uneven lighting.
-    # ------------------------------------------------------------
 
     background = cv2.GaussianBlur(
       l_channel,
@@ -550,9 +925,9 @@ class FormJobService:
       scale=255,
     )
 
-    # ------------------------------------------------------------
-    # Improve local contrast.
-    # ------------------------------------------------------------
+    # ---------------------------------------------------------
+    # 6. Gentle local contrast enhancement
+    # ---------------------------------------------------------
 
     clahe = cv2.createCLAHE(
       clipLimit=2.0,
@@ -563,9 +938,9 @@ class FormJobService:
       normalized_l,
     )
 
-    # ------------------------------------------------------------
-    # Light sharpening.
-    # ------------------------------------------------------------
+    # ---------------------------------------------------------
+    # 7. Light sharpening
+    # ---------------------------------------------------------
 
     blurred = cv2.GaussianBlur(
       enhanced_l,
@@ -581,9 +956,9 @@ class FormJobService:
       0,
     )
 
-    # ------------------------------------------------------------
-    # Recombine while preserving the original color channels.
-    # ------------------------------------------------------------
+    # ---------------------------------------------------------
+    # 8. Recombine while preserving original colors
+    # ---------------------------------------------------------
 
     cleaned_lab = cv2.merge(
       [
@@ -598,9 +973,9 @@ class FormJobService:
       cv2.COLOR_LAB2BGR,
     )
 
-    # ------------------------------------------------------------
-    # Save.
-    # ------------------------------------------------------------
+    # ---------------------------------------------------------
+    # 9. Save
+    # ---------------------------------------------------------
 
     success = cv2.imwrite(
       str(output_file),
