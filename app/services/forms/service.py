@@ -710,7 +710,6 @@ PDF.
             uploaded.id,
           )
 
-
   def _extract_output_files_from_response(
     self,
     response,
@@ -727,8 +726,16 @@ PDF.
       "========== EXTRACTING CODE INTERPRETER OUTPUT FILES =========="
     )
 
-    # Prefer the files the agent said it created when determining
-    # which filenames we ultimately expect.
+    # ------------------------------------------------------------
+    # Determine which files the agent says it created.
+    #
+    # For directly edited documents such as DOCX/XLSX, the agent
+    # may save the completed file anywhere under /mnt/data rather
+    # than specifically under /mnt/data/output/.
+    #
+    # Therefore we must not require /mnt/data/output/.
+    # ------------------------------------------------------------
+
     reported_files = agent_output.get(
       "files",
       [],
@@ -739,14 +746,33 @@ PDF.
       reported_files,
     )
 
+    reported_filenames = {
+      Path(
+        str(file_path)
+      ).name
+      for file_path in reported_files
+      if file_path
+    }
+
+    logger.info(
+      "Agent reported filenames: %s",
+      reported_filenames,
+    )
+
+    # ------------------------------------------------------------
+    # Find Code Interpreter containers.
+    # ------------------------------------------------------------
+
     container_ids = []
 
     for item in response.output:
+
       if getattr(
         item,
         "type",
         None,
       ) != "code_interpreter_call":
+
         continue
 
       container_id = getattr(
@@ -759,17 +785,24 @@ PDF.
         container_id
         and container_id not in container_ids
       ):
+
         container_ids.append(
           container_id,
         )
 
     if not container_ids:
+
       logger.warning(
         "No Code Interpreter container IDs found in response.",
       )
+
       return
 
     extracted_files = []
+
+    # ------------------------------------------------------------
+    # Inspect each Code Interpreter container.
+    # ------------------------------------------------------------
 
     for container_id in container_ids:
 
@@ -814,18 +847,35 @@ PDF.
         if not file_id or not file_path:
           continue
 
-        # Only retrieve files that the agent placed in its
-        # designated output directory.
-        if not file_path.startswith(
-          "/mnt/data/output/",
-        ):
-          continue
-
         filename = Path(
           file_path,
         ).name
 
         if not filename:
+          continue
+
+        # --------------------------------------------------------
+        # Only extract files explicitly reported by the agent.
+        #
+        # This prevents us from accidentally downloading:
+        #
+        # - the original uploaded file
+        # - rendered verification PDFs
+        # - rendered PNGs
+        # - temporary files
+        # - unrelated Code Interpreter files
+        #
+        # The agent's "files" array identifies the completed
+        # document(s) that should become application output.
+        # --------------------------------------------------------
+
+        if filename not in reported_filenames:
+
+          logger.info(
+            "Skipping container file not reported as output: %s",
+            file_path,
+          )
+
           continue
 
         local_path = (
@@ -838,35 +888,71 @@ PDF.
           local_path,
         )
 
-        file_content = (
-          self.openai.containers.files.content.retrieve(
-            container_id=container_id,
-            file_id=file_id,
-          )
-        )
+        try:
 
-        with open(
-          local_path,
-          "wb",
-        ) as f:
-          f.write(
-            file_content.content,
+          file_content = (
+            self.openai.containers.files.content.retrieve(
+              container_id=container_id,
+              file_id=file_id,
+            )
           )
 
-        extracted_files.append(
-          str(local_path),
-        )
+          with open(
+            local_path,
+            "wb",
+          ) as f:
 
-        logger.info(
-          "Successfully extracted output file: %s",
-          local_path,
-        )
+            f.write(
+              file_content.content,
+            )
+
+          extracted_files.append(
+            str(local_path),
+          )
+
+          logger.info(
+            "Successfully extracted output file: %s",
+            local_path,
+          )
+
+        except Exception:
+
+          logger.exception(
+            "Failed to extract container file: %s",
+            file_path,
+          )
 
     logger.info(
       "Extracted %d output file(s): %s",
       len(extracted_files),
       extracted_files,
     )
+
+    # ------------------------------------------------------------
+    # Detect when the agent reported a file but we could not
+    # actually retrieve it.
+    # ------------------------------------------------------------
+
+    extracted_filenames = {
+      Path(
+        file_path
+      ).name
+      for file_path in extracted_files
+    }
+
+    missing_reported_files = (
+      reported_filenames
+      - extracted_filenames
+    )
+
+    if missing_reported_files:
+
+      logger.warning(
+        "Agent reported output files that could not be extracted: %s",
+        sorted(
+          missing_reported_files,
+        ),
+      )
 
     logger.info(
       "========== END EXTRACTING CODE INTERPRETER OUTPUT FILES =========="
