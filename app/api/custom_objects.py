@@ -486,32 +486,25 @@ async def list_custom_objects_by_definitions(
 
   custom_objects = result.scalars().unique().all()
 
-  # ---------------------------------------------------------
-  # Index requested custom objects by ID
-  # ---------------------------------------------------------
-
   custom_objects_by_id = {
     custom_object.id: custom_object
     for custom_object in custom_objects
   }
 
   # ---------------------------------------------------------
-  # Get all project IDs referenced by relationships
+  # Find all Project/User IDs referenced by relationships.
   #
-  # We need both target and source entities because:
-  #
-  # name     -> target entity
-  # subtitle -> source entity
+  # We need both source and target entities.
   # ---------------------------------------------------------
 
   project_ids = set()
-
   user_ids = set()
 
   for custom_object in custom_objects:
     for relationship in custom_object.custom_relationships:
       relationship_definition = relationship.definition
 
+      # Target
       if (
         relationship_definition.target_entity_type
         == CustomRelationshipEntityType.project
@@ -520,7 +513,7 @@ async def list_custom_objects_by_definitions(
           relationship.target_entity_id
         )
 
-      if (
+      elif (
         relationship_definition.target_entity_type
         == CustomRelationshipEntityType.user
       ):
@@ -528,6 +521,7 @@ async def list_custom_objects_by_definitions(
           relationship.target_entity_id
         )
 
+      # Source
       if (
         relationship_definition.source_entity_type
         == CustomRelationshipEntityType.project
@@ -536,7 +530,7 @@ async def list_custom_objects_by_definitions(
           relationship.source_entity_id
         )
 
-      if (
+      elif (
         relationship_definition.source_entity_type
         == CustomRelationshipEntityType.user
       ):
@@ -545,7 +539,7 @@ async def list_custom_objects_by_definitions(
         )
 
   # ---------------------------------------------------------
-  # Load projects
+  # Load Projects
   # ---------------------------------------------------------
 
   projects_by_id = {}
@@ -565,7 +559,7 @@ async def list_custom_objects_by_definitions(
     }
 
   # ---------------------------------------------------------
-  # Load users
+  # Load Users
   # ---------------------------------------------------------
 
   users_by_id = {}
@@ -585,32 +579,32 @@ async def list_custom_objects_by_definitions(
     }
 
   # ---------------------------------------------------------
-  # Resolve a CustomObject's label
+  # Resolve the label of a CustomObject.
   #
-  # Returns:
+  # This mirrors getLabelValue() from TypeScript:
   #
-  #   (label, came_from_relationship)
-  #
-  # The boolean lets us determine whether to populate
-  # subtitle.
+  #   1. First non-Boolean field by sort_order
+  #   2. First relationship by sort_order
+  #   3. Whichever has the lower sort_order wins
+  #   4. If relationship wins, resolve its TARGET
   # ---------------------------------------------------------
 
   def get_label_value(
     custom_object: CustomObject,
     visited: set[UUID] | None = None,
-  ) -> tuple[str, bool]:
+  ) -> str:
 
     if visited is None:
       visited = set()
 
-    # Prevent circular CustomObject relationships.
+    # Protect against circular CustomObject relationships.
     if custom_object.id in visited:
-      return "", False
+      return ""
 
     visited = visited | {custom_object.id}
 
     # -------------------------------------------------------
-    # Find the first non-Boolean field
+    # First non-Boolean field
     # -------------------------------------------------------
 
     label_fields = sorted(
@@ -632,7 +626,7 @@ async def list_custom_objects_by_definitions(
     )
 
     # -------------------------------------------------------
-    # Find the first relationship
+    # First relationship
     # -------------------------------------------------------
 
     label_relationships = sorted(
@@ -648,78 +642,41 @@ async def list_custom_objects_by_definitions(
 
     # -------------------------------------------------------
     # Field wins
-    #
-    # This exactly matches:
-    #
-    # if (fieldIndex < relationshipIndex)
     # -------------------------------------------------------
 
     if field_index < relationship_index:
-      return (
-        label_fields[0].value or "",
-        False,
-      )
+      return label_fields[0].value or ""
 
     # -------------------------------------------------------
     # No relationship
     # -------------------------------------------------------
 
     if not label_relationships:
-      return "", False
+      return ""
+
+    # -------------------------------------------------------
+    # Relationship wins.
+    #
+    # IMPORTANT:
+    # The NAME comes from the TARGET entity.
+    # -------------------------------------------------------
 
     relationship = label_relationships[0]
 
-    # -------------------------------------------------------
-    # Resolve the TARGET entity for the name
-    # -------------------------------------------------------
-
-    entity_type = relationship.definition.target_entity_type
-
-    if entity_type == CustomRelationshipEntityType.project:
-      project = projects_by_id.get(
-        relationship.target_entity_id
-      )
-
-      return (
-        project.name if project else "",
-        True,
-      )
-
-    if entity_type == CustomRelationshipEntityType.user:
-      user = users_by_id.get(
-        relationship.target_entity_id
-      )
-
-      if not user:
-        return "", True
-
-      return (
-        f"{user.last_name} {user.first_name}",
-        True,
-      )
-
-    if entity_type == CustomRelationshipEntityType.custom_object:
-      related_custom_object = custom_objects_by_id.get(
-        relationship.target_entity_id
-      )
-
-      if not related_custom_object:
-        return "", True
-
-      label, _ = get_label_value(
-        related_custom_object,
-        visited,
-      )
-
-      return label, True
-
-    return "", True
+    return get_relationship_entity_label(
+      relationship,
+      source=False,
+      visited=visited,
+    )
 
   # ---------------------------------------------------------
-  # Resolve an arbitrary relationship endpoint
+  # Resolve the label of either endpoint of a relationship.
   #
-  # Used for the subtitle, which represents the SOURCE
-  # entity of the relationship.
+  # source=False:
+  #   resolve target -> used for NAME
+  #
+  # source=True:
+  #   resolve source -> used for SUBTITLE
   # ---------------------------------------------------------
 
   def get_relationship_entity_label(
@@ -731,6 +688,13 @@ async def list_custom_objects_by_definitions(
 
     if visited is None:
       visited = set()
+
+    # -------------------------------------------------------
+    # Select the correct endpoint.
+    #
+    # This is the important distinction between name
+    # and subtitle.
+    # -------------------------------------------------------
 
     if source:
       entity_type = relationship.definition.source_entity_type
@@ -746,7 +710,10 @@ async def list_custom_objects_by_definitions(
     if entity_type == CustomRelationshipEntityType.project:
       project = projects_by_id.get(entity_id)
 
-      return project.name if project else ""
+      if not project:
+        return ""
+
+      return project.name
 
     # -------------------------------------------------------
     # User
@@ -762,6 +729,9 @@ async def list_custom_objects_by_definitions(
 
     # -------------------------------------------------------
     # Custom Object
+    #
+    # For a CustomObject, resolve its label using the exact
+    # same get_label_value() logic.
     # -------------------------------------------------------
 
     if entity_type == CustomRelationshipEntityType.custom_object:
@@ -770,17 +740,15 @@ async def list_custom_objects_by_definitions(
       if not custom_object:
         return ""
 
-      label, _ = get_label_value(
+      return get_label_value(
         custom_object,
-        visited,
+        visited=visited,
       )
-
-      return label
 
     return ""
 
   # ---------------------------------------------------------
-  # Build response
+  # Build the response containers
   # ---------------------------------------------------------
 
   objects_by_definition = {
@@ -791,24 +759,84 @@ async def list_custom_objects_by_definitions(
     for definition_id in payload.definition_ids
   }
 
+  # ---------------------------------------------------------
+  # Build each object
+  # ---------------------------------------------------------
+
   for custom_object in custom_objects:
-    object_name, name_from_relationship = get_label_value(
-      custom_object
+
+    # -------------------------------------------------------
+    # Determine the winning label source.
+    #
+    # We need this separately from get_label_value() because
+    # subtitle should ONLY exist when the winning source is
+    # a relationship.
+    # -------------------------------------------------------
+
+    label_fields = sorted(
+      [
+        link.custom_field
+        for link in custom_object.custom_field_links
+        if (
+          link.custom_field.definition.data_type
+          != CustomFieldDataType.boolean.value
+        )
+      ],
+      key=lambda field: field.definition.sort_order,
     )
 
-    subtitle = None
+    field_index = (
+      label_fields[0].definition.sort_order
+      if label_fields
+      else 99999
+    )
 
-    if name_from_relationship:
-      label_relationships = sorted(
-        custom_object.custom_relationships,
-        key=lambda relationship: relationship.definition.sort_order,
-      )
+    label_relationships = sorted(
+      custom_object.custom_relationships,
+      key=lambda relationship: relationship.definition.sort_order,
+    )
 
-      if label_relationships:
+    relationship_index = (
+      label_relationships[0].definition.sort_order
+      if label_relationships
+      else 99999
+    )
+
+    # -------------------------------------------------------
+    # Field is the label
+    # -------------------------------------------------------
+
+    if field_index < relationship_index:
+      object_name = label_fields[0].value or ""
+      subtitle = None
+
+    # -------------------------------------------------------
+    # Relationship is the label
+    # -------------------------------------------------------
+
+    else:
+      if not label_relationships:
+        object_name = ""
+        subtitle = None
+
+      else:
+        relationship = label_relationships[0]
+
+        # TARGET -> name
+        object_name = get_relationship_entity_label(
+          relationship,
+          source=False,
+        )
+
+        # SOURCE -> subtitle
         subtitle = get_relationship_entity_label(
-          label_relationships[0],
+          relationship,
           source=True,
         )
+
+        # Don't return an empty subtitle.
+        if not subtitle:
+          subtitle = None
 
     objects_by_definition[
       custom_object.custom_object_definition_id
