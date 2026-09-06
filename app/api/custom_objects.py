@@ -429,9 +429,9 @@ async def list_custom_objects_by_definitions(
     payload.company_id,
   )
 
-  # ---------------------------------------------------------
-  # Get the requested definitions
-  # ---------------------------------------------------------
+  # -------------------------------------------------------------------------
+  # Validate definitions
+  # -------------------------------------------------------------------------
 
   definitions_result = await db.execute(
     select(CustomObjectDefinition)
@@ -458,11 +458,49 @@ async def list_custom_objects_by_definitions(
       detail="One or more custom object definitions not found",
     )
 
-  # ---------------------------------------------------------
-  # Get all requested custom objects
-  # ---------------------------------------------------------
+  # -------------------------------------------------------------------------
+  # Load all field definitions for the requested custom object definitions.
+  #
+  # We need the first non-Boolean field, matching getLabelValue().
+  # -------------------------------------------------------------------------
 
-  result = await db.execute(
+  field_definitions_result = await db.execute(
+    select(CustomFieldDefinition)
+    .where(
+      CustomFieldDefinition.company_id == payload.company_id,
+      CustomFieldDefinition.custom_object_definition_id.in_(
+        payload.definition_ids
+      ),
+      CustomFieldDefinition.entity_type
+      == CustomFieldEntityType.custom_object,
+    )
+    .order_by(
+      CustomFieldDefinition.custom_object_definition_id,
+      CustomFieldDefinition.sort_order,
+      CustomFieldDefinition.name,
+    )
+  )
+
+  field_definitions = field_definitions_result.scalars().all()
+
+  field_definitions_by_definition = {}
+
+  for field_definition in field_definitions:
+    if field_definition.data_type == CustomFieldDataType.boolean:
+      continue
+
+    field_definitions_by_definition.setdefault(
+      field_definition.custom_object_definition_id,
+      [],
+    ).append(field_definition)
+
+  # -------------------------------------------------------------------------
+  # Load all custom objects belonging to the requested definitions.
+  #
+  # We load their fields and outgoing relationships.
+  # -------------------------------------------------------------------------
+
+  custom_objects_result = await db.execute(
     select(CustomObject)
     .where(
       CustomObject.company_id == payload.company_id,
@@ -471,12 +509,16 @@ async def list_custom_objects_by_definitions(
       ),
     )
     .options(
-      selectinload(CustomObject.custom_field_links)
-        .selectinload(CustomFieldCustomObjectLink.custom_field)
-        .selectinload(CustomField.definition),
-
-      selectinload(CustomObject.custom_relationships)
-        .selectinload(CustomRelationship.definition),
+      selectinload(
+        CustomObject.custom_field_links
+      ).selectinload(
+        CustomFieldCustomObjectLink.custom_field
+      ),
+      selectinload(
+        CustomObject.custom_relationships
+      ).selectinload(
+        CustomRelationship.definition
+      ),
     )
     .order_by(
       CustomObject.custom_object_definition_id,
@@ -484,63 +526,84 @@ async def list_custom_objects_by_definitions(
     )
   )
 
-  custom_objects = result.scalars().unique().all()
+  custom_objects = custom_objects_result.scalars().all()
 
   custom_objects_by_id = {
     custom_object.id: custom_object
     for custom_object in custom_objects
   }
 
-  # ---------------------------------------------------------
-  # Find all Project/User IDs referenced by relationships.
+  # -------------------------------------------------------------------------
+  # Load ALL relationships for the company.
   #
-  # We need both source and target entities.
-  # ---------------------------------------------------------
+  # CustomObject.custom_relationships only contains relationships where the
+  # custom object is the SOURCE. For subtitles we also need relationships
+  # where the custom object is the TARGET.
+  # -------------------------------------------------------------------------
 
-  project_ids = set()
-  user_ids = set()
+  relationships_result = await db.execute(
+    select(CustomRelationship)
+    .where(
+      CustomRelationship.company_id == payload.company_id,
+    )
+    .options(
+      selectinload(CustomRelationship.definition),
+    )
+    .order_by(
+      CustomRelationship.target_entity_id,
+      CustomRelationship.definition.has(
+        CustomRelationshipDefinition.sort_order
+      ),
+      CustomRelationship.id,
+    )
+  )
 
-  for custom_object in custom_objects:
-    for relationship in custom_object.custom_relationships:
-      relationship_definition = relationship.definition
+  relationships = relationships_result.scalars().all()
 
-      # Target
-      if (
-        relationship_definition.target_entity_type
-        == CustomRelationshipEntityType.project
-      ):
-        project_ids.add(
-          relationship.target_entity_id
-        )
+  # Relationships where a custom object is the target.
+  incoming_relationships_by_custom_object_id = {}
 
-      elif (
-        relationship_definition.target_entity_type
-        == CustomRelationshipEntityType.user
-      ):
-        user_ids.add(
-          relationship.target_entity_id
-        )
+  for relationship in relationships:
+    if (
+      relationship.target_entity_type
+      == CustomRelationshipEntityType.custom_object
+    ):
+      incoming_relationships_by_custom_object_id.setdefault(
+        relationship.target_entity_id,
+        [],
+      ).append(relationship)
 
-      # Source
-      if (
-        relationship_definition.source_entity_type
-        == CustomRelationshipEntityType.project
-      ):
-        project_ids.add(
-          relationship.source_entity_id
-        )
+  # -------------------------------------------------------------------------
+  # Load projects and users so relationship labels can be resolved.
+  # -------------------------------------------------------------------------
 
-      elif (
-        relationship_definition.source_entity_type
-        == CustomRelationshipEntityType.user
-      ):
-        user_ids.add(
-          relationship.source_entity_id
-        )
+  project_ids = {
+    relationship.target_entity_id
+    for relationship in relationships
+    if relationship.target_entity_type
+    == CustomRelationshipEntityType.project
+  }
 
-  # ---------------------------------------------------------
-  # Load Projects
-  # ---------------------------------------------------------
+  project_ids.update(
+    relationship.source_entity_id
+    for relationship in relationships
+    if relationship.source_entity_type
+    == CustomRelationshipEntityType.project
+  )
+
+  user_ids = {
+    relationship.target_entity_id
+    for relationship in relationships
+    if relationship.target_entity_type
+    == CustomRelationshipEntityType.user
+  }
+
+  user_ids.update(
+    relationship.source_entity_id
+    for relationship in relationships
+    if relationship.source_entity_type
+    == CustomRelationshipEntityType.user
+  )
 
   projects_by_id = {}
 
@@ -558,10 +621,6 @@ async def list_custom_objects_by_definitions(
       for project in projects_result.scalars().all()
     }
 
-  # ---------------------------------------------------------
-  # Load Users
-  # ---------------------------------------------------------
-
   users_by_id = {}
 
   if user_ids:
@@ -578,134 +637,27 @@ async def list_custom_objects_by_definitions(
       for user in users_result.scalars().all()
     }
 
-  # ---------------------------------------------------------
-  # Resolve the label of a CustomObject.
-  #
-  # This mirrors getLabelValue() from TypeScript:
-  #
-  #   1. First non-Boolean field by sort_order
-  #   2. First relationship by sort_order
-  #   3. Whichever has the lower sort_order wins
-  #   4. If relationship wins, resolve its TARGET
-  # ---------------------------------------------------------
-
-  def get_label_value(
-    custom_object: CustomObject,
-    visited: set[UUID] | None = None,
-  ) -> str:
-
-    if visited is None:
-      visited = set()
-
-    # Protect against circular CustomObject relationships.
-    if custom_object.id in visited:
-      return ""
-
-    visited = visited | {custom_object.id}
-
-    # -------------------------------------------------------
-    # First non-Boolean field
-    # -------------------------------------------------------
-
-    label_fields = sorted(
-      [
-        link.custom_field
-        for link in custom_object.custom_field_links
-        if (
-          link.custom_field.definition.data_type
-          != CustomFieldDataType.boolean.value
-        )
-      ],
-      key=lambda field: field.definition.sort_order,
-    )
-
-    field_index = (
-      label_fields[0].definition.sort_order
-      if label_fields
-      else 99999
-    )
-
-    # -------------------------------------------------------
-    # First relationship
-    # -------------------------------------------------------
-
-    label_relationships = sorted(
-      custom_object.custom_relationships,
-      key=lambda relationship: relationship.definition.sort_order,
-    )
-
-    relationship_index = (
-      label_relationships[0].definition.sort_order
-      if label_relationships
-      else 99999
-    )
-
-    # -------------------------------------------------------
-    # Field wins
-    # -------------------------------------------------------
-
-    if field_index < relationship_index:
-      return label_fields[0].value or ""
-
-    # -------------------------------------------------------
-    # No relationship
-    # -------------------------------------------------------
-
-    if not label_relationships:
-      return ""
-
-    # -------------------------------------------------------
-    # Relationship wins.
-    #
-    # IMPORTANT:
-    # The NAME comes from the TARGET entity.
-    # -------------------------------------------------------
-
-    relationship = label_relationships[0]
-
-    return get_relationship_entity_label(
-      relationship,
-      source=False,
-      visited=visited,
-    )
-
-  # ---------------------------------------------------------
-  # Resolve the label of either endpoint of a relationship.
-  #
-  # source=False:
-  #   resolve target -> used for NAME
-  #
-  # source=True:
-  #   resolve source -> used for SUBTITLE
-  # ---------------------------------------------------------
+  # -------------------------------------------------------------------------
+  # Relationship entity label helper
+  # -------------------------------------------------------------------------
 
   def get_relationship_entity_label(
     relationship: CustomRelationship,
     *,
     source: bool,
-    visited: set[UUID] | None = None,
+    visited_object_ids: set[UUID] | None = None,
   ) -> str:
+    entity_type = (
+      relationship.source_entity_type
+      if source
+      else relationship.target_entity_type
+    )
 
-    if visited is None:
-      visited = set()
-
-    # -------------------------------------------------------
-    # Select the correct endpoint.
-    #
-    # This is the important distinction between name
-    # and subtitle.
-    # -------------------------------------------------------
-
-    if source:
-      entity_type = relationship.definition.source_entity_type
-      entity_id = relationship.source_entity_id
-    else:
-      entity_type = relationship.definition.target_entity_type
-      entity_id = relationship.target_entity_id
-
-    # -------------------------------------------------------
-    # Project
-    # -------------------------------------------------------
+    entity_id = (
+      relationship.source_entity_id
+      if source
+      else relationship.target_entity_id
+    )
 
     if entity_type == CustomRelationshipEntityType.project:
       project = projects_by_id.get(entity_id)
@@ -715,10 +667,6 @@ async def list_custom_objects_by_definitions(
 
       return project.name
 
-    # -------------------------------------------------------
-    # User
-    # -------------------------------------------------------
-
     if entity_type == CustomRelationshipEntityType.user:
       user = users_by_id.get(entity_id)
 
@@ -726,13 +674,6 @@ async def list_custom_objects_by_definitions(
         return ""
 
       return f"{user.last_name} {user.first_name}"
-
-    # -------------------------------------------------------
-    # Custom Object
-    #
-    # For a CustomObject, resolve its label using the exact
-    # same get_label_value() logic.
-    # -------------------------------------------------------
 
     if entity_type == CustomRelationshipEntityType.custom_object:
       custom_object = custom_objects_by_id.get(entity_id)
@@ -742,14 +683,133 @@ async def list_custom_objects_by_definitions(
 
       return get_label_value(
         custom_object,
-        visited=visited,
+        visited_object_ids=visited_object_ids,
       )
 
     return ""
 
-  # ---------------------------------------------------------
-  # Build the response containers
-  # ---------------------------------------------------------
+  # -------------------------------------------------------------------------
+  # Match the TypeScript getLabelValue() logic.
+  #
+  # A custom object's name comes from whichever comes first:
+  #
+  #   - first non-Boolean field
+  #   - first outgoing relationship
+  #
+  # based on definition.sort_order.
+  # -------------------------------------------------------------------------
+
+  def get_label_value(
+    custom_object: CustomObject,
+    *,
+    visited_object_ids: set[UUID] | None = None,
+  ) -> str:
+    if visited_object_ids is None:
+      visited_object_ids = set()
+
+    # Prevent recursive custom-object relationships from looping forever.
+    if custom_object.id in visited_object_ids:
+      return ""
+
+    visited_object_ids = {
+      *visited_object_ids,
+      custom_object.id,
+    }
+
+    # -----------------------------------------------------------------------
+    # First non-Boolean field
+    # -----------------------------------------------------------------------
+
+    field_definitions = field_definitions_by_definition.get(
+      custom_object.custom_object_definition_id,
+      [],
+    )
+
+    first_field_definition = (
+      field_definitions[0]
+      if field_definitions
+      else None
+    )
+
+    field_index = (
+      first_field_definition.sort_order
+      if first_field_definition
+      else 99999
+    )
+
+    field_value = ""
+
+    if first_field_definition:
+      custom_field = next(
+        (
+          link.custom_field
+          for link in custom_object.custom_field_links
+          if (
+            link.custom_field.custom_field_definition_id
+            == first_field_definition.id
+          )
+        ),
+        None,
+      )
+
+      if custom_field and custom_field.value:
+        field_value = custom_field.value
+
+    # -----------------------------------------------------------------------
+    # First outgoing relationship
+    # -----------------------------------------------------------------------
+
+    outgoing_relationships = sorted(
+      custom_object.custom_relationships,
+      key=lambda relationship: (
+        relationship.definition.sort_order,
+        relationship.id,
+      ),
+    )
+
+    first_relationship = (
+      outgoing_relationships[0]
+      if outgoing_relationships
+      else None
+    )
+
+    relationship_index = (
+      first_relationship.definition.sort_order
+      if first_relationship
+      else 99999
+    )
+
+    # -----------------------------------------------------------------------
+    # Field wins if its sort_order is lower than the first relationship.
+    #
+    # This intentionally matches:
+    #
+    #   if (fieldIndex < relationshipIndex) {
+    #     return labelFields[0].value;
+    #   }
+    # -----------------------------------------------------------------------
+
+    if field_index < relationship_index:
+      return field_value
+
+    if not first_relationship:
+      return field_value
+
+    # -----------------------------------------------------------------------
+    # Relationship wins.
+    #
+    # The object's name is the label of the TARGET entity.
+    # -----------------------------------------------------------------------
+
+    return get_relationship_entity_label(
+      first_relationship,
+      source=False,
+      visited_object_ids=visited_object_ids,
+    )
+
+  # -------------------------------------------------------------------------
+  # Build response
+  # -------------------------------------------------------------------------
 
   objects_by_definition = {
     definition_id: CustomObjectsByDefinitionRead(
@@ -759,88 +819,59 @@ async def list_custom_objects_by_definitions(
     for definition_id in payload.definition_ids
   }
 
-  # ---------------------------------------------------------
-  # Build each object
-  # ---------------------------------------------------------
-
   for custom_object in custom_objects:
+    definition_id = custom_object.custom_object_definition_id
 
-    # -------------------------------------------------------
-    # Determine the winning label source.
+    # -----------------------------------------------------------------------
+    # Name
+    # -----------------------------------------------------------------------
+
+    object_name = get_label_value(custom_object)
+
+    # -----------------------------------------------------------------------
+    # Subtitle
     #
-    # We need this separately from get_label_value() because
-    # subtitle should ONLY exist when the winning source is
-    # a relationship.
-    # -------------------------------------------------------
+    # Find the first relationship where THIS custom object is the TARGET.
+    #
+    # The subtitle is the label of that relationship's SOURCE entity.
+    #
+    # Example:
+    #
+    #   Project X
+    #       |
+    #       v
+    #   Custom Object
+    #       |
+    #       v
+    #   Joe Smith
+    #
+    # Name    = Joe Smith
+    # Subtitle = Project X
+    # -----------------------------------------------------------------------
 
-    label_fields = sorted(
-      [
-        link.custom_field
-        for link in custom_object.custom_field_links
-        if (
-          link.custom_field.definition.data_type
-          != CustomFieldDataType.boolean.value
-        )
-      ],
-      key=lambda field: field.definition.sort_order,
+    incoming_relationships = sorted(
+      incoming_relationships_by_custom_object_id.get(
+        custom_object.id,
+        [],
+      ),
+      key=lambda relationship: (
+        relationship.definition.sort_order,
+        relationship.id,
+      ),
     )
 
-    field_index = (
-      label_fields[0].definition.sort_order
-      if label_fields
-      else 99999
-    )
+    subtitle = None
 
-    label_relationships = sorted(
-      custom_object.custom_relationships,
-      key=lambda relationship: relationship.definition.sort_order,
-    )
+    if incoming_relationships:
+      subtitle_value = get_relationship_entity_label(
+        incoming_relationships[0],
+        source=True,
+      )
 
-    relationship_index = (
-      label_relationships[0].definition.sort_order
-      if label_relationships
-      else 99999
-    )
+      if subtitle_value:
+        subtitle = subtitle_value
 
-    # -------------------------------------------------------
-    # Field is the label
-    # -------------------------------------------------------
-
-    if field_index < relationship_index:
-      object_name = label_fields[0].value or ""
-      subtitle = None
-
-    # -------------------------------------------------------
-    # Relationship is the label
-    # -------------------------------------------------------
-
-    else:
-      if not label_relationships:
-        object_name = ""
-        subtitle = None
-
-      else:
-        relationship = label_relationships[0]
-
-        # TARGET -> name
-        object_name = get_relationship_entity_label(
-          relationship,
-          source=False,
-        )
-
-        # SOURCE -> subtitle
-        subtitle = get_relationship_entity_label(
-          relationship,
-          source=True,
-        )
-
-        # Don't return an empty subtitle.
-        if not subtitle:
-          subtitle = None
-
-    objects_by_definition[
-      custom_object.custom_object_definition_id
-    ].objects.append(
+    objects_by_definition[definition_id].objects.append(
       CustomObjectListItemRead(
         id=custom_object.id,
         name=object_name,
