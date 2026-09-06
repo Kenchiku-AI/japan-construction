@@ -27,7 +27,11 @@ from app.db.models.custom_field import (
   CustomFieldProjectLink,
   CustomFieldCustomObjectLink,
 )
-from app.db.models.custom_field_definition import CustomFieldDefinition, CustomFieldEntityType
+from app.db.models.custom_field_definition import (
+  CustomFieldDefinition, 
+  CustomFieldEntityType, 
+  CustomFieldDataType,
+)
 from app.db.models.custom_object import CustomObject
 from app.db.models.custom_object_definition import CustomObjectDefinition
 from app.db.models.custom_relationship import CustomRelationship

@@ -24,6 +24,7 @@ from app.db.models import (
   CustomRelationshipDefinition,
   CustomRelationshipEntityType,
   CustomRelationshipCardinality,
+  CustomFieldDataType,
 )
 from app.schemas.custom_object import (
   CustomObjectDefinitionCreate,
