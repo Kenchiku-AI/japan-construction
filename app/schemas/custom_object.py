@@ -79,6 +79,7 @@ class CustomObjectsByDefinitionsRequest(BaseModel):
 class CustomObjectListItemRead(BaseModel):
   id: UUID
   name: str
+  subtitle: str | None = None
 
   model_config = {
     "from_attributes": True,
