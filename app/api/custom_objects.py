@@ -428,7 +428,10 @@ async def list_custom_objects_by_definitions(
     payload.company_id,
   )
 
+  # ---------------------------------------------------------
   # Get the requested definitions
+  # ---------------------------------------------------------
+
   definitions_result = await db.execute(
     select(CustomObjectDefinition)
     .where(
@@ -454,39 +457,10 @@ async def list_custom_objects_by_definitions(
       detail="One or more custom object definitions not found",
     )
 
-  # Get the first field definition for each requested custom object
-  # definition, based on sort order.
-  field_definitions_result = await db.execute(
-    select(CustomFieldDefinition)
-    .where(
-      CustomFieldDefinition.company_id == payload.company_id,
-      CustomFieldDefinition.custom_object_definition_id.in_(
-        payload.definition_ids
-      ),
-      CustomFieldDefinition.entity_type
-      == CustomFieldEntityType.custom_object,
-    )
-    .order_by(
-      CustomFieldDefinition.custom_object_definition_id,
-      CustomFieldDefinition.sort_order,
-      CustomFieldDefinition.name,
-    )
-  )
-
-  field_definitions = field_definitions_result.scalars().all()
-
-  first_field_definition_by_definition = {}
-
-  for field_definition in field_definitions:
-    if (
-      field_definition.custom_object_definition_id
-      not in first_field_definition_by_definition
-    ):
-      first_field_definition_by_definition[
-        field_definition.custom_object_definition_id
-      ] = field_definition
-
+  # ---------------------------------------------------------
   # Get all custom objects
+  # ---------------------------------------------------------
+
   result = await db.execute(
     select(CustomObject)
     .where(
@@ -497,7 +471,11 @@ async def list_custom_objects_by_definitions(
     )
     .options(
       selectinload(CustomObject.custom_field_links)
-        .selectinload(CustomFieldCustomObjectLink.custom_field),
+        .selectinload(CustomFieldCustomObjectLink.custom_field)
+        .selectinload(CustomField.definition),
+
+      selectinload(CustomObject.custom_relationships)
+        .selectinload(CustomRelationship.definition),
     )
     .order_by(
       CustomObject.custom_object_definition_id,
@@ -505,7 +483,200 @@ async def list_custom_objects_by_definitions(
     )
   )
 
-  custom_objects = result.scalars().all()
+  custom_objects = result.scalars().unique().all()
+
+  # ---------------------------------------------------------
+  # Index objects
+  #
+  # We need this for CustomObject -> CustomObject
+  # relationship resolution.
+  # ---------------------------------------------------------
+
+  custom_objects_by_id = {
+    custom_object.id: custom_object
+    for custom_object in custom_objects
+  }
+
+  # ---------------------------------------------------------
+  # Get projects referenced by relationships
+  # ---------------------------------------------------------
+
+  project_ids = {
+    relationship.target_entity_id
+    for custom_object in custom_objects
+    for relationship in custom_object.custom_relationships
+    if (
+      relationship.definition.target_entity_type
+      == CustomRelationshipEntityType.project
+    )
+  }
+
+  projects_by_id = {}
+
+  if project_ids:
+    projects_result = await db.execute(
+      select(Project)
+      .where(
+        Project.company_id == payload.company_id,
+        Project.id.in_(project_ids),
+      )
+    )
+
+    projects_by_id = {
+      project.id: project
+      for project in projects_result.scalars().all()
+    }
+
+  # ---------------------------------------------------------
+  # Get users referenced by relationships
+  # ---------------------------------------------------------
+
+  user_ids = {
+    relationship.target_entity_id
+    for custom_object in custom_objects
+    for relationship in custom_object.custom_relationships
+    if (
+      relationship.definition.target_entity_type
+      == CustomRelationshipEntityType.user
+    )
+  }
+
+  users_by_id = {}
+
+  if user_ids:
+    users_result = await db.execute(
+      select(User)
+      .where(
+        User.company_id == payload.company_id,
+        User.id.in_(user_ids),
+      )
+    )
+
+    users_by_id = {
+      user.id: user
+      for user in users_result.scalars().all()
+    }
+
+  # ---------------------------------------------------------
+  # Recursive label resolver
+  # ---------------------------------------------------------
+
+  def get_label_value(
+    custom_object: CustomObject,
+    visited: set[UUID] | None = None,
+  ) -> str:
+    if visited is None:
+      visited = set()
+
+    # Prevent infinite recursion if there is a circular
+    # CustomObject -> CustomObject relationship.
+    if custom_object.id in visited:
+      return ""
+
+    visited = visited | {custom_object.id}
+
+    # -------------------------------------------------------
+    # Find first non-Boolean field
+    # -------------------------------------------------------
+
+    label_fields = sorted(
+      [
+        link.custom_field
+        for link in custom_object.custom_field_links
+        if (
+          link.custom_field.definition.data_type
+          != CustomFieldDataType.boolean.value
+        )
+      ],
+      key=lambda field: field.definition.sort_order,
+    )
+
+    field_index = (
+      label_fields[0].definition.sort_order
+      if label_fields
+      else 99999
+    )
+
+    # -------------------------------------------------------
+    # Find first relationship
+    # -------------------------------------------------------
+
+    label_relationships = sorted(
+      custom_object.custom_relationships,
+      key=lambda relationship: relationship.definition.sort_order,
+    )
+
+    relationship_index = (
+      label_relationships[0].definition.sort_order
+      if label_relationships
+      else 99999
+    )
+
+    # -------------------------------------------------------
+    # Field wins
+    # -------------------------------------------------------
+
+    if field_index < relationship_index:
+      return label_fields[0].value or ""
+
+    # -------------------------------------------------------
+    # No relationship
+    # -------------------------------------------------------
+
+    if not label_relationships:
+      return ""
+
+    relationship = label_relationships[0]
+
+    entity_type = relationship.definition.target_entity_type
+
+    # -------------------------------------------------------
+    # Project
+    # -------------------------------------------------------
+
+    if entity_type == CustomRelationshipEntityType.project:
+      project = projects_by_id.get(
+        relationship.target_entity_id
+      )
+
+      return project.name if project else ""
+
+    # -------------------------------------------------------
+    # User
+    # -------------------------------------------------------
+
+    if entity_type == CustomRelationshipEntityType.user:
+      user = users_by_id.get(
+        relationship.target_entity_id
+      )
+
+      if not user:
+        return ""
+
+      return f"{user.last_name} {user.first_name}"
+
+    # -------------------------------------------------------
+    # Custom Object
+    # -------------------------------------------------------
+
+    if entity_type == CustomRelationshipEntityType.custom_object:
+      related_custom_object = custom_objects_by_id.get(
+        relationship.target_entity_id
+      )
+
+      if not related_custom_object:
+        return ""
+
+      return get_label_value(
+        related_custom_object,
+        visited,
+      )
+
+    return ""
+
+  # ---------------------------------------------------------
+  # Build response
+  # ---------------------------------------------------------
 
   objects_by_definition = {
     definition_id: CustomObjectsByDefinitionRead(
@@ -516,33 +687,7 @@ async def list_custom_objects_by_definitions(
   }
 
   for custom_object in custom_objects:
-    definition = definitions_by_id[
-      custom_object.custom_object_definition_id
-    ]
-
-    first_field_definition = (
-      first_field_definition_by_definition.get(
-        custom_object.custom_object_definition_id
-      )
-    )
-
-    object_name = definition.name
-
-    if first_field_definition:
-      custom_field = next(
-        (
-          link.custom_field
-          for link in custom_object.custom_field_links
-          if (
-            link.custom_field.custom_field_definition_id
-            == first_field_definition.id
-          )
-        ),
-        None,
-      )
-
-      if custom_field and custom_field.value:
-        object_name = custom_field.value
+    object_name = get_label_value(custom_object)
 
     objects_by_definition[
       custom_object.custom_object_definition_id
