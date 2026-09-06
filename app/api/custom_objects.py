@@ -25,6 +25,7 @@ from app.db.models import (
   CustomRelationshipEntityType,
   CustomRelationshipCardinality,
   CustomFieldDataType,
+  Project,
 )
 from app.schemas.custom_object import (
   CustomObjectDefinitionCreate,
