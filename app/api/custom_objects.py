@@ -35,6 +35,7 @@ from app.schemas.custom_object import (
   CustomObjectCreate,
   CustomObjectUpdate,
   CustomObjectRead,
+  CustomObjectDetailRead,
   CustomObjectsByDefinitionsRequest,
   CustomObjectListItemRead,
   CustomObjectsByDefinitionRead,
@@ -357,6 +358,120 @@ async def build_custom_object_response(
     id=custom_object.id,
     company_id=custom_object.company_id,
     definition=custom_object.definition,
+    fields=fields,
+    relationships=relationships,
+    created_at=custom_object.created_at,
+    updated_at=custom_object.updated_at,
+  )
+
+
+async def build_custom_object_detail_response(
+  db: AsyncSession,
+  custom_object: CustomObject,
+) -> CustomObjectDetailRead:
+
+  field_definitions_result = await db.execute(
+    select(CustomFieldDefinition)
+    .where(
+      CustomFieldDefinition.company_id
+      == custom_object.company_id,
+      CustomFieldDefinition.custom_object_definition_id
+      == custom_object.custom_object_definition_id,
+      CustomFieldDefinition.entity_type
+      == CustomFieldEntityType.custom_object,
+    )
+    .order_by(
+      CustomFieldDefinition.sort_order,
+      CustomFieldDefinition.name,
+    )
+  )
+
+  field_definitions = field_definitions_result.scalars().all()
+
+  existing_fields = {
+    link.custom_field.custom_field_definition_id: link.custom_field
+    for link in custom_object.custom_field_links
+  }
+
+  fields = [
+    CustomFieldRead(
+      id=existing_fields[definition.id].id
+        if definition.id in existing_fields
+        else None,
+      value=existing_fields[definition.id].value
+        if definition.id in existing_fields
+        else None,
+      definition=definition,
+    )
+    for definition in field_definitions
+  ]
+
+  relationship_definitions_result = await db.execute(
+    select(CustomRelationshipDefinition)
+    .where(
+      CustomRelationshipDefinition.company_id
+      == custom_object.company_id,
+      CustomRelationshipDefinition.source_entity_type
+      == CustomRelationshipEntityType.custom_object,
+      CustomRelationshipDefinition.source_custom_object_definition_id
+      == custom_object.custom_object_definition_id,
+    )
+    .order_by(
+      CustomRelationshipDefinition.sort_order,
+      CustomRelationshipDefinition.name,
+    )
+  )
+
+  relationship_definitions = (
+    relationship_definitions_result.scalars().all()
+  )
+
+  existing_relationships = {}
+
+  for relationship in custom_object.custom_relationships:
+    if relationship.custom_relationship_definition_id not in existing_relationships:
+      existing_relationships[
+        relationship.custom_relationship_definition_id
+      ] = []
+
+    existing_relationships[
+      relationship.custom_relationship_definition_id
+    ].append(relationship)
+
+  relationships = []
+
+  for definition in relationship_definitions:
+
+    definition_relationships = existing_relationships.get(
+      definition.id,
+      [],
+    )
+
+    for relationship in definition_relationships:
+      relationships.append(
+        CustomRelationshipRead(
+          id=relationship.id,
+          source_entity_id=custom_object.id,
+          target_entity_id=relationship.target_entity_id,
+          definition=definition,
+        )
+      )
+
+  definition = CustomObjectDefinitionDetailRead(
+    id=custom_object.definition.id,
+    company_id=custom_object.definition.company_id,
+    name=custom_object.definition.name,
+    description=custom_object.definition.description,
+    fields=field_definitions,
+    relationships=relationship_definitions,
+    created_at=custom_object.definition.created_at,
+    updated_at=custom_object.definition.updated_at,
+  )
+
+  return CustomObjectDetailRead(
+    id=custom_object.id,
+    company_id=custom_object.company_id,
+    definition=definition,
     fields=fields,
     relationships=relationships,
     created_at=custom_object.created_at,
@@ -918,7 +1033,7 @@ async def list_custom_objects_by_definitions(
 
 @router.get(
   "/{custom_object_id}",
-  response_model=CustomObjectRead,
+  response_model=CustomObjectDetailRead,
 )
 async def get_custom_object(
   custom_object_id: UUID,
@@ -952,10 +1067,11 @@ async def get_custom_object(
       custom_object.company_id,
     )
 
-  return await build_custom_object_response(
+  return await build_custom_object_detail_response(
     db,
     custom_object,
   )
+
 
 @router.post(
   "",
