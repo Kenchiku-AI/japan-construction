@@ -29,15 +29,7 @@ class CustomObjectDefinitionRead(BaseModel):
   model_config = {
     "from_attributes": True,
   }
-  
-class CustomObjectDetailRead(BaseModel):
-  id: UUID
-  company_id: UUID
-  definition: CustomObjectDefinitionDetailRead
-  fields: List[CustomFieldRead]
-  relationships: List[CustomRelationshipRead]
-  created_at: datetime
-  updated_at: datetime
+
 
 class CustomObjectDefinitionDetailRead(BaseModel):
   id: UUID
@@ -53,6 +45,16 @@ class CustomObjectDefinitionDetailRead(BaseModel):
     "from_attributes": True,
   }
 
+
+class CustomObjectDetailRead(BaseModel):
+  id: UUID
+  company_id: UUID
+  definition: CustomObjectDefinitionDetailRead
+  fields: List[CustomFieldRead]
+  relationships: List[CustomRelationshipRead]
+  created_at: datetime
+  updated_at: datetime
+  
 
 class CustomObjectCreate(BaseModel):
   company_id: UUID
