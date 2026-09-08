@@ -473,7 +473,6 @@ async def get_custom_relationship(
   return relationship
 
 
-```python
 @router.patch(
   "",
   response_model=List[CustomRelationshipRead],
@@ -604,8 +603,6 @@ async def update_custom_relationships(
   )
 
   return result.scalars().all()
-```
-
 
 
 @router.delete(
