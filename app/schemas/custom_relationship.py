@@ -17,6 +17,7 @@ class CustomRelationshipDefinitionCreate(BaseModel):
   source_custom_object_definition_id: Optional[UUID] = None
   target_entity_type: CustomRelationshipEntityType
   target_custom_object_definition_id: Optional[UUID] = None
+  is_target_owned: bool = False
   cardinality: CustomRelationshipCardinality = CustomRelationshipCardinality.one
 
 
@@ -27,6 +28,7 @@ class CustomRelationshipDefinitionUpdate(BaseModel):
   source_custom_object_definition_id: Optional[UUID] = None
   target_entity_type: Optional[CustomRelationshipEntityType] = None
   target_custom_object_definition_id: Optional[UUID] = None
+  is_target_owned: Optional[bool] = None
   cardinality: Optional[CustomRelationshipCardinality] = None
 
 
@@ -41,6 +43,7 @@ class CustomRelationshipDefinitionRead(BaseModel):
   target_custom_object_definition_id: Optional[UUID] = None
   cardinality: CustomRelationshipCardinality
   sort_order: int
+  is_target_owned: bool
   created_at: datetime
   updated_at: datetime
 
@@ -70,7 +73,6 @@ class CustomRelationshipRead(BaseModel):
   source_entity_id: UUID
   target_entity_id: UUID | None = None
   definition: CustomRelationshipDefinitionRead
-  is_target_owned: bool
 
   model_config = {
     "from_attributes": True,
