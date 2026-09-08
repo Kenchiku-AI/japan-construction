@@ -1,7 +1,16 @@
 import enum
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Enum, Text, UniqueConstraint
+from sqlalchemy import (
+  Boolean,
+  Column,
+  String,
+  Integer,
+  DateTime,
+  ForeignKey,
+  Enum,
+  Text,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.base import Base
@@ -71,7 +80,7 @@ class CustomRelationshipDefinition(Base):
     nullable=True,
     index=True,
   )
-  
+
   target_custom_object_definition = relationship(
     "CustomObjectDefinition",
     foreign_keys=[target_custom_object_definition_id],
@@ -85,6 +94,12 @@ class CustomRelationshipDefinition(Base):
     ),
     nullable=False,
     default=CustomRelationshipCardinality.many,
+  )
+
+  is_target_owned = Column(
+    Boolean,
+    nullable=False,
+    default=False,
   )
 
   company = relationship(
