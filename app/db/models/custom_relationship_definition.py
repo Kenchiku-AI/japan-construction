@@ -96,7 +96,7 @@ class CustomRelationshipDefinition(Base):
     default=CustomRelationshipCardinality.many,
   )
 
-  is_target_owned = Column(
+  is_source_owner = Column(
     Boolean,
     nullable=False,
     default=False,
