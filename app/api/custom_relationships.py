@@ -119,6 +119,7 @@ async def create_custom_relationship_definition(
       payload.target_custom_object_definition_id
     ),
     cardinality=payload.cardinality,
+    is_target_owned=payload.is_target_owned,
     sort_order=sort_order,
   )
 
