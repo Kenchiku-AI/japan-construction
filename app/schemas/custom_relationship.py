@@ -70,6 +70,7 @@ class CustomRelationshipRead(BaseModel):
   source_entity_id: UUID
   target_entity_id: UUID | None = None
   definition: CustomRelationshipDefinitionRead
+  is_target_owned: bool
 
   model_config = {
     "from_attributes": True,
