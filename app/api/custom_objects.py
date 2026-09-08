@@ -1,8 +1,8 @@
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy import select, delete, exists, and_, or_, not_
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select, delete, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -530,16 +530,12 @@ async def list_custom_objects(
     for custom_object in custom_objects
   ]
 
-
 @router.post(
   "/by-definitions",
   response_model=dict[UUID, CustomObjectsByDefinitionRead],
 )
 async def list_custom_objects_by_definitions(
   payload: CustomObjectsByDefinitionsRequest,
-  source_entity_id: UUID | None = Query(
-    default=None,
-  ),
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
@@ -611,19 +607,9 @@ async def list_custom_objects_by_definitions(
   # ---------------------------------------------------------
   # Get all requested custom objects and their fields and
   # outgoing relationships.
-  #
-  # If source_entity_id was supplied, exclude objects that
-  # already have a target-owned relationship whose source
-  # entity is different from source_entity_id.
-  #
-  # In other words:
-  #
-  #   - no ownership relationship -> include
-  #   - ownership relationship from source_entity_id -> include
-  #   - ownership relationship from another source -> exclude
   # ---------------------------------------------------------
 
-  custom_objects_query = (
+  custom_objects_result = await db.execute(
     select(CustomObject)
     .where(
       CustomObject.company_id == payload.company_id,
@@ -631,34 +617,6 @@ async def list_custom_objects_by_definitions(
         payload.definition_ids
       ),
     )
-  )
-
-  if source_entity_id is not None:
-    conflicting_owned_relationship_exists = exists(
-      select(CustomRelationship.id)
-      .join(
-        CustomRelationshipDefinition,
-        CustomRelationship.custom_relationship_definition_id
-        == CustomRelationshipDefinition.id,
-      )
-      .where(
-        CustomRelationship.company_id == payload.company_id,
-        CustomRelationship.target_entity_type
-        == CustomRelationshipEntityType.custom_object,
-        CustomRelationship.target_entity_id == CustomObject.id,
-        CustomRelationshipDefinition.company_id
-        == payload.company_id,
-        CustomRelationshipDefinition.is_target_owned.is_(True),
-        CustomRelationship.source_entity_id != source_entity_id,
-      )
-    )
-
-    custom_objects_query = custom_objects_query.where(
-      not_(conflicting_owned_relationship_exists)
-    )
-
-  custom_objects_result = await db.execute(
-    custom_objects_query
     .options(
       selectinload(
         CustomObject.custom_field_links
@@ -1071,6 +1029,7 @@ async def list_custom_objects_by_definitions(
     )
 
   return objects_by_definition
+
 
 @router.get(
   "/{custom_object_id}",
