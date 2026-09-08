@@ -473,6 +473,7 @@ async def get_custom_relationship(
   return relationship
 
 
+```python
 @router.patch(
   "",
   response_model=List[CustomRelationshipRead],
@@ -517,13 +518,23 @@ async def update_custom_relationships(
   )
 
   # Validate all requested targets.
+  # If a target entity no longer exists, silently filter it out.
+  valid_target_entity_ids = []
+
   for target_entity_id in target_entity_ids:
-    await _validate_relationship_entities(
-      db=db,
-      definition=definition,
-      source_entity_id=payload.source_entity_id,
-      target_entity_id=target_entity_id,
-    )
+    try:
+      await _validate_relationship_entities(
+        db=db,
+        definition=definition,
+        source_entity_id=payload.source_entity_id,
+        target_entity_id=target_entity_id,
+      )
+      valid_target_entity_ids.append(target_entity_id)
+    except HTTPException as exc:
+      if exc.status_code == status.HTTP_404_NOT_FOUND:
+        continue
+
+      raise
 
   # Get all existing relationships for this source + definition.
   existing_result = await db.execute(
@@ -543,7 +554,7 @@ async def update_custom_relationships(
     for relationship in existing_relationships
   }
 
-  requested_target_ids = set(target_entity_ids)
+  requested_target_ids = set(valid_target_entity_ids)
   existing_target_ids = set(existing_by_target_id.keys())
 
   # Delete relationships whose target is no longer requested.
@@ -593,6 +604,8 @@ async def update_custom_relationships(
   )
 
   return result.scalars().all()
+```
+
 
 
 @router.delete(
