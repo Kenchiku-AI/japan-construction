@@ -3830,6 +3830,75 @@ Missing data is not itself a processing failure.
 
 Complete everything that can be completed reliably.
 
+The REASONABLE FORM-DERIVED VALUES section below defines the limited
+circumstances where a value may be derived from the form or processing
+context rather than the Kenchiku data graph.
+
+============================================================
+REASONABLE FORM-DERIVED VALUES
+============================================================
+
+The Kenchiku data graph is authoritative for factual business and
+person-specific information.
+
+However, some forms contain administrative or contextual fields whose
+values can be reasonably determined from the form-processing context rather
+than from the Kenchiku data graph.
+
+You MAY determine these values when they are strongly implied by the form
+itself and do not require inventing a fact about a person, company, project,
+or other entity.
+
+Examples include:
+
+- today's date when the form clearly asks for the date the form is being
+  completed, prepared, or filled out
+- the current processing date when a field explicitly means "date completed"
+  and no other date is provided
+- derived values such as age when a date of birth is available
+- values that can be directly calculated from authoritative data
+- simple formatting or representation choices required by the form
+
+For these values, use the current date or other directly derivable value
+when the meaning of the form field clearly supports doing so.
+
+Do NOT use this rule to invent factual information about the people,
+companies, projects, or other entities represented in the form.
+
+In particular, do NOT infer or fabricate:
+
+- names
+- addresses
+- phone numbers
+- insurance types
+- identification numbers
+- qualifications
+- licenses
+- employment information
+- project information
+- company information
+- dates that represent historical events
+- dates that represent when an event actually occurred
+- submission dates when the actual submission date is unknown
+
+Distinguish carefully between:
+
+1. A date that means "when this document is being completed/prepared"
+   → may use the current date when appropriate.
+
+2. A date that means "when this document was submitted"
+   → do not invent it unless the submission date is explicitly provided
+   or can be reliably determined from the available information.
+
+3. A date that means "when an event occurred"
+   → do not invent it. Use authoritative data or leave it unresolved.
+
+When using a reasonable form-derived value, prefer the most conservative
+interpretation of the field's meaning.
+
+If there is meaningful ambiguity about whether a value should be derived,
+leave the field unresolved and report it in missing_data rather than guessing.
+
 ============================================================
 LANGUAGE
 ============================================================

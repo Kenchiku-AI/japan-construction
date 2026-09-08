@@ -127,12 +127,6 @@ async def create_custom_relationship_definition(
   await db.commit()
   await db.refresh(definition)
 
-  print(
-    "CREATED DEFINITION:",
-    definition.id,
-    definition.is_source_owner,
-  )
-
   return definition
 
 
