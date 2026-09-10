@@ -541,29 +541,6 @@ class FormJobService:
       "========== IMAGE CLEANING START =========="
     )
 
-    logger.info(
-      "INPUT DIR: %s",
-      input_dir,
-    )
-
-    logger.info(
-      "OUTPUT DIR: %s",
-      output_dir,
-    )
-
-    logger.info(
-      "INPUT DIRECTORY CONTENTS: %s",
-      [
-        {
-          "name": p.name,
-          "suffix": p.suffix,
-          "size": p.stat().st_size,
-        }
-        for p in input_dir.iterdir()
-        if p.is_file()
-      ],
-    )
-
     output_dir.mkdir(
       parents=True,
       exist_ok=True,
