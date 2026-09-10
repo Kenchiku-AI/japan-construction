@@ -3575,6 +3575,23 @@ PDF.
       project_id=job.project_id,
     )
 
+    logger.info(
+      "============================================================\n"
+      "FULL COMPANY GRAPH FOR FORM JOB %s\n"
+      "COMPANY ID: %s\n"
+      "PROJECT ID: %s\n"
+      "============================================================\n"
+      "%s\n"
+      "============================================================\n"
+      "END FULL COMPANY GRAPH FOR FORM JOB %s\n"
+      "============================================================",
+      job.id,
+      job.company_id,
+      job.project_id,
+      company_graph,
+      job.id,
+    )
+
     project_context = ""
 
     if job.project_id is not None:
