@@ -611,7 +611,7 @@ class FormJobService:
           "suffix": p.suffix,
           "size": p.stat().st_size,
         }
-        for p in cleaned_dir.iterdir()
+        for p in output_dir.iterdir()
         if p.is_file()
       ],
     )
