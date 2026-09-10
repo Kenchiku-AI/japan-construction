@@ -631,13 +631,6 @@ class FormJobService:
       "========== _clean_form_image START =========="
     )
 
-    logger.info(
-      "IMAGE INPUT: path=%s exists=%s size=%s",
-      input_path,
-      input_path.exists(),
-      input_path.stat().st_size if input_path.exists() else None,
-    )
-
     import cv2
     import numpy as np
     from PIL import Image, ImageOps
