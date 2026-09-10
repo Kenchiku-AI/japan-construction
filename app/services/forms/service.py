@@ -537,6 +537,33 @@ class FormJobService:
     output_dir: Path,
   ) -> list[Path]:
 
+    logger.info(
+      "========== IMAGE CLEANING START =========="
+    )
+
+    logger.info(
+      "INPUT DIR: %s",
+      input_dir,
+    )
+
+    logger.info(
+      "OUTPUT DIR: %s",
+      output_dir,
+    )
+
+    logger.info(
+      "INPUT DIRECTORY CONTENTS: %s",
+      [
+        {
+          "name": p.name,
+          "suffix": p.suffix,
+          "size": p.stat().st_size,
+        }
+        for p in input_dir.iterdir()
+        if p.is_file()
+      ],
+    )
+
     output_dir.mkdir(
       parents=True,
       exist_ok=True,
@@ -553,6 +580,15 @@ class FormJobService:
     cleaned_files = []
 
     for input_file in input_files:
+      logger.info(
+        "IMAGE CLEANING CANDIDATE: "
+        "filename=%s suffix=%s content_type=%s size=%s",
+        input_file.name,
+        input_file.suffix,
+        # whatever content type you have available here
+        getattr(input_file, "content_type", None),
+        input_file.stat().st_size,
+      )
 
       if input_file.suffix.lower() not in image_suffixes:
         cleaned_files.append(
@@ -566,9 +602,10 @@ class FormJobService:
       )
 
       logger.info(
-        "Cleaning form image: %s → %s",
-        input_file.name,
-        cleaned_path.name,
+        "CALLING _clean_form_image(): "
+        "input=%s output=%s",
+        input_file,
+        cleaned_path,
       )
 
       self._clean_form_image(
@@ -576,9 +613,35 @@ class FormJobService:
         output_file=cleaned_path,
       )
 
+      logger.info(
+        "CLEANED IMAGE RESULT: "
+        "input=%s output=%s exists=%s size=%s",
+        input_file,
+        cleaned_path,
+        cleaned_path.exists(),
+        cleaned_path.stat().st_size if cleaned_path.exists() else None,
+      )
+
       cleaned_files.append(
         cleaned_path,
       )
+
+    logger.info(
+      "CLEANED DIRECTORY CONTENTS: %s",
+      [
+        {
+          "name": p.name,
+          "suffix": p.suffix,
+          "size": p.stat().st_size,
+        }
+        for p in cleaned_dir.iterdir()
+        if p.is_file()
+      ],
+    )
+
+    logger.info(
+      "========== IMAGE CLEANING END =========="
+    )
 
     return cleaned_files
 
@@ -587,6 +650,16 @@ class FormJobService:
     input_file: Path,
     output_file: Path,
   ) -> None:
+    logger.info(
+      "========== _clean_form_image START =========="
+    )
+
+    logger.info(
+      "IMAGE INPUT: path=%s exists=%s size=%s",
+      input_path,
+      input_path.exists(),
+      input_path.stat().st_size if input_path.exists() else None,
+    )
 
     import cv2
     import numpy as np
@@ -642,8 +715,25 @@ class FormJobService:
         input_file,
       )
 
+      logger.info(
+        "PIL OPENED IMAGE: "
+        "format=%s mode=%s size=%s width=%s height=%s",
+        pil_image.format,
+        pil_image.mode,
+        pil_image.size,
+        pil_image.width,
+        pil_image.height,
+      )
+
       pil_image = ImageOps.exif_transpose(
         pil_image,
+      )
+
+      logger.info(
+        "AFTER EXIF TRANSPOSE: size=%s width=%s height=%s",
+        pil_image.size,
+        pil_image.width,
+        pil_image.height,
       )
 
       is_camera_photo = self._is_likely_camera_photo(
@@ -685,6 +775,13 @@ class FormJobService:
       image = cv2.cvtColor(
         np.array(pil_image),
         cv2.COLOR_RGB2BGR,
+      )
+
+      logger.info(
+        "CONVERTED TO OPENCV: "
+        "shape=%s dtype=%s",
+        image.shape,
+        image.dtype,
       )
 
     except Exception as exc:
@@ -1332,6 +1429,12 @@ class FormJobService:
     # 10. Save
     # ---------------------------------------------------------
 
+    logger.info(
+      "SAVING CLEANED IMAGE: "
+      "output=%s",
+      output_path
+    )
+
     success = cv2.imwrite(
       str(output_file),
       cleaned,
@@ -1339,6 +1442,14 @@ class FormJobService:
         cv2.IMWRITE_JPEG_QUALITY,
         92,
       ],
+    )
+
+    logger.info(
+      "cv2.imwrite RESULT: "
+      "success=%s output_exists=%s output_size=%s",
+      success,
+      output_path.exists(),
+      output_path.stat().st_size if output_path.exists() else None,
     )
 
     if not success:
@@ -3527,6 +3638,11 @@ PDF.
 
     files = []
 
+    logger.info(
+      "========== IMAGE DOWNLOAD START =========="
+    )
+
+
     for file in job.files:
 
       if not file.is_input:
@@ -3534,6 +3650,15 @@ PDF.
 
       local_path = (
         input_dir / file.filename
+      )
+
+      logger.info(
+        "DOWNLOADING INPUT FILE: "
+        "filename=%s content_type=%s is_input=%s output_path=%s",
+        file.filename,
+        file.content_type,
+        file.is_input,
+        local_path,
       )
 
       local_path.parent.mkdir(
@@ -3551,9 +3676,16 @@ PDF.
       )
 
       logger.info(
-        "Downloaded form input: %s",
-        file.s3_key,
+        "DOWNLOADED INPUT FILE: "
+        "path=%s exists=%s size=%s bytes",
+        local_path,
+        local_path.exists(),
+        local_path.stat().st_size if local_path.exists() else None,
       )
+
+    logger.info(
+      "========== IMAGE DOWNLOAD END =========="
+    )
 
     return files
 
