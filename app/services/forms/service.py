@@ -850,9 +850,6 @@ class FormJobService:
     return cleaned_files
 
   def _clean_form_image(self, input_file: Path, output_file: Path) -> None:
-    
-    from openai import OpenAI
-
     logger.info("========== _clean_form_image START ==========")
 
     def order_points(points: np.ndarray) -> np.ndarray:
@@ -1272,7 +1269,7 @@ class FormJobService:
           pil_image.height,
         )
 
-        if self._is_likely_screenshot(pil_image, input_file):
+        if self._is_likely_screenshot(input_file):
           logger.info(
             "Image %s appears to be a screenshot. Skipping document cleanup.",
             input_file.name,
