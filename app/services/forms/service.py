@@ -487,7 +487,7 @@ class FormJobService:
 
     return normalized_files
 
-  def _is_likely_camera_photo(
+  def _is_likely_screenshot(
     self,
     input_file: Path,
   ) -> bool:
@@ -496,6 +496,8 @@ class FormJobService:
 
     try:
       with Image.open(input_file) as image:
+        width, height = image.size
+
         exif = image.getexif()
 
         camera_make = exif.get(271)
@@ -519,16 +521,241 @@ class FormJobService:
           ]
         )
 
-        if camera_make or camera_model or lens_model:
-          return True
+        # A real camera photo with strong camera EXIF should
+        # never be classified as a screenshot based on pixels.
+        if (
+          camera_make
+          or camera_model
+          or lens_model
+          or camera_signals >= 3
+        ):
+          logger.info(
+            "Screenshot detection: camera EXIF detected "
+            "(signals=%d). Treating as camera photo.",
+            camera_signals,
+          )
+          return False
 
-        return camera_signals >= 3
+        # -------------------------------------------------------
+        # Check for common screenshot dimensions.
+        #
+        # This is only a positive signal. We don't classify an
+        # image as a screenshot solely because of its dimensions.
+        # -------------------------------------------------------
+
+        common_screenshot_sizes = {
+          (1170, 2532),
+          (2532, 1170),
+          (1284, 2778),
+          (2778, 1284),
+          (1290, 2796),
+          (2796, 1290),
+          (1320, 2868),
+          (2868, 1320),
+          (1080, 1920),
+          (1920, 1080),
+          (1080, 2340),
+          (2340, 1080),
+          (1080, 2400),
+          (2400, 1080),
+          (1440, 2560),
+          (2560, 1440),
+          (1440, 3200),
+          (3200, 1440),
+          (750, 1334),
+          (1334, 750),
+          (828, 1792),
+          (1792, 828),
+          (1125, 2436),
+          (2436, 1125),
+          (1242, 2688),
+          (2688, 1242),
+          (1242, 2208),
+          (2208, 1242),
+          (768, 1024),
+          (1024, 768),
+        }
+
+        has_common_screenshot_dimensions = (
+          (width, height)
+          in common_screenshot_sizes
+        )
+
+        # -------------------------------------------------------
+        # Pixel/content analysis
+        # -------------------------------------------------------
+
+        rgb_image = image.convert("RGB")
+
+        # Work on a reasonably small copy so this remains cheap.
+        analysis_max_dimension = 1200
+
+        scale = min(
+          1.0,
+          analysis_max_dimension / max(
+            width,
+            height,
+          ),
+        )
+
+        if scale < 1.0:
+          analysis_image = rgb_image.resize(
+            (
+              max(1, int(width * scale)),
+              max(1, int(height * scale)),
+            ),
+            Image.Resampling.LANCZOS,
+          )
+        else:
+          analysis_image = rgb_image
+
+        import numpy as np
+
+        pixels = np.asarray(
+          analysis_image,
+          dtype=np.float32,
+        )
+
+        # -------------------------------------------------------
+        # Screenshots tend to contain large areas of perfectly
+        # uniform pixels. Physical photographs generally have
+        # significantly more local variation.
+        # -------------------------------------------------------
+
+        gray = (
+          0.299 * pixels[:, :, 0]
+          + 0.587 * pixels[:, :, 1]
+          + 0.114 * pixels[:, :, 2]
+        )
+
+        horizontal_difference = np.abs(
+          np.diff(
+            gray,
+            axis=1,
+          )
+        )
+
+        vertical_difference = np.abs(
+          np.diff(
+            gray,
+            axis=0,
+          )
+        )
+
+        local_variation = (
+          horizontal_difference.mean()
+          + vertical_difference.mean()
+        ) / 2.0
+
+        # -------------------------------------------------------
+        # Screenshots commonly have a very large percentage of
+        # exactly repeated pixels, particularly around UI
+        # backgrounds.
+        # -------------------------------------------------------
+
+        rounded_pixels = np.round(
+          pixels,
+        ).astype(np.uint8)
+
+        unique_colors = len(
+          np.unique(
+            rounded_pixels.reshape(
+              -1,
+              3,
+            ),
+            axis=0,
+          )
+        )
+
+        total_pixels = (
+          rounded_pixels.shape[0]
+          * rounded_pixels.shape[1]
+        )
+
+        color_diversity = (
+          unique_colors / total_pixels
+          if total_pixels
+          else 0.0
+        )
+
+        # -------------------------------------------------------
+        # Estimate whether the image contains photographic
+        # texture/noise.
+        #
+        # A screenshot tends to have extremely clean regions,
+        # whereas a camera image normally has considerably more
+        # pixel-level variation.
+        # -------------------------------------------------------
+
+        noise_estimate = float(
+          np.std(
+            gray
+            - cv2.GaussianBlur(
+              gray,
+              (3, 3),
+              0,
+            )
+          )
+        )
+
+        screenshot_score = 0
+
+        if has_common_screenshot_dimensions:
+          screenshot_score += 1
+
+        if local_variation < 4.0:
+          screenshot_score += 1
+
+        if color_diversity < 0.015:
+          screenshot_score += 1
+
+        if noise_estimate < 2.0:
+          screenshot_score += 1
+
+        logger.info(
+          "Screenshot detection: "
+          "size=%dx%d "
+          "common_dimensions=%s "
+          "local_variation=%.3f "
+          "unique_colors=%d "
+          "color_diversity=%.6f "
+          "noise=%.3f "
+          "score=%d",
+          width,
+          height,
+          has_common_screenshot_dimensions,
+          local_variation,
+          unique_colors,
+          color_diversity,
+          noise_estimate,
+          screenshot_score,
+        )
+
+        # Require multiple independent signals before deciding
+        # this is a screenshot.
+        is_screenshot = screenshot_score >= 3
+
+        if is_screenshot:
+          logger.info(
+            "Image %s appears to be a screenshot. "
+            "Skipping image cleanup.",
+            input_file.name,
+          )
+        else:
+          logger.info(
+            "Image %s does not appear to be a screenshot. "
+            "Allowing document image cleanup.",
+            input_file.name,
+          )
+
+        return is_screenshot
 
     except Exception:
       logger.exception(
-        "Could not inspect image metadata: %s",
+        "Could not inspect image for screenshot detection: %s",
         input_file,
       )
+      
       return False
 
   def _clean_image_files(
@@ -706,8 +933,52 @@ class FormJobService:
         pil_image.height,
       )
 
-      is_camera_photo = self._is_likely_camera_photo(
+      is_screenshot = self._is_likely_screenshot(
         input_file,
+      )
+
+      if is_screenshot:
+        logger.info(
+          "Image %s appears to be a screenshot. "
+          "Skipping image cleanup.",
+          input_file.name,
+        )
+
+        output_file.parent.mkdir(
+          parents=True,
+          exist_ok=True,
+        )
+
+        pil_image.convert(
+          "RGB",
+        ).save(
+          output_file,
+          "JPEG",
+          quality=95,
+        )
+
+        return
+
+      logger.info(
+        "Image %s does not appear to be a screenshot. "
+        "Applying document image cleanup.",
+        input_file.name,
+      )
+
+      pil_image = pil_image.convert(
+        "RGB",
+      )
+
+      image = cv2.cvtColor(
+        np.array(pil_image),
+        cv2.COLOR_RGB2BGR,
+      )
+
+      logger.info(
+        "CONVERTED TO OPENCV: "
+        "shape=%s dtype=%s",
+        image.shape,
+        image.dtype,
       )
 
       if not is_camera_photo:
