@@ -9,6 +9,9 @@ import numpy as np
 from openai import OpenAI
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageDraw, ImageFont
+import base64
+import os
 
 from app.core.config import settings
 from app.db.models.form_job import (
@@ -493,9 +496,6 @@ class FormJobService:
     self,
     input_file: Path,
   ) -> bool:
-
-    from PIL import Image
-
     try:
       with Image.open(input_file) as image:
         width, height = image.size
@@ -849,197 +849,524 @@ class FormJobService:
 
     return cleaned_files
 
-  def _clean_form_image(
-    self,
-    input_file: Path,
-    output_file: Path,
-  ) -> None:
-    logger.info(
-      "========== _clean_form_image START =========="
-    )
+  def _clean_form_image(self, input_file: Path, output_file: Path) -> None:
+    
+    from openai import OpenAI
 
-    from PIL import Image, ImageOps
+    logger.info("========== _clean_form_image START ==========")
 
-    # ---------------------------------------------------------
-    # Helper: order four corner points
-    # ---------------------------------------------------------
+    def order_points(points: np.ndarray) -> np.ndarray:
+      points = np.asarray(points, dtype=np.float32)
 
-    def order_points(
-      points,
-    ):
-      ordered = np.zeros(
-        (4, 2),
+      rect = np.zeros((4, 2), dtype=np.float32)
+
+      s = points.sum(axis=1)
+      rect[0] = points[np.argmin(s)]  # top-left
+      rect[2] = points[np.argmax(s)]  # bottom-right
+
+      diff = np.diff(points, axis=1).reshape(-1)
+      rect[1] = points[np.argmin(diff)]  # top-right
+      rect[3] = points[np.argmax(diff)]  # bottom-left
+
+      return rect
+
+    def perspective_crop(
+      image: np.ndarray,
+      corners: np.ndarray,
+    ) -> np.ndarray:
+      rect = order_points(corners)
+
+      tl, tr, br, bl = rect
+
+      width_a = np.linalg.norm(br - bl)
+      width_b = np.linalg.norm(tr - tl)
+      max_width = max(int(round(width_a)), int(round(width_b)))
+
+      height_a = np.linalg.norm(tr - br)
+      height_b = np.linalg.norm(tl - bl)
+      max_height = max(int(round(height_a)), int(round(height_b)))
+
+      if max_width < 100 or max_height < 100:
+        logger.warning(
+          "Perspective crop dimensions are too small: %sx%s",
+          max_width,
+          max_height,
+        )
+        return image
+
+      destination = np.array(
+        [
+          [0, 0],
+          [max_width - 1, 0],
+          [max_width - 1, max_height - 1],
+          [0, max_height - 1],
+        ],
         dtype=np.float32,
       )
 
-      sums = points.sum(
-        axis=1,
+      matrix = cv2.getPerspectiveTransform(rect, destination)
+
+      warped = cv2.warpPerspective(
+        image,
+        matrix,
+        (max_width, max_height),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_REPLICATE,
       )
 
-      differences = np.diff(
-        points,
-        axis=1,
-      ).reshape(-1)
+      logger.info(
+        "Perspective crop applied: original=%sx%s output=%sx%s",
+        image.shape[1],
+        image.shape[0],
+        max_width,
+        max_height,
+      )
 
-      ordered[0] = points[
-        np.argmin(sums)
-      ]
+      return warped
 
-      ordered[2] = points[
-        np.argmax(sums)
-      ]
+    def detect_document_with_vision(
+      image_path: Path,
+      image_width: int,
+      image_height: int,
+    ):
+      api_key = os.getenv("OPENAI_API_KEY")
 
-      ordered[1] = points[
-        np.argmin(differences)
-      ]
+      if not api_key:
+        logger.warning(
+          "OPENAI_API_KEY is not configured; skipping vision document detection"
+        )
+        return None
 
-      ordered[3] = points[
-        np.argmax(differences)
-      ]
+      try:
+        image_bytes = image_path.read_bytes()
+        encoded_image = base64.b64encode(image_bytes).decode("utf-8")
 
-      return ordered
+        suffix = image_path.suffix.lower()
 
-    # ---------------------------------------------------------
-    # 1. Load image and correct EXIF orientation
-    # ---------------------------------------------------------
+        mime_type = {
+          ".jpg": "image/jpeg",
+          ".jpeg": "image/jpeg",
+          ".png": "image/png",
+          ".webp": "image/webp",
+        }.get(suffix, "image/jpeg")
+
+        image_data_url = f"data:{mime_type};base64,{encoded_image}"
+
+        client = OpenAI(api_key=api_key)
+
+        prompt = f"""
+  You are detecting the physical boundaries of a paper document in a photograph.
+
+  The original image dimensions are:
+  width = {image_width}
+  height = {image_height}
+
+  Identify the four physical corners of the main document/page.
+
+  Return ONLY valid JSON in exactly this structure:
+
+  {{
+    "document_detected": true,
+    "confidence": 0.95,
+    "corners": [
+      {{"x": 100, "y": 100}},
+      {{"x": 700, "y": 100}},
+      {{"x": 700, "y": 900}},
+      {{"x": 100, "y": 900}}
+    ]
+  }}
+
+  The corners must be:
+  1. top-left
+  2. top-right
+  3. bottom-right
+  4. bottom-left
+
+  Coordinates must be pixel coordinates in the ORIGINAL image.
+
+  If you cannot confidently identify a physical document boundary, return:
+
+  {{
+    "document_detected": false,
+    "confidence": 0.0,
+    "corners": []
+  }}
+
+  Do not use the visible contents of the form to define the boundary.
+  Use the physical edges of the paper itself.
+
+  Do not invent corners.
+  """
+
+        response = client.responses.create(
+          model="gpt-5.6",
+          input=[
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": prompt,
+                },
+                {
+                  "type": "input_image",
+                  "image_url": image_data_url,
+                },
+              ],
+            }
+          ],
+        )
+
+        response_text = response.output_text.strip()
+
+        logger.info(
+          "VISION DOCUMENT DETECTION RESPONSE: %s",
+          response_text,
+        )
+
+        try:
+          result = json.loads(response_text)
+        except json.JSONDecodeError:
+          logger.warning(
+            "Vision document detection returned invalid JSON"
+          )
+          return None
+
+        if not result.get("document_detected"):
+          logger.info(
+            "Vision document detection: no document detected"
+          )
+          return None
+
+        confidence = float(result.get("confidence", 0.0))
+
+        if confidence < 0.70:
+          logger.info(
+            "Vision document detection confidence too low: %.3f",
+            confidence,
+          )
+          return None
+
+        corners = result.get("corners")
+
+        if not isinstance(corners, list) or len(corners) != 4:
+          logger.warning(
+            "Vision document detection returned invalid corner count"
+          )
+          return None
+
+        parsed_corners = []
+
+        for corner in corners:
+          if not isinstance(corner, dict):
+            return None
+
+          x = float(corner["x"])
+          y = float(corner["y"])
+
+          x = max(0.0, min(float(image_width - 1), x))
+          y = max(0.0, min(float(image_height - 1), y))
+
+          parsed_corners.append([x, y])
+
+        corners_array = np.asarray(
+          parsed_corners,
+          dtype=np.float32,
+        )
+
+        if not cv2.isContourConvex(corners_array.reshape(-1, 1, 2)):
+          logger.warning(
+            "Vision document corners are not convex"
+          )
+          return None
+
+        area = abs(cv2.contourArea(corners_array.reshape(-1, 1, 2)))
+
+        image_area = float(image_width * image_height)
+
+        if image_area <= 0:
+          return None
+
+        area_ratio = area / image_area
+
+        if area_ratio < 0.15:
+          logger.warning(
+            "Vision document area too small: %.3f",
+            area_ratio,
+          )
+          return None
+
+        logger.info(
+          "VISION DOCUMENT DETECTED: confidence=%.3f area_ratio=%.3f corners=%s",
+          confidence,
+          area_ratio,
+          corners_array.tolist(),
+        )
+
+        return corners_array
+
+      except Exception:
+        logger.exception(
+          "Vision document detection failed"
+        )
+        return None
+
+    def detect_document_with_opencv(
+      image: np.ndarray,
+    ):
+      gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+      blurred = cv2.GaussianBlur(
+        gray,
+        (5, 5),
+        0,
+      )
+
+      edges = cv2.Canny(
+        blurred,
+        30,
+        120,
+      )
+
+      kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (9, 9),
+      )
+
+      closed = cv2.morphologyEx(
+        edges,
+        cv2.MORPH_CLOSE,
+        kernel,
+      )
+
+      contours, _ = cv2.findContours(
+        closed,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+      )
+
+      image_height, image_width = image.shape[:2]
+      image_area = float(image_width * image_height)
+
+      best_candidate = None
+      best_score = 0.0
+
+      for contour in contours:
+        area = cv2.contourArea(contour)
+
+        if area < image_area * 0.15:
+          continue
+
+        perimeter = cv2.arcLength(
+          contour,
+          True,
+        )
+
+        if perimeter <= 0:
+          continue
+
+        approximation = cv2.approxPolyDP(
+          contour,
+          0.025 * perimeter,
+          True,
+        )
+
+        if len(approximation) != 4:
+          continue
+
+        if not cv2.isContourConvex(approximation):
+          continue
+
+        points = approximation.reshape(4, 2).astype(np.float32)
+
+        rect = order_points(points)
+
+        width_a = np.linalg.norm(rect[2] - rect[3])
+        width_b = np.linalg.norm(rect[1] - rect[0])
+        height_a = np.linalg.norm(rect[1] - rect[2])
+        height_b = np.linalg.norm(rect[0] - rect[3])
+
+        max_width = max(width_a, width_b)
+        max_height = max(height_a, height_b)
+
+        if max_width <= 0 or max_height <= 0:
+          continue
+
+        rectangular_area = max_width * max_height
+
+        rectangularity = area / rectangular_area
+
+        if rectangularity < 0.55:
+          continue
+
+        x_values = points[:, 0]
+        y_values = points[:, 1]
+
+        touches_left = np.any(x_values <= image_width * 0.01)
+        touches_right = np.any(
+          x_values >= image_width * 0.99
+        )
+        touches_top = np.any(y_values <= image_height * 0.01)
+        touches_bottom = np.any(
+          y_values >= image_height * 0.99
+        )
+
+        edge_count = sum(
+          [
+            touches_left,
+            touches_right,
+            touches_top,
+            touches_bottom,
+          ]
+        )
+
+        if edge_count >= 3:
+          continue
+
+        area_score = area / image_area
+
+        score = (
+          area_score * 0.70
+          + rectangularity * 0.30
+        )
+
+        if score > best_score:
+          best_score = score
+          best_candidate = points
+
+      if best_candidate is None:
+        logger.info(
+          "OpenCV document boundary detection found no candidate"
+        )
+        return None
+
+      logger.info(
+        "OpenCV document boundary detected: score=%.3f corners=%s",
+        best_score,
+        best_candidate.tolist(),
+      )
+
+      return best_candidate
+
+    # ------------------------------------------------------------------
+    # Load image
+    # ------------------------------------------------------------------
 
     try:
-
-      pil_image = Image.open(
-        input_file,
-      )
-
-      logger.info(
-        "PIL OPENED IMAGE: "
-        "format=%s mode=%s size=%s width=%s height=%s",
-        pil_image.format,
-        pil_image.mode,
-        pil_image.size,
-        pil_image.width,
-        pil_image.height,
-      )
-
-      pil_image = ImageOps.exif_transpose(
-        pil_image,
-      )
-
-      logger.info(
-        "AFTER EXIF TRANSPOSE: size=%s width=%s height=%s",
-        pil_image.size,
-        pil_image.width,
-        pil_image.height,
-      )
-
-      is_screenshot = self._is_likely_screenshot(
-        input_file,
-      )
-
-      if is_screenshot:
+      with Image.open(input_file) as pil_image:
         logger.info(
-          "Image %s appears to be a screenshot. "
-          "Skipping image cleanup.",
+          "PIL OPENED IMAGE: format=%s mode=%s size=%s width=%s height=%s",
+          pil_image.format,
+          pil_image.mode,
+          pil_image.size,
+          pil_image.width,
+          pil_image.height,
+        )
+
+        pil_image = ImageOps.exif_transpose(pil_image)
+
+        logger.info(
+          "AFTER EXIF TRANSPOSE: size=%s width=%s height=%s",
+          pil_image.size,
+          pil_image.width,
+          pil_image.height,
+        )
+
+        if self._is_likely_screenshot(pil_image, input_file):
+          logger.info(
+            "Image %s appears to be a screenshot. Skipping document cleanup.",
+            input_file.name,
+          )
+
+          output_file.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+          )
+
+          pil_image.save(
+            output_file,
+            quality=95,
+          )
+
+          return
+
+        logger.info(
+          "Image %s does not appear to be a screenshot. Applying document image cleanup.",
           input_file.name,
         )
 
-        output_file.parent.mkdir(
-          parents=True,
-          exist_ok=True,
-        )
+        if pil_image.mode != "RGB":
+          pil_image = pil_image.convert("RGB")
 
-        pil_image.convert(
-          "RGB",
-        ).save(
-          output_file,
-          "JPEG",
-          quality=95,
-        )
+        image = np.array(pil_image)
 
-        return
-
-      logger.info(
-        "Image %s does not appear to be a screenshot. "
-        "Applying document image cleanup.",
-        input_file.name,
+    except Exception:
+      logger.exception(
+        "Failed to open image for document cleanup: %s",
+        input_file,
       )
+      raise
 
-      pil_image = pil_image.convert(
-        "RGB",
-      )
-
-      image = cv2.cvtColor(
-        np.array(pil_image),
-        cv2.COLOR_RGB2BGR,
-      )
-
-      logger.info(
-        "CONVERTED TO OPENCV: "
-        "shape=%s dtype=%s",
-        image.shape,
-        image.dtype,
-      )
-
-    except Exception as exc:
-
-      raise ValueError(
-        f"Could not read image: {input_file}"
-      ) from exc
-
-    original_height, original_width = (
-      image.shape[:2]
+    image = cv2.cvtColor(
+      image,
+      cv2.COLOR_RGB2BGR,
     )
 
     logger.info(
-      "Original image dimensions: %dx%d",
+      "CONVERTED TO OPENCV: shape=%s dtype=%s",
+      image.shape,
+      image.dtype,
+    )
+
+    original_height, original_width = image.shape[:2]
+
+    logger.info(
+      "Original image dimensions: %sx%s",
       original_width,
       original_height,
     )
 
-    # ---------------------------------------------------------
-    # 2. Detect the form/document boundary
-    # ---------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Document boundary detection
+    # ------------------------------------------------------------------
 
-    detection_image = image.copy()
-
-    detection_max_dimension = 1500
-
-    detection_scale = min(
-      1.0,
-      detection_max_dimension / max(
-        original_width,
-        original_height,
-      ),
+    document_corners = detect_document_with_vision(
+      input_file,
+      original_width,
+      original_height,
     )
 
-    if detection_scale < 1.0:
-
-      detection_image = cv2.resize(
-        detection_image,
-        (
-          int(
-            original_width
-            * detection_scale
-          ),
-          int(
-            original_height
-            * detection_scale
-          ),
-        ),
-        interpolation=cv2.INTER_AREA,
+    if document_corners is None:
+      logger.info(
+        "Vision detection unavailable/uncertain; trying OpenCV document boundary detection"
       )
 
-    detection_height, detection_width = (
-      detection_image.shape[:2]
-    )
+      document_corners = detect_document_with_opencv(
+        image,
+      )
+
+    if document_corners is not None:
+      logger.info(
+        "Document boundary detected; applying perspective correction"
+      )
+
+      image = perspective_crop(
+        image,
+        document_corners,
+      )
+
+    else:
+      logger.info(
+        "No confident form boundary detected; keeping original image framing"
+      )
+
+    # ------------------------------------------------------------------
+    # Deskew
+    # ------------------------------------------------------------------
 
     gray = cv2.cvtColor(
-      detection_image,
+      image,
       cv2.COLOR_BGR2GRAY,
-    )
-
-    gray = cv2.GaussianBlur(
-      gray,
-      (5, 5),
-      0,
     )
 
     edges = cv2.Canny(
@@ -1048,328 +1375,14 @@ class FormJobService:
       150,
     )
 
-    kernel = cv2.getStructuringElement(
-      cv2.MORPH_RECT,
-      (7, 7),
-    )
-
-    edges = cv2.morphologyEx(
-      edges,
-      cv2.MORPH_CLOSE,
-      kernel,
-    )
-
-    contours, _ = cv2.findContours(
-      edges,
-      cv2.RETR_LIST,
-      cv2.CHAIN_APPROX_SIMPLE,
-    )
-
-    candidates = []
-
-    image_area = (
-      detection_width
-      * detection_height
-    )
-
-    for contour in contours:
-
-      contour_area = cv2.contourArea(
-        contour,
-      )
-
-      if contour_area < image_area * 0.20:
-        continue
-
-      perimeter = cv2.arcLength(
-        contour,
-        True,
-      )
-
-      if perimeter <= 0:
-        continue
-
-      approximation = cv2.approxPolyDP(
-        contour,
-        0.02 * perimeter,
-        True,
-      )
-
-      if len(approximation) != 4:
-        continue
-
-      if not cv2.isContourConvex(
-        approximation,
-      ):
-        continue
-
-      points = (
-        approximation.reshape(
-          4,
-          2,
-        ).astype(
-          np.float32,
-        )
-      )
-
-      x, y, w, h = cv2.boundingRect(
-        approximation,
-      )
-
-      if w <= 0 or h <= 0:
-        continue
-
-      bounding_area = w * h
-
-      rectangularity = (
-        contour_area
-        / bounding_area
-      )
-
-      if rectangularity < 0.65:
-        continue
-
-      margin = int(
-        min(
-          detection_width,
-          detection_height,
-        )
-        * 0.01
-      )
-
-      touching_edges = 0
-
-      if x <= margin:
-        touching_edges += 1
-
-      if y <= margin:
-        touching_edges += 1
-
-      if (
-        x + w
-        >= detection_width - margin
-      ):
-        touching_edges += 1
-
-      if (
-        y + h
-        >= detection_height - margin
-      ):
-        touching_edges += 1
-
-      if touching_edges >= 3:
-        continue
-
-      area_score = (
-        contour_area
-        / image_area
-      )
-
-      score = (
-        area_score * 0.70
-        + rectangularity * 0.30
-      )
-
-      candidates.append(
-        (
-          score,
-          points,
-        ),
-      )
-
-    document_found = False
-
-    document_points = None
-
-    if candidates:
-
-      candidates.sort(
-        key=lambda item: item[0],
-        reverse=True,
-      )
-
-      best_score, detected_points = (
-        candidates[0]
-      )
-
-      if best_score >= 0.18:
-
-        document_found = True
-
-        document_points = (
-          detected_points
-        )
-
-        if detection_scale != 1.0:
-
-          document_points = (
-            document_points
-            / detection_scale
-          )
-
-        logger.info(
-          "Detected form boundary with score %.3f",
-          best_score,
-        )
-
-    # ---------------------------------------------------------
-    # 3. Perspective correction / crop
-    # ---------------------------------------------------------
-
-    if document_found:
-
-      points = order_points(
-        document_points,
-      )
-
-      top_left = points[0]
-      top_right = points[1]
-      bottom_right = points[2]
-      bottom_left = points[3]
-
-      top_width = np.linalg.norm(
-        top_right - top_left,
-      )
-
-      bottom_width = np.linalg.norm(
-        bottom_right - bottom_left,
-      )
-
-      left_height = np.linalg.norm(
-        bottom_left - top_left,
-      )
-
-      right_height = np.linalg.norm(
-        bottom_right - top_right,
-      )
-
-      output_width = int(
-        max(
-          top_width,
-          bottom_width,
-        )
-      )
-
-      output_height = int(
-        max(
-          left_height,
-          right_height,
-        )
-      )
-
-      if (
-        output_width >= 500
-        and output_height >= 500
-        and output_width <= 10000
-        and output_height <= 10000
-      ):
-
-        destination = np.array(
-          [
-            [
-              0,
-              0,
-            ],
-            [
-              output_width - 1,
-              0,
-            ],
-            [
-              output_width - 1,
-              output_height - 1,
-            ],
-            [
-              0,
-              output_height - 1,
-            ],
-          ],
-          dtype=np.float32,
-        )
-
-        transform = (
-          cv2.getPerspectiveTransform(
-            points,
-            destination,
-          )
-        )
-
-        image = cv2.warpPerspective(
-          image,
-          transform,
-          (
-            output_width,
-            output_height,
-          ),
-          flags=cv2.INTER_CUBIC,
-          borderMode=cv2.BORDER_REPLICATE,
-        )
-
-        logger.info(
-          "Perspective corrected form: %dx%d",
-          output_width,
-          output_height,
-        )
-
-      else:
-
-        logger.warning(
-          "Detected form geometry was invalid; "
-          "keeping original image framing",
-        )
-
-    else:
-
-      logger.info(
-        "No confident form boundary detected; "
-        "keeping original image framing",
-      )
-
-    # ---------------------------------------------------------
-    # 4. Rotation deskew
-    #
-    # Correct small residual rotations such as:
-    #
-    #   2°
-    #   -3°
-    #   5°
-    #
-    # Do NOT use this to handle 90-degree rotations.
-    # Large orientation changes are determined by OpenAI and
-    # applied after this cleaning step.
-    # ---------------------------------------------------------
-
-    deskew_gray = cv2.cvtColor(
-      image,
-      cv2.COLOR_BGR2GRAY,
-    )
-
-    deskew_gray = cv2.GaussianBlur(
-      deskew_gray,
-      (5, 5),
-      0,
-    )
-
-    deskew_edges = cv2.Canny(
-      deskew_gray,
-      50,
-      150,
-    )
-
     lines = cv2.HoughLinesP(
-      deskew_edges,
+      edges,
       1,
       np.pi / 180,
-      threshold=max(
-        50,
-        min(
-          image.shape[:2]
-        ) // 5,
-      ),
+      threshold=100,
       minLineLength=max(
         100,
-        min(
-          image.shape[:2]
-        ) // 4,
+        int(min(image.shape[:2]) * 0.25),
       ),
       maxLineGap=20,
     )
@@ -1377,261 +1390,176 @@ class FormJobService:
     angles = []
 
     if lines is not None:
+      for line in lines[:, 0]:
+        x1, y1, x2, y2 = line
 
-      # Flatten the Hough result into individual line
-      # segments regardless of whether OpenCV returns
-      # shape (N, 1, 4) or (N, 4).
-      lines = np.asarray(
-        lines,
-      ).reshape(
-        -1,
-        4,
-      )
+        dx = x2 - x1
+        dy = y2 - y1
 
-      for line in lines:
-
-        x1, y1, x2, y2 = (
-          line
-        )
-
-        dx = float(x2 - x1)
-        dy = float(y2 - y1)
-
-        if dx == 0 and dy == 0:
+        if dx == 0:
           continue
 
         angle = np.degrees(
-          np.arctan2(
-            dy,
+          np.arctan2(dy, dx)
+        )
+
+        if angle > 45:
+          angle -= 90
+        elif angle < -45:
+          angle += 90
+
+        if abs(angle) <= 10:
+          length = np.hypot(
             dx,
-          )
-        )
-
-        # Normalize to [-90, 90].
-        while angle > 90:
-          angle -= 180
-
-        while angle < -90:
-          angle += 180
-
-        # Only consider lines that are reasonably close
-        # to horizontal. These are generally the strongest
-        # indicators of a form being slightly tilted.
-        if abs(angle) <= 20:
-          angles.append(
-            float(angle),
+            dy,
           )
 
-    if len(angles) >= 3:
+          if length >= min(image.shape[:2]) * 0.15:
+            angles.append(angle)
 
+    if angles:
       median_angle = float(
-        np.median(
-          np.asarray(
-            angles,
-            dtype=np.float32,
-          )
-        )
+        np.median(angles)
+      )
+    else:
+      median_angle = 0.0
+
+    logger.info(
+      "Detected median deskew angle: %.2f degrees",
+      median_angle,
+    )
+
+    if abs(median_angle) >= 0.25:
+      height, width = image.shape[:2]
+
+      center = (
+        width / 2,
+        height / 2,
       )
 
-      # Only deskew meaningful small rotations.
-      #
-      # 90-degree orientation problems are handled by OpenAI
-      # after this cleaning step and should never be handled
-      # by this deskew logic.
-      if (
-        abs(median_angle) >= 0.7
-        and abs(median_angle) <= 8.0
-      ):
+      rotation_matrix = cv2.getRotationMatrix2D(
+        center,
+        median_angle,
+        1.0,
+      )
 
-        height, width = (
-          image.shape[:2]
-        )
-
-        center = (
-          width / 2.0,
-          height / 2.0,
-        )
-
-        rotation_matrix = (
-          cv2.getRotationMatrix2D(
-            center,
-            median_angle,
-            1.0,
-          )
-        )
-
-        cos = abs(
-          rotation_matrix[0, 0]
-        )
-
-        sin = abs(
-          rotation_matrix[0, 1]
-        )
-
-        new_width = int(
-          height * sin
-          + width * cos
-        )
-
-        new_height = int(
-          height * cos
-          + width * sin
-        )
-
-        rotation_matrix[0, 2] += (
-          new_width / 2
-          - center[0]
-        )
-
-        rotation_matrix[1, 2] += (
-          new_height / 2
-          - center[1]
-        )
-
-        image = cv2.warpAffine(
-          image,
-          rotation_matrix,
-          (
-            new_width,
-            new_height,
-          ),
-          flags=cv2.INTER_CUBIC,
-          borderMode=cv2.BORDER_REPLICATE,
-        )
-
-        logger.info(
-          "Deskewed form by %.2f degrees",
-          median_angle,
-        )
-
-      else:
-
-        logger.info(
-          "No significant deskew required "
-          "(median angle %.2f degrees)",
-          median_angle,
-        )
-
-    else:
+      image = cv2.warpAffine(
+        image,
+        rotation_matrix,
+        (width, height),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_REPLICATE,
+      )
 
       logger.info(
-        "Insufficient line segments for deskew; "
-        "keeping current rotation",
+        "Deskew applied: %.2f degrees",
+        median_angle,
       )
 
-    # ---------------------------------------------------------
-    # 5. Prevent excessively large output images
-    # ---------------------------------------------------------
+    else:
+      logger.info(
+        "No significant deskew required (median angle %.2f degrees)",
+        median_angle,
+      )
+
+    # ------------------------------------------------------------------
+    # Resize
+    # ------------------------------------------------------------------
 
     height, width = image.shape[:2]
 
     max_dimension = 3000
 
-    scale = min(
-      1.0,
-      max_dimension / max(
-        width,
-        height,
-      ),
-    )
+    if max(height, width) > max_dimension:
+      scale = max_dimension / max(height, width)
 
-    if scale < 1.0:
+      new_width = int(round(width * scale))
+      new_height = int(round(height * scale))
 
       image = cv2.resize(
         image,
-        (
-          int(width * scale),
-          int(height * scale),
-        ),
+        (new_width, new_height),
         interpolation=cv2.INTER_AREA,
       )
 
-    # ---------------------------------------------------------
-    # 6. Lighting / paper normalization
-    # ---------------------------------------------------------
+      logger.info(
+        "Image resized: %sx%s -> %sx%s",
+        width,
+        height,
+        new_width,
+        new_height,
+      )
+
+    # ------------------------------------------------------------------
+    # Lighting normalization / contrast
+    # ------------------------------------------------------------------
 
     lab = cv2.cvtColor(
       image,
       cv2.COLOR_BGR2LAB,
     )
 
-    l_channel, a_channel, b_channel = (
-      cv2.split(lab)
+    l_channel, a_channel, b_channel = cv2.split(
+      lab
     )
-
-    background = cv2.GaussianBlur(
-      l_channel,
-      (0, 0),
-      25,
-    )
-
-    normalized_l = cv2.divide(
-      l_channel,
-      background,
-      scale=255,
-    )
-
-    # ---------------------------------------------------------
-    # 7. Gentle local contrast enhancement
-    # ---------------------------------------------------------
 
     clahe = cv2.createCLAHE(
       clipLimit=2.0,
       tileGridSize=(8, 8),
     )
 
-    enhanced_l = clahe.apply(
-      normalized_l,
+    l_channel = clahe.apply(
+      l_channel
     )
 
-    # ---------------------------------------------------------
-    # 8. Light sharpening
-    # ---------------------------------------------------------
+    lab = cv2.merge(
+      [
+        l_channel,
+        a_channel,
+        b_channel,
+      ]
+    )
+
+    image = cv2.cvtColor(
+      lab,
+      cv2.COLOR_LAB2BGR,
+    )
+
+    # ------------------------------------------------------------------
+    # Mild sharpening
+    # ------------------------------------------------------------------
 
     blurred = cv2.GaussianBlur(
-      enhanced_l,
+      image,
       (0, 0),
       1.0,
     )
 
-    sharpened_l = cv2.addWeighted(
-      enhanced_l,
-      1.2,
+    image = cv2.addWeighted(
+      image,
+      1.15,
       blurred,
-      -0.2,
+      -0.15,
       0,
     )
 
-    # ---------------------------------------------------------
-    # 9. Recombine while preserving original colors
-    # ---------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Save
+    # ------------------------------------------------------------------
 
-    cleaned_lab = cv2.merge(
-      [
-        sharpened_l,
-        a_channel,
-        b_channel,
-      ],
+    output_file.parent.mkdir(
+      parents=True,
+      exist_ok=True,
     )
-
-    cleaned = cv2.cvtColor(
-      cleaned_lab,
-      cv2.COLOR_LAB2BGR,
-    )
-
-    # ---------------------------------------------------------
-    # 10. Save
-    # ---------------------------------------------------------
 
     logger.info(
-      "SAVING CLEANED IMAGE: "
-      "output=%s",
-      output_file
+      "SAVING CLEANED IMAGE: output=%s",
+      output_file,
     )
 
     success = cv2.imwrite(
       str(output_file),
-      cleaned,
+      image,
       [
         cv2.IMWRITE_JPEG_QUALITY,
         92,
@@ -1639,30 +1567,29 @@ class FormJobService:
     )
 
     logger.info(
-      "cv2.imwrite RESULT: "
-      "success=%s output_exists=%s output_size=%s",
+      "cv2.imwrite RESULT: success=%s output_exists=%s output_size=%s",
       success,
       output_file.exists(),
-      output_file.stat().st_size if output_file.exists() else None,
+      output_file.stat().st_size if output_file.exists() else 0,
     )
 
-    if not success:
-
-      raise ValueError(
-        f"Could not save cleaned image: {output_file}"
+    if not success or not output_file.exists():
+      raise RuntimeError(
+        f"Failed to save cleaned image: {output_file}"
       )
 
-    cleaned_height, cleaned_width = (
-      cleaned.shape[:2]
+    logger.info(
+      "Cleaned image saved: %s (%sx%s)",
+      output_file,
+      image.shape[1],
+      image.shape[0],
     )
 
     logger.info(
-      "Cleaned image saved: %s (%dx%d)",
-      output_file,
-      cleaned_width,
-      cleaned_height,
+      "========== _clean_form_image END =========="
     )
 
+  
   def _rotate_image_for_form_editing(
     self,
     input_file: Path,
@@ -2530,9 +2457,6 @@ PDF.
     image_edits: list[dict],
     output_dir: Path,
   ) -> Path:
-
-    from PIL import Image, ImageDraw, ImageFont
-
     output_dir.mkdir(
       parents=True,
       exist_ok=True,
