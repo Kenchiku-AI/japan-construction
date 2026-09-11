@@ -3,6 +3,8 @@ import logging
 import mimetypes
 import tempfile
 from pathlib import Path
+import cv2
+import numpy as np
 
 from openai import OpenAI
 from sqlalchemy import select, update
@@ -609,8 +611,6 @@ class FormJobService:
         else:
           analysis_image = rgb_image
 
-        import numpy as np
-
         pixels = np.asarray(
           analysis_image,
           dtype=np.float32,
@@ -755,7 +755,7 @@ class FormJobService:
         "Could not inspect image for screenshot detection: %s",
         input_file,
       )
-      
+
       return False
 
   def _clean_image_files(
@@ -858,10 +858,7 @@ class FormJobService:
       "========== _clean_form_image START =========="
     )
 
-    import cv2
-    import numpy as np
     from PIL import Image, ImageOps
-
 
     # ---------------------------------------------------------
     # Helper: order four corner points
@@ -962,50 +959,6 @@ class FormJobService:
       logger.info(
         "Image %s does not appear to be a screenshot. "
         "Applying document image cleanup.",
-        input_file.name,
-      )
-
-      pil_image = pil_image.convert(
-        "RGB",
-      )
-
-      image = cv2.cvtColor(
-        np.array(pil_image),
-        cv2.COLOR_RGB2BGR,
-      )
-
-      logger.info(
-        "CONVERTED TO OPENCV: "
-        "shape=%s dtype=%s",
-        image.shape,
-        image.dtype,
-      )
-
-      if not is_camera_photo:
-        logger.info(
-          "Image %s does not appear to be a camera photo. "
-          "Skipping image cleanup.",
-          input_file.name,
-        )
-
-        output_file.parent.mkdir(
-          parents=True,
-          exist_ok=True,
-        )
-
-        pil_image.convert(
-          "RGB",
-        ).save(
-          output_file,
-          "JPEG",
-          quality=95,
-        )
-
-        return
-
-      logger.info(
-        "Image %s appears to be a camera photo. "
-        "Applying image cleanup.",
         input_file.name,
       )
 
@@ -1715,9 +1668,6 @@ class FormJobService:
     input_file: Path,
     rotation_degrees: int,
   ) -> None:
-
-    import cv2
-
     image = cv2.imread(
       str(input_file),
       cv2.IMREAD_COLOR,
