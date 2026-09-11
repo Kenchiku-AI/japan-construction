@@ -1626,7 +1626,7 @@ class FormJobService:
     logger.info(
       "SAVING CLEANED IMAGE: "
       "output=%s",
-      output_path
+      output_file
     )
 
     success = cv2.imwrite(
@@ -1642,8 +1642,8 @@ class FormJobService:
       "cv2.imwrite RESULT: "
       "success=%s output_exists=%s output_size=%s",
       success,
-      output_path.exists(),
-      output_path.stat().st_size if output_path.exists() else None,
+      output_file.exists(),
+      output_file.stat().st_size if output_file.exists() else None,
     )
 
     if not success:
