@@ -49,6 +49,7 @@ from app.services.billing import (
   get_billing_status,
   create_subscription
 )
+from app.services.company_graph import build_company_graph
 from app.services.invitations import create_company_invitation
 from app.services.email import send_company_created_admin_email
 from app.db.models.conversation_item_type import ConversationItemType, ConversationItemTypeLink
@@ -437,6 +438,37 @@ async def get_company(
     custom_fields=custom_fields,
     custom_relationships=custom_relationships,
   )
+
+@router.get("/{company_id}/graph")
+async def get_company_graph(
+  company_id: UUID,
+  project_id: UUID | None = None,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  if current_user.role != "admin" and current_user.company_id != company_id:
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Not authorized to view this company's graph",
+    )
+
+  try:
+    graph = await build_company_graph(
+      db=db,
+      company_id=company_id,
+      project_id=project_id,
+    )
+  except ValueError as e:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail=str(e),
+    )
+
+  return {
+    "company_id": str(company_id),
+    "project_id": str(project_id) if project_id else None,
+    "graph": graph,
+  }
 
 async def get_company_custom_fields(
   company: Company,
