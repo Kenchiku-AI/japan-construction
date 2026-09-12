@@ -49,7 +49,7 @@ from app.services.billing import (
   get_billing_status,
   create_subscription
 )
-from app.services.company_graph import build_company_graph
+from app.services.forms.company_graph import build_company_graph
 from app.services.invitations import create_company_invitation
 from app.services.email import send_company_created_admin_email
 from app.db.models.conversation_item_type import ConversationItemType, ConversationItemTypeLink
