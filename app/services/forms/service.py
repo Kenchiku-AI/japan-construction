@@ -1272,7 +1272,7 @@ class FormJobService:
           pil_image.height,
         )
 
-        if self._is_likely_screenshot(pil_image, input_file):
+        if self._is_likely_screenshot(pil_image):
           logger.info(
             "Image %s appears to be a screenshot. Skipping document cleanup.",
             input_file.name,
