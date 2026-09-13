@@ -49,7 +49,7 @@ from app.services.billing import (
   get_billing_status,
   create_subscription
 )
-from app.services.forms.company_graph import build_company_graph
+from app.services.forms.company_graph import build_company_graph_json
 from app.services.invitations import create_company_invitation
 from app.services.email import send_company_created_admin_email
 from app.db.models.conversation_item_type import ConversationItemType, ConversationItemTypeLink
@@ -443,6 +443,7 @@ async def get_company(
 async def get_company_graph(
   company_id: UUID,
   project_id: UUID | None = None,
+  format: str = "json",  # "json" or "text"
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
@@ -453,22 +454,15 @@ async def get_company_graph(
     )
 
   try:
-    graph = await build_company_graph(
-      db=db,
-      company_id=company_id,
-      project_id=project_id,
-    )
-  except ValueError as e:
-    raise HTTPException(
-      status_code=status.HTTP_404_NOT_FOUND,
-      detail=str(e),
-    )
+    if format == "text":
+      graph = await build_company_graph(db=db, company_id=company_id, project_id=project_id)
+      return {"company_id": str(company_id), "project_id": str(project_id) if project_id else None, "graph": graph}
 
-  return {
-    "company_id": str(company_id),
-    "project_id": str(project_id) if project_id else None,
-    "graph": graph,
-  }
+    graph = await build_company_graph_json(db=db, company_id=company_id, project_id=project_id)
+    return {"company_id": str(company_id), "project_id": str(project_id) if project_id else None, "graph": graph}
+
+  except ValueError as e:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 async def get_company_custom_fields(
   company: Company,
