@@ -443,7 +443,6 @@ async def get_company(
 async def get_company_graph(
   company_id: UUID,
   project_id: UUID | None = None,
-  format: str = "json",  # "json" or "text"
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
@@ -454,10 +453,6 @@ async def get_company_graph(
     )
 
   try:
-    if format == "text":
-      graph = await build_company_graph(db=db, company_id=company_id, project_id=project_id)
-      return {"company_id": str(company_id), "project_id": str(project_id) if project_id else None, "graph": graph}
-
     graph = await build_company_graph_json(db=db, company_id=company_id, project_id=project_id)
     return {"company_id": str(company_id), "project_id": str(project_id) if project_id else None, "graph": graph}
 
