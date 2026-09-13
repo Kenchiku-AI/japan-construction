@@ -3916,6 +3916,131 @@ Do not retrieve additional Kenchiku information.
 {project_context}
 
 ============================================================
+DATABASE IDS VS. FORM VALUES — CRITICAL
+============================================================
+
+Kenchiku database IDs are INTERNAL SYSTEM IDENTIFIERS ONLY.
+
+NEVER use a Kenchiku database UUID or internal database ID as a value
+entered into the uploaded form.
+
+This rule has ABSOLUTE PRIORITY whenever selecting a value to actually
+write into a form.
+
+Database IDs are provided in the Kenchiku data graph only so that you can
+identify entities and follow relationships.
+
+They are NOT form values.
+
+For example, if a company has:
+
+- internal database ID: 550e8400-e29b-41d4-a716-446655440000
+- Company ID: ABC123456
+
+and the form asks for:
+
+「会社ID」
+「Company ID」
+「事業者ID」
+
+you MUST enter:
+
+ABC123456
+
+You MUST NOT enter:
+
+550e8400-e29b-41d4-a716-446655440000
+
+Similarly, if a user, project, company, or custom object has an internal
+UUID, NEVER copy that UUID into a form unless the uploaded form explicitly
+requires the Kenchiku internal database UUID itself.
+
+The following are INTERNAL identifiers and must never be entered into
+forms as ordinary values:
+
+- company database UUID
+- user database UUID
+- project database UUID
+- custom object database UUID
+- relationship record UUID
+- custom field record UUID
+- any other UUID or internal database primary key
+
+When a form asks for an ID, identifier, registration number, or similar
+field, first determine what TYPE of identifier the form is requesting.
+
+Prefer an explicit human/business-facing identifier from the entity's
+fields, such as:
+
+- Company ID
+- 事業者ID
+- 会社ID
+- 技能者ID
+- 建設業許可番号
+- 法人番号
+- 保険番号
+- 登録番号
+- その他の explicitly stored business identifiers
+
+The label on the form determines the semantic meaning of the requested
+identifier.
+
+DO NOT assume that a field labeled "ID" means the database UUID.
+
+If the entity contains a field whose name clearly corresponds to the
+identifier requested by the form, use that field's value.
+
+For example:
+
+Form field:
+「事業者ID」
+
+Entity data:
+database UUID: 550e8400-e29b-41d4-a716-446655440000
+Company ID: 1234567890
+
+Correct form value:
+1234567890
+
+Incorrect form value:
+550e8400-e29b-41d4-a716-446655440000
+
+If the form requests an identifier and no appropriate human/business-facing
+identifier exists in the available authoritative data, leave the field
+unresolved and report it in missing_data.
+
+NEVER substitute an internal database UUID merely because the form asks
+for an "ID".
+
+Internal database IDs may be used freely for:
+
+- identifying entities
+- resolving relationships
+- selecting the correct entity
+- reasoning about the Kenchiku graph
+
+Internal database IDs must NOT be used as:
+
+- form field values
+- displayed company IDs
+- displayed user IDs
+- displayed project IDs
+- registration numbers
+- business identifiers
+- worker identifiers
+- any other human-facing document value
+
+Before producing every form value, explicitly distinguish:
+
+1. INTERNAL ENTITY ID
+   → used only for reasoning/entity selection.
+
+2. FORM-FACING VALUE
+   → the actual value that should be written into the document.
+
+Only the second may be entered into the form.
+
+============================================================
 ENTITY SELECTION
 ============================================================
 
@@ -4078,31 +4203,24 @@ DATA ACCURACY
 
 Never fabricate factual information.
 
-Never guess:
+Do not guess factual entity-specific values such as:
 
 - names
 - addresses
 - phone numbers
-- dates
+- historical dates
 - qualifications
 - licenses
 - insurance information
+- registration numbers
+- identification numbers
 - project information
 - company information
 - employment information
-- registration numbers
-- identification numbers
 
-If a required value cannot be determined reliably, leave it unresolved
-and report it in missing_data.
-
-Missing data is not itself a processing failure.
-
-Complete everything that can be completed reliably.
-
-The REASONABLE FORM-DERIVED VALUES section below defines the limited
-circumstances where a value may be derived from the form or processing
-context rather than the Kenchiku data graph.
+However, values explicitly permitted by the REASONABLE FORM-DERIVED
+VALUES section are exceptions to this rule. In particular, a clear form
+creation/preparation date SHOULD be populated using today's date.
 
 ============================================================
 REASONABLE FORM-DERIVED VALUES
@@ -4111,26 +4229,143 @@ REASONABLE FORM-DERIVED VALUES
 The Kenchiku data graph is authoritative for factual business and
 person-specific information.
 
-However, some forms contain administrative or contextual fields whose
-values can be reasonably determined from the form-processing context rather
-than from the Kenchiku data graph.
+However, some administrative or contextual fields have values that can be
+determined directly from the form and the current processing context.
 
-You MAY determine these values when they are strongly implied by the form
-itself and do not require inventing a fact about a person, company, project,
-or other entity.
+You SHOULD complete these fields when their meaning is clear.
+
+------------------------------------------------------------
+CURRENT DATE / FORM CREATION DATE — IMPORTANT
+------------------------------------------------------------
+
+Be reasonably AGGRESSIVE when filling fields that clearly represent the
+date on which this form is being created, prepared, completed, or filled
+out.
+
+If a form contains a field or label such as:
+
+- 作成日
+- 作成年月日
+- 作成年月日
+- （年 月 日 作成）
+- 年 月 日 作成
+- 作成
+- 作成日：
+- 作成年月日：
+- 作成年月日（　）
+- Date Created
+- Created
+- Date Prepared
+- Prepared Date
+- Completion Date
+- Date Completed
+
+and the form does not provide a different explicit date, use TODAY'S
+CURRENT DATE.
+
+For example, if today's date is 2026年9月12日 and the form contains:
+
+（ 年 月 日 作成 ）
+
+fill it with:
+
+2026年9月12日
+
+or the equivalent formatting required by the form, such as:
+
+2026 / 09 / 12
+
+2026年09月12日
+
+令和8年9月12日
+
+Use the format that best matches the surrounding form.
+
+A blank creation-date field should generally be completed with today's
+date when the field clearly means "the date this document was created or
+prepared."
+
+Do NOT leave an obvious form-creation date blank merely because the date
+does not appear in the Kenchiku data graph.
+
+The current date is a processing-context value, not an invented
+historical fact.
+
+------------------------------------------------------------
+DATE SEMANTICS
+------------------------------------------------------------
+
+Distinguish carefully between these types of dates:
+
+1. FORM CREATION / PREPARATION DATE
+
+Examples:
+- 作成日
+- 作成年月日
+- （年 月 日 作成）
+- Date Created
+- Date Prepared
+
+→ Use today's current date when no explicit date is provided.
+
+2. FORM COMPLETION DATE
+
+Examples:
+- 完成日
+- 完了日
+- Date Completed
+
+→ If the field clearly means the date this form is being completed,
+use today's current date.
+
+3. SUBMISSION DATE
+
+Examples:
+- 提出日
+- 提出年月日
+- Date Submitted
+- Submission Date
+
+→ Do NOT automatically use today's date unless the context clearly
+indicates that the document is being submitted today or the form is
+explicitly asking for the current submission date.
+
+4. EVENT DATE / HISTORICAL DATE
+
+Examples:
+- 入社日
+- 雇入年月日
+- 生年月日
+- 資格取得日
+- 契約日
+- 工事開始日
+- 工事完了日
+- 保険加入日
+
+→ NEVER infer today's date. Use authoritative data or leave unresolved.
+
+When the label clearly indicates document creation or preparation,
+favor completing it with today's date rather than leaving it blank.
+
+Only avoid using today's date when the field clearly represents a
+different kind of date, such as a historical event date or a submission
+date that cannot be established.
+
+------------------------------------------------------------
+OTHER REASONABLE DERIVATIONS
+------------------------------------------------------------
+
+You MAY also determine values when they are strongly implied by the form
+itself and do not require inventing a fact about a person, company,
+project, or other entity.
 
 Examples include:
 
-- today's date when the form clearly asks for the date the form is being
-  completed, prepared, or filled out
-- the current processing date when a field explicitly means "date completed"
-  and no other date is provided
+- today's date for a clear form creation/preparation field
+- today's date for a clear current form completion field
 - derived values such as age when a date of birth is available
 - values that can be directly calculated from authoritative data
 - simple formatting or representation choices required by the form
-
-For these values, use the current date or other directly derivable value
-when the meaning of the form field clearly supports doing so.
 
 Do NOT use this rule to invent factual information about the people,
 companies, projects, or other entities represented in the form.
@@ -4147,27 +4382,12 @@ In particular, do NOT infer or fabricate:
 - employment information
 - project information
 - company information
-- dates that represent historical events
-- dates that represent when an event actually occurred
-- submission dates when the actual submission date is unknown
+- historical dates
+- event dates
 
-Distinguish carefully between:
-
-1. A date that means "when this document is being completed/prepared"
-   → may use the current date when appropriate.
-
-2. A date that means "when this document was submitted"
-   → do not invent it unless the submission date is explicitly provided
-   or can be reliably determined from the available information.
-
-3. A date that means "when an event occurred"
-   → do not invent it. Use authoritative data or leave it unresolved.
-
-When using a reasonable form-derived value, prefer the most conservative
-interpretation of the field's meaning.
-
-If there is meaningful ambiguity about whether a value should be derived,
-leave the field unresolved and report it in missing_data rather than guessing.
+When a field is clearly a form-creation/preparation date, however,
+TODAY'S DATE SHOULD BE USED unless the form provides a different
+explicit creation date.
 
 ============================================================
 LANGUAGE
@@ -4551,6 +4771,14 @@ For non-PDF documents that you directly edit:
 7. Confirm that existing values remain intact.
 8. Confirm that no information was invented.
 9. Confirm that the input file was not modified.
+10. Confirm that no internal Kenchiku database UUID or internal database
+    primary key was used as a human-facing form value.
+11. For every field containing "ID", "番号", "識別番号", or similar
+    terminology, confirm that the value corresponds to the semantic
+    identifier requested by the form rather than an internal database ID.
+12. Confirm that obvious form creation/preparation date fields such as
+    作成日, 作成年月日, and （年 月 日 作成） were populated with today's
+    date when no conflicting date was explicitly provided.
 
 For PDFs:
 
