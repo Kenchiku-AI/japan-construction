@@ -2144,6 +2144,7 @@ PDF.
           response=response,
           agent_output=agent_output,
           output_dir=output_dir,
+          input_files=input_files,
         )
 
       return agent_output
@@ -2170,6 +2171,7 @@ PDF.
     response,
     agent_output: dict,
     output_dir: Path,
+    input_files: list[Path],
   ) -> None:
 
     import re
@@ -2287,6 +2289,15 @@ PDF.
       reported_filenames,
     )
 
+    editable_originals = [
+      f for f in input_files
+      if f.suffix.lower() not in {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".gif"}
+    ]
+
+    originals_by_suffix: dict[str, list[Path]] = {}
+    for f in editable_originals:
+      originals_by_suffix.setdefault(f.suffix.lower(), []).append(f)
+
     # ------------------------------------------------------------
     # Find Code Interpreter containers.
     # ------------------------------------------------------------
@@ -2344,6 +2355,7 @@ PDF.
           container_id,
         )
       )
+      
 
       for container_file in response_files.data:
         file_id = getattr(container_file, "id", None)
@@ -2369,26 +2381,36 @@ PDF.
           )
           continue
 
-        filename = Path(file_path).name
-        if not filename:
-          continue
+        container_name = Path(file_path).name
+        suffix = Path(container_name).suffix.lower()
 
-        # --------------------------------------------------------
-        # Only extract files explicitly reported by the agent.
-        # --------------------------------------------------------
+        candidates = originals_by_suffix.get(suffix, [])
 
-        if filename not in reported_filenames:
-
-          logger.info(
-            "Skipping container file not reported as output: %s",
-            file_path,
+        if len(candidates) == 1:
+          # Unambiguous: exactly one original of this type was sent in.
+          # Ignore whatever name the model gave it — use the real one.
+          target_name = candidates[0].name
+        elif len(candidates) > 1:
+          # Multiple same-suffix inputs: try to disambiguate via the
+          # model's reported filename (best-effort), else log and skip
+          # rather than silently mis-attributing.
+          matches = [c for c in candidates if c.name in reported_filenames or container_name in reported_filenames]
+          if len(matches) == 1:
+            target_name = matches[0].name
+          else:
+            logger.warning(
+              "Cannot unambiguously match generated file %s to one of %s; skipping.",
+              container_name, [c.name for c in candidates],
+            )
+            continue
+        else:
+          logger.warning(
+            "Generated file %s has no matching input suffix; skipping.",
+            container_name,
           )
-
           continue
 
-        local_path = (
-          output_dir / filename
-        )
+        local_path = output_dir / target_name
 
         logger.info(
           "Downloading generated output file: %s -> %s",
