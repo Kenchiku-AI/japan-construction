@@ -2346,39 +2346,30 @@ PDF.
       )
 
       for container_file in response_files.data:
-
-        file_id = getattr(
-          container_file,
-          "id",
-          None,
-        )
-
-        file_path = getattr(
-          container_file,
-          "path",
-          None,
-        )
-
-        source = getattr(
-          container_file,
-          "source",
-          None,
-        )
+        file_id = getattr(container_file, "id", None)
+        file_path = getattr(container_file, "path", None)
+        source = getattr(container_file, "source", None)
 
         logger.info(
           "Container file: id=%s path=%s source=%s",
-          file_id,
-          file_path,
-          source,
+          file_id, file_path, source,
         )
 
         if not file_id or not file_path:
           continue
 
-        filename = Path(
-          file_path,
-        ).name
+        # Only ever accept files the model actually generated. Input files
+        # mounted for the model to read (source == "user") must never be
+        # treated as output, even if the model's "files" list mistakenly
+        # names one.
+        if source != "assistant":
+          logger.warning(
+            "Skipping container file with source=%r (not model-generated): %s",
+            source, file_path,
+          )
+          continue
 
+        filename = Path(file_path).name
         if not filename:
           continue
 
