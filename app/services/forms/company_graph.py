@@ -1795,14 +1795,6 @@ async def build_company_graph_json(
   # ==========================================================
 
   return {
-    "rules": [
-      "Explicit relationships are authoritative.",
-      "Relationship direction is significant.",
-      "A relationship is shown under both entities, but its actual source and target are always preserved.",
-      "Do not infer relationships merely from shared company, names, emails, or similar field values.",
-      "Custom field values belong only to the entity where shown.",
-      "Do not invent missing information.",
-    ],
     "primary_project": (
       {
         "id": str(project.id),
