@@ -648,6 +648,51 @@ class FormJobService:
     return ordered
 
   @staticmethod
+  def _inset_quad_corners(
+    corners: np.ndarray,
+    inset_ratio: float = 0.02,
+  ) -> np.ndarray:
+    """
+    Shrink a quadrilateral inward, toward its own centroid, by
+    inset_ratio of its average side length.
+
+    This keeps the physical paper/form edge line itself just
+    outside the cropped output, so the perspective-corrected image
+    doesn't show a dark border.
+    """
+    corners = np.asarray(corners, dtype=np.float32)
+
+    centroid = corners.mean(axis=0)
+
+    top_width = np.linalg.norm(corners[1] - corners[0])
+    bottom_width = np.linalg.norm(corners[2] - corners[3])
+    left_height = np.linalg.norm(corners[3] - corners[0])
+    right_height = np.linalg.norm(corners[2] - corners[1])
+
+    average_side = float(
+      np.mean(
+        [top_width, bottom_width, left_height, right_height]
+      )
+    )
+
+    inset_amount = average_side * inset_ratio
+
+    inset_corners = np.zeros_like(corners)
+
+    for index, corner in enumerate(corners):
+      direction = centroid - corner
+      distance = np.linalg.norm(direction)
+
+      if distance < 1e-6:
+        inset_corners[index] = corner
+        continue
+
+      unit_direction = direction / distance
+      inset_corners[index] = corner + unit_direction * inset_amount
+
+    return inset_corners
+
+  @staticmethod
   def _line_from_points(
     p1: np.ndarray,
     p2: np.ndarray,
@@ -1767,8 +1812,14 @@ If you cannot confidently determine the boundary, return:
       document_corners is not None
       and image_type != "screenshot"
     ):
+      document_corners = self._inset_quad_corners(
+        document_corners,
+        inset_ratio=0.02,
+      )
+
       logger.info(
-        "Applying perspective correction exactly once"
+        "Applying perspective correction exactly once "
+        "(corners inset to exclude the outer edge/border)"
       )
 
       image = self._perspective_crop(
@@ -1934,8 +1985,20 @@ If you cannot confidently determine the boundary, return:
       )
 
     # ---------------------------------------------------------
-    # 6. Mild contrast enhancement.
+    # 6. Aggressive whitening / contrast enhancement.
     # ---------------------------------------------------------
+
+    # 6a. Denoise first so contrast enhancement doesn't amplify
+    # sensor/paper-texture noise.
+    image = cv2.fastNlMeansDenoisingColored(
+      image,
+      None,
+      h=7,
+      hColor=7,
+      templateWindowSize=7,
+      searchWindowSize=21,
+    )
+
     lab = cv2.cvtColor(
       image,
       cv2.COLOR_BGR2LAB,
@@ -1945,8 +2008,24 @@ If you cannot confidently determine the boundary, return:
       cv2.split(lab)
     )
 
+    # 6b. Flatten uneven paper illumination by dividing out a
+    # heavily blurred version of the L channel, pushing the
+    # background toward white while preserving dark text.
+    background = cv2.GaussianBlur(
+      l_channel,
+      (0, 0),
+      31,
+    )
+
+    l_channel = cv2.divide(
+      l_channel,
+      background,
+      scale=255,
+    )
+
+    # 6c. Stronger local contrast enhancement.
     clahe = cv2.createCLAHE(
-      clipLimit=1.5,
+      clipLimit=3.0,
       tileGridSize=(8, 8),
     )
 
@@ -1965,6 +2044,43 @@ If you cannot confidently determine the boundary, return:
     image = cv2.cvtColor(
       enhanced_lab,
       cv2.COLOR_LAB2BGR,
+    )
+
+    # 6d. Desaturate slightly and push near-white background pixels
+    # closer to pure white, without clipping darker text/lines.
+    hsv = cv2.cvtColor(
+      image,
+      cv2.COLOR_BGR2HSV,
+    )
+
+    h_channel, s_channel, v_channel = cv2.split(hsv)
+
+    s_channel = cv2.multiply(
+      s_channel,
+      0.6,
+    ).astype(np.uint8)
+
+    white_threshold = 200
+
+    whiten_mask = v_channel > white_threshold
+
+    v_channel[whiten_mask] = np.clip(
+      v_channel[whiten_mask].astype(np.int32) + 25,
+      0,
+      255,
+    ).astype(np.uint8)
+
+    hsv = cv2.merge(
+      (
+        h_channel,
+        s_channel,
+        v_channel,
+      )
+    )
+
+    image = cv2.cvtColor(
+      hsv,
+      cv2.COLOR_HSV2BGR,
     )
 
     # ---------------------------------------------------------
@@ -3229,45 +3345,94 @@ PDF.
 
         return lines, block_width, block_height
 
-      if font_path:
-        font_size = max(
-          8,
-          int(
-            max_height * 0.70,
-          ),
+      min_font_size = 8
+
+      def fits_on_one_line(
+        text_value: str,
+        font_obj: ImageFont.FreeTypeFont,
+      ) -> bool:
+        line_bbox = draw.textbbox(
+          (0, 0),
+          text_value,
+          font=font_obj,
         )
 
-        lines = [str(text)]
+        line_width = line_bbox[2] - line_bbox[0]
+        line_height = line_bbox[3] - line_bbox[1]
 
-        while font_size >= 8:
+        return (
+          line_width <= max_width
+          and line_height <= max_height
+        )
 
-          font = ImageFont.truetype(
+      if font_path:
+        starting_font_size = max(
+          min_font_size,
+          int(max_height * 0.70),
+        )
+
+        font = None
+        lines = None
+
+        # Step 1: shrink to find the largest size that fits on ONE
+        # line. Only fall back to wrapping if even min_font_size
+        # can't fit the text on a single line.
+        for candidate_size in range(
+          starting_font_size,
+          min_font_size - 1,
+          -1,
+        ):
+          candidate_font = ImageFont.truetype(
             font_path,
-            font_size,
+            candidate_size,
           )
 
-          lines, block_width, block_height = measure_wrapped_block(
-            str(text),
-            font,
-            max_width,
-          )
-
-          if block_width <= max_width and block_height <= max_height:
+          if fits_on_one_line(str(text), candidate_font):
+            font = candidate_font
+            lines = [str(text)]
             break
 
-          font_size -= 1
+        if font is None:
 
-        if font_size < 8:
+          # Step 2: doesn't fit on one line even at min_font_size.
+          # Wrap at min_font_size, then try growing the font back up
+          # since multiple lines share the available height.
           font = ImageFont.truetype(
             font_path,
-            8,
+            min_font_size,
           )
 
-          lines, block_width, block_height = measure_wrapped_block(
+          lines, _, _ = measure_wrapped_block(
             str(text),
             font,
             max_width,
           )
+
+          for candidate_size in range(
+            min_font_size + 1,
+            starting_font_size + 1,
+          ):
+            candidate_font = ImageFont.truetype(
+              font_path,
+              candidate_size,
+            )
+
+            candidate_lines, candidate_width, candidate_height = (
+              measure_wrapped_block(
+                str(text),
+                candidate_font,
+                max_width,
+              )
+            )
+
+            if (
+              candidate_width <= max_width
+              and candidate_height <= max_height
+            ):
+              font = candidate_font
+              lines = candidate_lines
+            else:
+              break
 
       else:
         font = ImageFont.load_default()
