@@ -633,6 +633,166 @@ class FormJobService:
 
     return cleaned_files
 
+
+
+  def _order_quad_points(
+    self,
+    points: np.ndarray,
+  ) -> np.ndarray:
+    """
+    Return points in:
+      top-left
+      top-right
+      bottom-right
+      bottom-left
+    order.
+    """
+    points = np.asarray(points, dtype=np.float32)
+
+    if points.shape != (4, 2):
+      raise ValueError(
+        f"Expected 4 points, got shape={points.shape}"
+      )
+
+    center = points.mean(axis=0)
+
+    angles = np.arctan2(
+      points[:, 1] - center[1],
+      points[:, 0] - center[0],
+    )
+
+    points = points[
+      np.argsort(angles)
+    ]
+
+    # Rotate so top-left is first.
+    start = np.argmin(
+      points[:, 0] + points[:, 1]
+    )
+
+    points = np.roll(
+      points,
+      -start,
+      axis=0,
+    )
+
+    # Ensure clockwise order.
+    cross = np.cross(
+      points[1] - points[0],
+      points[2] - points[1],
+    )
+
+    if cross < 0:
+      points = np.array(
+        [
+          points[0],
+          points[3],
+          points[2],
+          points[1],
+        ],
+        dtype=np.float32,
+      )
+
+    return points.astype(np.float32)
+
+  def _line_from_points(
+    self,
+    p1: np.ndarray,
+    p2: np.ndarray,
+  ) -> np.ndarray:
+    """
+    Return normalized line coefficients:
+      ax + by + c = 0
+    """
+    x1, y1 = p1
+    x2, y2 = p2
+
+    a = y1 - y2
+    b = x2 - x1
+    c = x1 * y2 - x2 * y1
+
+    norm = np.hypot(a, b)
+
+    if norm < 1e-8:
+      raise ValueError("Degenerate line")
+
+    return np.array(
+      [
+        a / norm,
+        b / norm,
+        c / norm,
+      ],
+      dtype=np.float64,
+    )
+
+  def _intersect_lines(
+    self,
+    line1: np.ndarray,
+    line2: np.ndarray,
+  ) -> np.ndarray | None:
+    """
+    Intersect two lines represented as:
+      ax + by + c = 0
+    """
+    a1, b1, c1 = line1
+    a2, b2, c2 = line2
+
+    denominator = (
+      a1 * b2
+      - a2 * b1
+    )
+
+    if abs(denominator) < 1e-8:
+      return None
+
+    x = (
+      b1 * c2
+      - b2 * c1
+    ) / denominator
+
+    y = (
+      c1 * a2
+      - c2 * a1
+    ) / denominator
+
+    return np.array(
+      [x, y],
+      dtype=np.float32,
+    )
+
+  def _line_angle(
+    self,
+    p1: np.ndarray,
+    p2: np.ndarray,
+  ) -> float:
+    """
+    Return line angle in radians, normalized to [0, pi).
+    """
+    angle = np.arctan2(
+      p2[1] - p1[1],
+      p2[0] - p1[0],
+    )
+
+    if angle < 0:
+      angle += np.pi
+
+    return angle
+
+  def _angle_difference(
+    self,
+    a: float,
+    b: float,
+  ) -> float:
+    """
+    Smallest difference between two unoriented line angles.
+    """
+    diff = abs(a - b) % np.pi
+
+    return min(
+      diff,
+      np.pi - diff,
+    )
+
   def _clean_form_image(self, input_file: Path, output_file: Path) -> None:
     """Normalize a form image before the form agent places any text.
 
@@ -665,62 +825,749 @@ class FormJobService:
 
       return rect
 
-    def perspective_crop(
+    def _perspective_crop(
+      self,
       image: np.ndarray,
       corners: np.ndarray,
     ) -> np.ndarray:
-      rect = order_points(corners)
+      corners = self._order_quad_points(
+        corners
+      )
 
-      top_left, top_right, bottom_right, bottom_left = rect
+      top_left, top_right, bottom_right, bottom_left = corners
 
-      width_a = np.linalg.norm(bottom_right - bottom_left)
-      width_b = np.linalg.norm(top_right - top_left)
-      max_width = max(int(round(width_a)), int(round(width_b)))
+      top_width = np.linalg.norm(
+        top_right - top_left
+      )
 
-      height_a = np.linalg.norm(top_right - bottom_right)
-      height_b = np.linalg.norm(top_left - bottom_left)
-      max_height = max(int(round(height_a)), int(round(height_b)))
+      bottom_width = np.linalg.norm(
+        bottom_right - bottom_left
+      )
 
-      if max_width < 100 or max_height < 100:
+      left_height = np.linalg.norm(
+        bottom_left - top_left
+      )
+
+      right_height = np.linalg.norm(
+        bottom_right - top_right
+      )
+
+      output_width = int(
+        round(
+          (top_width + bottom_width)
+          / 2.0
+        )
+      )
+
+      output_height = int(
+        round(
+          (left_height + right_height)
+          / 2.0
+        )
+      )
+
+      if (
+        output_width < 200
+        or output_height < 200
+      ):
         logger.warning(
-          "Perspective crop dimensions are too small: %sx%s",
-          max_width,
-          max_height,
+          "Perspective crop dimensions too small: %sx%s",
+          output_width,
+          output_height,
         )
         return image
 
       destination = np.array(
         [
           [0, 0],
-          [max_width - 1, 0],
-          [max_width - 1, max_height - 1],
-          [0, max_height - 1],
+          [output_width - 1, 0],
+          [output_width - 1, output_height - 1],
+          [0, output_height - 1],
         ],
         dtype=np.float32,
       )
 
       matrix = cv2.getPerspectiveTransform(
-        rect,
+        corners.astype(np.float32),
         destination,
       )
 
       warped = cv2.warpPerspective(
         image,
         matrix,
-        (max_width, max_height),
+        (
+          output_width,
+          output_height,
+        ),
         flags=cv2.INTER_CUBIC,
         borderMode=cv2.BORDER_REPLICATE,
       )
 
       logger.info(
-        "Perspective crop applied: original=%sx%s output=%sx%s",
+        "Perspective crop applied: "
+        "input=%sx%s output=%sx%s corners=%s",
         image.shape[1],
         image.shape[0],
-        max_width,
-        max_height,
+        output_width,
+        output_height,
+        corners.tolist(),
       )
 
       return warped
+
+
+    def _detect_form_boundary_with_lines(
+      self,
+      image: np.ndarray,
+    ) -> tuple[np.ndarray | None, float]:
+      """
+      Detect the large rectangular printed-form boundary.
+
+      Unlike physical-paper detection, this does not require the
+      paper itself to be visible. It looks for the large rectangle
+      created by the form/table lines.
+
+      Returns:
+        (corners, confidence)
+
+      corners are in ORIGINAL IMAGE coordinates:
+        top-left
+        top-right
+        bottom-right
+        bottom-left
+      """
+
+      original_height, original_width = image.shape[:2]
+
+      # ------------------------------------------------------------
+      # Work at a manageable resolution.
+      # ------------------------------------------------------------
+
+      max_dimension = 1800
+
+      scale = min(
+        1.0,
+        max_dimension / max(
+          original_width,
+          original_height,
+        ),
+      )
+
+      if scale < 1.0:
+        working = cv2.resize(
+          image,
+          (
+            int(round(original_width * scale)),
+            int(round(original_height * scale)),
+          ),
+          interpolation=cv2.INTER_AREA,
+        )
+      else:
+        working = image.copy()
+
+      height, width = working.shape[:2]
+
+      gray = cv2.cvtColor(
+        working,
+        cv2.COLOR_BGR2GRAY,
+      )
+
+      # ------------------------------------------------------------
+      # Normalize lighting.
+      #
+      # This matters a lot for photographs of white paper.
+      # ------------------------------------------------------------
+
+      background = cv2.GaussianBlur(
+        gray,
+        (0, 0),
+        25,
+      )
+
+      normalized = cv2.divide(
+        gray,
+        background,
+        scale=255,
+      )
+
+      normalized = cv2.GaussianBlur(
+        normalized,
+        (3, 3),
+        0,
+      )
+
+      # ------------------------------------------------------------
+      # Build multiple edge maps.
+      # ------------------------------------------------------------
+
+      edge_maps = []
+
+      # Normal Canny.
+      edge_maps.append(
+        cv2.Canny(
+          normalized,
+          30,
+          100,
+        )
+      )
+
+      # Adaptive threshold is useful when the paper has uneven
+      # illumination.
+      adaptive = cv2.adaptiveThreshold(
+        normalized,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        31,
+        8,
+      )
+
+      edge_maps.append(adaptive)
+
+      # ------------------------------------------------------------
+      # Emphasize long horizontal and vertical form lines.
+      # ------------------------------------------------------------
+
+      horizontal_kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (
+          max(20, width // 25),
+          3,
+        ),
+      )
+
+      vertical_kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (
+          3,
+          max(20, height // 25),
+        ),
+      )
+
+      horizontal_maps = []
+      vertical_maps = []
+
+      for edges in edge_maps:
+        horizontal = cv2.morphologyEx(
+          edges,
+          cv2.MORPH_OPEN,
+          horizontal_kernel,
+        )
+
+        vertical = cv2.morphologyEx(
+          edges,
+          cv2.MORPH_OPEN,
+          vertical_kernel,
+        )
+
+        horizontal_maps.append(horizontal)
+        vertical_maps.append(vertical)
+
+      # Combine the maps.
+      horizontal = cv2.bitwise_or(
+        horizontal_maps[0],
+        horizontal_maps[1],
+      )
+
+      vertical = cv2.bitwise_or(
+        vertical_maps[0],
+        vertical_maps[1],
+      )
+
+      # Close small gaps in the printed lines.
+      horizontal = cv2.morphologyEx(
+        horizontal,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(
+          cv2.MORPH_RECT,
+          (31, 3),
+        ),
+      )
+
+      vertical = cv2.morphologyEx(
+        vertical,
+        cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(
+          cv2.MORPH_RECT,
+          (3, 31),
+        ),
+      )
+
+      # ------------------------------------------------------------
+      # Detect line segments.
+      # ------------------------------------------------------------
+
+      line_segments = []
+
+      for edge_map in (
+        horizontal,
+        vertical,
+      ):
+        lines = cv2.HoughLinesP(
+          edge_map,
+          rho=1,
+          theta=np.pi / 180,
+          threshold=max(
+            50,
+            int(min(width, height) * 0.10),
+          ),
+          minLineLength=max(
+            80,
+            int(max(width, height) * 0.25),
+          ),
+          maxLineGap=max(
+            20,
+            int(max(width, height) * 0.04),
+          ),
+        )
+
+        if lines is None:
+          continue
+
+        for line in lines[:, 0]:
+          x1, y1, x2, y2 = (
+            line.astype(np.float32)
+          )
+
+          length = np.hypot(
+            x2 - x1,
+            y2 - y1,
+          )
+
+          if length < width * 0.20:
+            continue
+
+          angle = self._line_angle(
+            np.array([x1, y1]),
+            np.array([x2, y2]),
+          )
+
+          line_segments.append(
+            {
+              "p1": np.array(
+                [x1, y1],
+                dtype=np.float32,
+              ),
+              "p2": np.array(
+                [x2, y2],
+                dtype=np.float32,
+              ),
+              "angle": angle,
+              "length": float(length),
+            }
+          )
+
+      if len(line_segments) < 4:
+        logger.info(
+          "Form line detection found fewer than 4 usable lines"
+        )
+        return None, 0.0
+
+      # ------------------------------------------------------------
+      # Find the dominant two line directions.
+      # ------------------------------------------------------------
+
+      angles = np.array(
+        [
+          segment["angle"]
+          for segment in line_segments
+        ],
+        dtype=np.float64,
+      )
+
+      lengths = np.array(
+        [
+          segment["length"]
+          for segment in line_segments
+        ],
+        dtype=np.float64,
+      )
+
+      # Weighted angle histogram.
+      bins = 180
+
+      histogram = np.zeros(
+        bins,
+        dtype=np.float64,
+      )
+
+      for angle, length in zip(
+        angles,
+        lengths,
+      ):
+        index = int(
+          round(
+            angle
+            * 180
+            / np.pi
+          )
+        ) % bins
+
+        histogram[index] += length
+
+      # Smooth histogram.
+      histogram = cv2.GaussianBlur(
+        histogram.reshape(1, -1),
+        (1, 11),
+        0,
+      ).reshape(-1)
+
+      dominant_index = int(
+        np.argmax(histogram)
+      )
+
+      dominant_angle = (
+        dominant_index
+        * np.pi
+        / 180
+      )
+
+      # Find a second direction approximately 90 degrees away.
+      target_second = (
+        dominant_angle
+        + np.pi / 2
+      ) % np.pi
+
+      angle_distances = np.array(
+        [
+          self._angle_difference(
+            angle,
+            target_second,
+          )
+          for angle in angles
+        ]
+      )
+
+      second_candidates = np.where(
+        angle_distances < np.deg2rad(25)
+      )[0]
+
+      if len(second_candidates) == 0:
+        logger.info(
+          "Could not find second dominant form-line direction"
+        )
+        return None, 0.0
+
+      second_index = second_candidates[
+        np.argmax(
+          lengths[second_candidates]
+        )
+      ]
+
+      second_angle = angles[
+        second_index
+      ]
+
+      # ------------------------------------------------------------
+      # Separate the lines into the two families.
+      # ------------------------------------------------------------
+
+      family_a = []
+      family_b = []
+
+      for segment in line_segments:
+        distance_a = self._angle_difference(
+          segment["angle"],
+          dominant_angle,
+        )
+
+        distance_b = self._angle_difference(
+          segment["angle"],
+          second_angle,
+        )
+
+        if distance_a <= distance_b:
+          if distance_a < np.deg2rad(18):
+            family_a.append(segment)
+        else:
+          if distance_b < np.deg2rad(18):
+            family_b.append(segment)
+
+      if len(family_a) < 2 or len(family_b) < 2:
+        logger.info(
+          "Insufficient lines in one of the two form directions: "
+          "A=%d B=%d",
+          len(family_a),
+          len(family_b),
+        )
+        return None, 0.0
+
+      # ------------------------------------------------------------
+      # Represent each line in normalized ax + by + c = 0 form.
+      # ------------------------------------------------------------
+
+      def make_line(segment):
+        return self._line_from_points(
+          segment["p1"],
+          segment["p2"],
+        )
+
+      lines_a = [
+        (
+          make_line(segment),
+          segment,
+        )
+        for segment in family_a
+      ]
+
+      lines_b = [
+        (
+          make_line(segment),
+          segment,
+        )
+        for segment in family_b
+      ]
+
+      # ------------------------------------------------------------
+      # Find the two outermost lines in each family.
+      # ------------------------------------------------------------
+
+      def select_outer_pair(
+        candidates,
+      ):
+        best_pair = None
+        best_score = -1.0
+
+        for i in range(len(candidates)):
+          line_i, segment_i = candidates[i]
+
+          for j in range(i + 1, len(candidates)):
+            line_j, segment_j = candidates[j]
+
+            a1, b1, c1 = line_i
+            a2, b2, c2 = line_j
+
+            # Make normals point in the same direction.
+            if (
+              a1 * a2
+              + b1 * b2
+              < 0
+            ):
+              a2 = -a2
+              b2 = -b2
+              c2 = -c2
+
+            distance = abs(
+              c1 - c2
+            ) / max(
+              np.hypot(a1, b1),
+              1e-8,
+            )
+
+            # Require meaningful separation.
+            if distance < min(width, height) * 0.15:
+              continue
+
+            score = (
+              distance
+              * min(
+                segment_i["length"],
+                segment_j["length"],
+              )
+            )
+
+            if score > best_score:
+              best_score = score
+              best_pair = (
+                line_i,
+                line_j,
+              )
+
+        return best_pair
+
+      outer_a = select_outer_pair(
+        lines_a
+      )
+
+      outer_b = select_outer_pair(
+        lines_b
+      )
+
+      if outer_a is None or outer_b is None:
+        logger.info(
+          "Could not identify outer form lines"
+        )
+        return None, 0.0
+
+      a1, a2 = outer_a
+      b1, b2 = outer_b
+
+      # ------------------------------------------------------------
+      # Intersections give us the four corners.
+      # ------------------------------------------------------------
+
+      p1 = self._intersect_lines(
+        a1,
+        b1,
+      )
+
+      p2 = self._intersect_lines(
+        a2,
+        b1,
+      )
+
+      p3 = self._intersect_lines(
+        a2,
+        b2,
+      )
+
+      p4 = self._intersect_lines(
+        a1,
+        b2,
+      )
+
+      if any(
+        point is None
+        for point in (
+          p1,
+          p2,
+          p3,
+          p4,
+        )
+      ):
+        logger.info(
+          "Form line intersections failed"
+        )
+        return None, 0.0
+
+      corners = np.array(
+        [
+          p1,
+          p2,
+          p3,
+          p4,
+        ],
+        dtype=np.float32,
+      )
+
+      # ------------------------------------------------------------
+      # Scale back to ORIGINAL image coordinates.
+      # ------------------------------------------------------------
+
+      if scale != 1.0:
+        corners /= scale
+
+      corners = self._order_quad_points(
+        corners
+      )
+
+      # ------------------------------------------------------------
+      # Validate the quadrilateral.
+      # ------------------------------------------------------------
+
+      x = corners[:, 0]
+      y = corners[:, 1]
+
+      if (
+        np.any(x < -original_width * 0.10)
+        or np.any(y < -original_height * 0.10)
+        or np.any(x > original_width * 1.10)
+        or np.any(y > original_height * 1.10)
+      ):
+        logger.info(
+          "Detected form corners extend too far outside image: %s",
+          corners.tolist(),
+        )
+        return None, 0.0
+
+      area = abs(
+        cv2.contourArea(
+          corners.reshape(-1, 1, 2)
+        )
+      )
+
+      image_area = (
+        original_width
+        * original_height
+      )
+
+      area_ratio = (
+        area / image_area
+      )
+
+      if area_ratio < 0.15:
+        logger.info(
+          "Detected form is too small: area_ratio=%.3f",
+          area_ratio,
+        )
+        return None, 0.0
+
+      # Check side lengths.
+      tl, tr, br, bl = corners
+
+      top = np.linalg.norm(
+        tr - tl
+      )
+
+      bottom = np.linalg.norm(
+        br - bl
+      )
+
+      left = np.linalg.norm(
+        bl - tl
+      )
+
+      right = np.linalg.norm(
+        br - tr
+      )
+
+      if min(
+        top,
+        bottom,
+        left,
+        right,
+      ) < 100:
+        return None, 0.0
+
+      # Width/height consistency.
+      width_ratio = (
+        min(top, bottom)
+        / max(top, bottom)
+      )
+
+      height_ratio = (
+        min(left, right)
+        / max(left, right)
+      )
+
+      if (
+        width_ratio < 0.65
+        or height_ratio < 0.65
+      ):
+        logger.info(
+          "Detected quadrilateral has inconsistent opposite sides: "
+          "width_ratio=%.3f height_ratio=%.3f",
+          width_ratio,
+          height_ratio,
+        )
+        return None, 0.0
+
+      confidence = min(
+        1.0,
+        (
+          area_ratio * 0.55
+          + width_ratio * 0.20
+          + height_ratio * 0.20
+          + min(
+            1.0,
+            best_score
+            / (
+              min(width, height)
+              * max(width, height)
+            ),
+          ) * 0.05
+        ),
+      )
+
+      logger.info(
+        "FORM BOUNDARY DETECTED: "
+        "confidence=%.3f corners=%s",
+        confidence,
+        corners.tolist(),
+      )
+
+      return corners, confidence
+
 
     def detect_document_with_opencv(
       image: np.ndarray,
@@ -1243,20 +2090,27 @@ array and document_detected=false.
     # ------------------------------------------------------------------
     # 1. OpenCV gets first chance at document detection.
     # ------------------------------------------------------------------
-    document_corners, opencv_score = detect_document_with_opencv(
-      image,
+    document_corners, document_score = (
+      self._detect_form_boundary_with_lines(
+        image
+      )
     )
 
-    image_type = "unknown"
-
-    # ------------------------------------------------------------------
-    # 2. Only if OpenCV cannot find the page, ask OpenAI to classify the
-    #    image and identify the physical document corners.
-    # ------------------------------------------------------------------
-    if document_corners is None:
+    if document_corners is not None:
       logger.info(
-        "OpenCV did not confidently detect a document. "
-        "Falling back to OpenAI image geometry detection."
+        "Applying detected form-boundary perspective correction "
+        "(score=%.3f)",
+        document_score,
+      )
+
+      image = self._perspective_crop(
+        image,
+        document_corners,
+      )
+    else:
+      logger.info(
+        "Could not confidently detect form boundary; "
+        "leaving original perspective unchanged."
       )
 
       vision_result = detect_document_with_vision(
