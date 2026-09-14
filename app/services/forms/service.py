@@ -2457,6 +2457,26 @@ space.
 
 Return the image edits.
 
+Some field values are not sourced directly from Kenchiku entity data,
+but are instead legitimately DERIVED per the REASONABLE FORM-DERIVED
+VALUES rules above — for example, today's date for a form
+creation/preparation field, or an age calculated from a known date of
+birth. These derived values are a normal, sufficient basis for an
+image_edit, exactly like a value pulled directly from entity data.
+
+When you identify the location of a field whose value should be filled
+using a REASONABLE FORM-DERIVED VALUES rule, you MUST still produce a
+normal image_edit for it. Do not treat it as unresolved or place it in
+missing_data merely because it lacks a corresponding Kenchiku entity
+value — a value permitted under REASONABLE FORM-DERIVED VALUES is
+sufficient evidence to fill the field.
+
+This does NOT extend to inventing or guessing genuine factual data
+(names, addresses, phone numbers, qualifications, historical dates,
+etc.) that the REASONABLE FORM-DERIVED VALUES rules do not explicitly
+permit. Only use this exception for values that section actually
+allows.
+
 Each image edit must contain:
 
 - "filename": the original image filename
