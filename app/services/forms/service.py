@@ -134,6 +134,46 @@ class FormJobService:
           output_dir=cleaned_dir,
         )
 
+        image_input_files = [
+          input_file
+          for input_file in input_files
+          if input_file.suffix.lower()
+          in {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".gif",
+          }
+        ]
+
+        for input_file in image_input_files:
+
+          rotation_degrees = self._detect_image_orientation(
+            input_file,
+          )
+
+          if rotation_degrees != 0:
+
+            logger.info(
+              "Rotating %s by %d° clockwise before running "
+              "the form-filling agent",
+              input_file.name,
+              rotation_degrees,
+            )
+
+            self._rotate_image_for_form_editing(
+              input_file=input_file,
+              rotation_degrees=rotation_degrees,
+            )
+
+          else:
+
+            logger.info(
+              "No rotation needed for %s",
+              input_file.name,
+            )
+
         prompt = await self._build_prompt(
           job,
           input_files,
@@ -173,12 +213,6 @@ class FormJobService:
         ]
 
         if image_input_files:
-
-          image_orientation = agent_output.get(
-            "image_orientation",
-            {},
-          )
-
           image_edits = agent_output.get(
             "image_edits",
             [],
@@ -190,70 +224,6 @@ class FormJobService:
           )
 
           for input_file in image_input_files:
-
-            orientation = image_orientation.get(
-              input_file.name,
-              {},
-            )
-
-            rotation_degrees = orientation.get(
-              "rotation_degrees",
-              0,
-            )
-
-            try:
-              rotation_degrees = int(
-                rotation_degrees,
-              )
-            except (
-              TypeError,
-              ValueError,
-            ):
-              logger.warning(
-                "Invalid rotation_degrees for %s: %r. "
-                "Using 0.",
-                input_file.name,
-                rotation_degrees,
-              )
-
-              rotation_degrees = 0
-
-            if rotation_degrees not in {
-              0,
-              90,
-              180,
-              270,
-            }:
-              logger.warning(
-                "Unsupported rotation_degrees for %s: %r. "
-                "Using 0.",
-                input_file.name,
-                rotation_degrees,
-              )
-
-              rotation_degrees = 0
-
-            if rotation_degrees != 0:
-
-              logger.info(
-                "OpenAI requested %d° clockwise rotation "
-                "for image %s",
-                rotation_degrees,
-                input_file.name,
-              )
-
-              self._rotate_image_for_form_editing(
-                input_file=input_file,
-                rotation_degrees=rotation_degrees,
-              )
-
-            else:
-
-              logger.info(
-                "OpenAI determined no rotation is required "
-                "for image %s",
-                input_file.name,
-              )
 
             self._apply_image_edits(
               input_file=input_file,
@@ -2029,6 +1999,146 @@ If you cannot confidently determine the boundary, return:
       "========== FORM IMAGE CLEAN END =========="
     )
 
+  def _detect_image_orientation(
+    self,
+    input_file: Path,
+  ) -> int:
+    """
+    Determine the clockwise rotation (0/90/180/270) needed to make
+    the form content in `input_file` naturally readable.
+
+    This runs BEFORE the main form-filling agent call and BEFORE any
+    coordinates are generated, so the agent only ever reasons about
+    an image already in its final orientation.
+    """
+    image = cv2.imread(str(input_file))
+
+    if image is None:
+      logger.warning(
+        "Could not read image for orientation detection: %s",
+        input_file,
+      )
+      return 0
+
+    success, encoded = cv2.imencode(
+      ".jpg",
+      image,
+      [cv2.IMWRITE_JPEG_QUALITY, 90],
+    )
+
+    if not success:
+      logger.warning(
+        "Orientation detection: JPEG encoding failed for %s",
+        input_file,
+      )
+      return 0
+
+    image_base64 = base64.b64encode(encoded.tobytes()).decode("utf-8")
+
+    try:
+      response = self.openai.responses.create(
+        model="gpt-5.6-luna",
+        input=[
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": """
+  Look at this photograph of a construction form.
+
+  Determine the clockwise rotation required to make the form's text
+  and table structure naturally readable (text reads left-to-right,
+  top-to-bottom; table rows run horizontally).
+
+  Base this on the actual printed content: Japanese/English text
+  direction, table orientation, headers, field labels — NOT on
+  whether the image itself is portrait or landscape. A portrait
+  photo can contain a landscape form rotated 90 degrees, and vice
+  versa.
+
+  Return ONLY valid JSON in this exact format:
+
+  {
+    "rotation_degrees": 0
+  }
+
+  rotation_degrees must be one of: 0, 90, 180, 270.
+
+  0   = already correctly oriented
+  90  = rotate 90 degrees clockwise to be readable
+  180 = rotate 180 degrees
+  270 = rotate 270 degrees clockwise (i.e. 90 counter-clockwise)
+  """,
+              },
+              {
+                "type": "input_image",
+                "image_url": (
+                  "data:image/jpeg;base64," + image_base64
+                ),
+              },
+            ],
+          }
+        ],
+      )
+
+      output_text = getattr(response, "output_text", "")
+
+      if not output_text:
+        logger.warning(
+          "Orientation detection: empty response for %s",
+          input_file,
+        )
+        return 0
+
+      cleaned_text = output_text.strip()
+
+      if cleaned_text.startswith("```"):
+        cleaned_text = re.sub(
+          r"^```(?:json)?\s*",
+          "",
+          cleaned_text,
+          flags=re.IGNORECASE,
+        )
+        cleaned_text = re.sub(r"\s*```$", "", cleaned_text)
+
+      result = json.loads(cleaned_text)
+
+      rotation_degrees = result.get("rotation_degrees", 0)
+
+      try:
+        rotation_degrees = int(rotation_degrees)
+      except (TypeError, ValueError):
+        logger.warning(
+          "Orientation detection: invalid rotation_degrees %r for %s",
+          rotation_degrees,
+          input_file,
+        )
+        return 0
+
+      if rotation_degrees not in {0, 90, 180, 270}:
+        logger.warning(
+          "Orientation detection: unsupported rotation_degrees %r for %s",
+          rotation_degrees,
+          input_file,
+        )
+        return 0
+
+      logger.info(
+        "Orientation detection result for %s: %d degrees",
+        input_file.name,
+        rotation_degrees,
+      )
+
+      return rotation_degrees
+
+    except Exception:
+      logger.exception(
+        "Orientation detection failed for %s",
+        input_file,
+      )
+      return 0
+
   def _rotate_image_for_form_editing(
     self,
     input_file: Path,
@@ -2163,10 +2273,25 @@ If you cannot confidently determine the boundary, return:
           ".webp",
           ".gif",
         }:
-
           logger.info(
             "Adding image to OpenAI vision input: %s",
             input_file.name,
+          )
+
+          with Image.open(input_file) as pil_image:
+            image_width, image_height = pil_image.size
+
+          content.append(
+            {
+              "type": "input_text",
+              "text": (
+                f"The following image is {input_file.name}. "
+                f"It is already correctly oriented — do not "
+                f"assume any further rotation. "
+                f"Image dimensions: width={image_width}, "
+                f"height={image_height}."
+              ),
+            }
           )
 
           content.append(
@@ -2205,71 +2330,16 @@ IMPORTANT: One or more uploaded files are images.
 For image forms, DO NOT attempt to create, modify, or save an output
 image using Code Interpreter.
 
-Before determining any text coordinates, you MUST first determine
-whether each image is correctly oriented for reading and form-field
-placement.
-
-The uploaded photograph may contain a form that has been rotated
-90 degrees relative to the image.
-
-For each image, inspect the ACTUAL FORM CONTENT, including:
-
-- Japanese text direction
-- English text direction
-- form labels
-- table structure
-- field labels
-- headings
-- checkboxes
-- signatures
-- dates
-- other visually meaningful form elements
-
-Do NOT determine orientation solely from whether the image dimensions
-are portrait or landscape.
-
-A portrait image may contain a landscape form rotated 90 degrees.
-Likewise, a landscape image may contain a portrait form rotated 90
-degrees.
-
-Determine the orientation in which the form content is naturally
-readable and the form fields should be positioned.
-
-For every image, return an "image_orientation" object containing:
-
-- "needs_rotation": boolean
-- "rotation_degrees": one of 0, 90, 180, or 270
-
-The rotation_degrees value specifies the clockwise rotation that the
-APPLICATION must apply to the uploaded image BEFORE placing any text.
-
-Use:
-
-0   = image is already correctly oriented
-90  = rotate clockwise 90 degrees
-180 = rotate clockwise 180 degrees
-270 = rotate clockwise 270 degrees
-
-If the image is already correctly oriented, return:
-
-"needs_rotation": false
-"rotation_degrees": 0
-
-If the form is sideways, return the rotation required to make the
-form naturally readable.
-
 IMPORTANT:
 
-Make the orientation determination BEFORE determining any x/y
-coordinates.
+The uploaded image is already in its final, correctly-oriented
+form. Do not attempt to determine or apply any rotation.
 
-All image-edit coordinates MUST correspond to the image AFTER the
-specified rotation has been applied.
+All image-edit coordinates MUST correspond exactly to the image as
+shown to you, using the stated width/height as your coordinate
+space.
 
-Do not return coordinates for the unrotated image when
-rotation_degrees is non-zero.
-
-After determining orientation, return the image edits.
+Return the image edits.
 
 Each image edit must contain:
 
@@ -2279,9 +2349,6 @@ Each image edit must contain:
 - "y": top coordinate in pixels
 - "width": width of the field in pixels
 - "height": height of the field in pixels
-
-Coordinates must refer to the image AFTER the application applies
-rotation_degrees.
 
 Do not resize the coordinate system.
 
@@ -2298,12 +2365,11 @@ identify the correct field.
 If requested information cannot be located confidently, put that
 information in "missing_data" instead.
 
-For multiple images, keep orientation information and edits
-associated with the correct filename.
+For multiple images, keep edits associated with the correct
+filename.
 
-The image itself will be rotated and edited later by the application.
-Your job is to determine the required rotation and precise placement
-coordinates.
+The image itself will be edited later by the application, using the
+coordinates you provide.
 
 Your response MUST be valid JSON with this structure:
 
@@ -2311,12 +2377,6 @@ Your response MUST be valid JSON with this structure:
   "summary": "...",
   "completed": true,
   "files": [],
-  "image_orientation": {
-    "filename.jpg": {
-      "needs_rotation": false,
-      "rotation_degrees": 0,
-    }
-  },
   "image_edits": [
     {
       "filename": "filename.jpg",
