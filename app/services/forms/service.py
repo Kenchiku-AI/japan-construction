@@ -3155,6 +3155,80 @@ PDF.
         original_height - y,
       )
 
+      def wrap_text_to_width(
+        text_value: str,
+        font_obj: ImageFont.FreeTypeFont,
+        max_line_width: float,
+      ) -> list[str]:
+        """
+        Greedily wrap text_value into lines that each fit within
+        max_line_width, breaking on whitespace when possible and
+        falling back to character-by-character breaks for scripts
+        (like Japanese) that don't use spaces.
+        """
+        if not text_value:
+          return [""]
+
+        has_spaces = " " in text_value
+
+        units = text_value.split(" ") if has_spaces else list(text_value)
+        separator = " " if has_spaces else ""
+
+        lines = []
+        current_line = ""
+
+        for unit in units:
+          candidate = (
+            current_line + separator + unit
+            if current_line
+            else unit
+          )
+
+          candidate_bbox = draw.textbbox(
+            (0, 0),
+            candidate,
+            font=font_obj,
+          )
+
+          candidate_width = candidate_bbox[2] - candidate_bbox[0]
+
+          if candidate_width <= max_line_width or not current_line:
+            current_line = candidate
+          else:
+            lines.append(current_line)
+            current_line = unit
+
+        if current_line:
+          lines.append(current_line)
+
+        return lines
+
+      def measure_wrapped_block(
+        text_value: str,
+        font_obj: ImageFont.FreeTypeFont,
+        max_line_width: float,
+      ) -> tuple[list[str], float, float]:
+        lines = wrap_text_to_width(
+          text_value,
+          font_obj,
+          max_line_width,
+        )
+
+        line_height = font_obj.getbbox("Ag")[3] - font_obj.getbbox("Ag")[1]
+        line_spacing = line_height * 1.15
+
+        block_width = max(
+          (
+            draw.textbbox((0, 0), line, font=font_obj)[2]
+            - draw.textbbox((0, 0), line, font=font_obj)[0]
+          )
+          for line in lines
+        )
+
+        block_height = line_spacing * len(lines)
+
+        return lines, block_width, block_height
+
       if font_path:
         font_size = max(
           8,
@@ -3163,6 +3237,8 @@ PDF.
           ),
         )
 
+        lines = [str(text)]
+
         while font_size >= 8:
 
           font = ImageFont.truetype(
@@ -3170,24 +3246,13 @@ PDF.
             font_size,
           )
 
-          bbox = draw.textbbox(
-            (0, 0),
+          lines, block_width, block_height = measure_wrapped_block(
             str(text),
-            font=font,
+            font,
+            max_width,
           )
 
-          text_width = (
-            bbox[2] - bbox[0]
-          )
-
-          text_height = (
-            bbox[3] - bbox[1]
-          )
-
-          if (
-            text_width <= max_width
-            and text_height <= max_height
-          ):
+          if block_width <= max_width and block_height <= max_height:
             break
 
           font_size -= 1
@@ -3198,72 +3263,78 @@ PDF.
             8,
           )
 
+          lines, block_width, block_height = measure_wrapped_block(
+            str(text),
+            font,
+            max_width,
+          )
+
       else:
         font = ImageFont.load_default()
 
-        bbox = draw.textbbox(
-          (0, 0),
+        lines, block_width, block_height = measure_wrapped_block(
           str(text),
-          font=font,
+          font,
+          max_width,
         )
-
-        text_width = (
-          bbox[2] - bbox[0]
-        )
-
-        text_height = (
-          bbox[3] - bbox[1]
-        )
-
-      bbox = draw.textbbox(
-        (0, 0),
-        str(text),
-        font=font,
-      )
-
-      text_width = (
-        bbox[2] - bbox[0]
-      )
-
-      text_height = (
-        bbox[3] - bbox[1]
-      )
-
-      text_x = (
-        x
-        + max(
-          0,
-          (max_width - text_width) / 2,
-        )
-      )
-
-      text_y = (
-        y
-        + max(
-          0,
-          (max_height - text_height) / 2,
-        )
-        - bbox[1]
-      )
 
       logger.info(
-        "Applying image edit: text=%r x=%s y=%s width=%s height=%s",
+        "Applying image edit: text=%r x=%s y=%s width=%s height=%s lines=%d",
         text,
         x,
         y,
         width,
         height,
+        len(lines),
       )
 
-      draw.text(
-        (
-          text_x,
-          text_y,
-        ),
-        str(text),
-        font=font,
-        fill=(0, 0, 0),
+      line_bbox = font.getbbox("Ag")
+      line_height = line_bbox[3] - line_bbox[1]
+      line_spacing = line_height * 1.15
+
+      total_text_height = line_spacing * len(lines)
+
+      start_y = (
+        y
+        + max(
+          0,
+          (max_height - total_text_height) / 2,
+        )
       )
+
+      for line_index, line in enumerate(lines):
+
+        line_bbox = draw.textbbox(
+          (0, 0),
+          line,
+          font=font,
+        )
+
+        line_width = line_bbox[2] - line_bbox[0]
+
+        line_x = (
+          x
+          + max(
+            0,
+            (max_width - line_width) / 2,
+          )
+        )
+
+        line_y = (
+          start_y
+          + line_index * line_spacing
+          - line_bbox[1]
+        )
+
+        draw.text(
+          (
+            line_x,
+            line_y,
+          ),
+          line,
+          font=font,
+          fill=(0, 0, 0),
+        )
 
       applied_count += 1
 
