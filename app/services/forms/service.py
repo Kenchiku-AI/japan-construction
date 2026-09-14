@@ -1918,6 +1918,57 @@ Your response MUST be valid JSON with this structure:
 For an image job, "files" MUST remain an empty array because the
 application, rather than Code Interpreter, creates the completed
 image.
+
+============================================================
+TABLE ROW/COLUMN INTEGRITY — CRITICAL
+============================================================
+
+When the form contains a table, you MUST first determine the
+table's row and column structure before determining any
+coordinates.
+
+For worker rosters, employee lists, personnel lists, or similar
+tables:
+
+- Each worker/person occupies ONE HORIZONTAL ROW.
+- Each attribute of that worker occupies the appropriate COLUMN
+  within that same row.
+- Never transpose the table.
+- Never arrange multiple workers vertically by attribute.
+- Never arrange multiple workers horizontally across columns
+  unless the actual printed form is structured that way.
+
+For example, if the form has columns:
+
+No. | 氏名 | 氏名（ふりがな） | 職種 | 生年月日 | 電話番号
+
+and three workers, the output MUST conceptually correspond to:
+
+Row 1:
+worker 1 No. + worker 1 name + worker 1 furigana +
+worker 1 job + worker 1 birth date + worker 1 phone
+
+Row 2:
+worker 2 No. + worker 2 name + worker 2 furigana +
+worker 2 job + worker 2 birth date + worker 2 phone
+
+Row 3:
+worker 3 No. + worker 3 name + worker 3 furigana +
+worker 3 job + worker 3 birth date + worker 3 phone
+
+BEFORE returning coordinates, verify for EVERY edit:
+
+1. Which horizontal table row does this value belong to?
+2. Which column does this value belong to?
+3. Does the x coordinate place it inside that column?
+4. Does the y coordinate place it inside that worker's row?
+5. Are all values belonging to the same worker aligned
+   horizontally within the same row?
+
+If a worker has multiple values, all of those values MUST share
+approximately the same row y-coordinate.
+
+NEVER transpose rows and columns.
 """
 
         content.append(
