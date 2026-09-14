@@ -5,7 +5,10 @@ import tempfile
 from pathlib import Path
 import cv2
 import numpy as np
-
+import math
+import re
+import shutil
+from typing import Any
 from openai import OpenAI
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
@@ -632,18 +635,19 @@ class FormJobService:
     )
 
     return cleaned_files
+  
 
+  @staticmethod
   def _order_quad_points(
-    self,
     points: np.ndarray,
   ) -> np.ndarray:
     """
-    Return four points in:
+    Return quadrilateral points in this order:
+
       top-left
       top-right
       bottom-right
       bottom-left
-    order.
     """
     points = np.asarray(
       points,
@@ -652,119 +656,81 @@ class FormJobService:
 
     if points.shape != (4, 2):
       raise ValueError(
-        f"Expected 4 points, got shape={points.shape}"
+        f"Expected 4 points, got shape {points.shape}"
       )
 
-    center = points.mean(
-      axis=0
+    ordered = np.zeros(
+      (4, 2),
+      dtype=np.float32,
     )
 
-    angles = np.arctan2(
-      points[:, 1] - center[1],
-      points[:, 0] - center[0],
-    )
+    sums = points.sum(axis=1)
+    diffs = np.diff(
+      points,
+      axis=1,
+    ).reshape(-1)
 
-    ordered = points[
-      np.argsort(angles)
-    ]
+    ordered[0] = points[np.argmin(sums)]
+    ordered[2] = points[np.argmax(sums)]
+    ordered[1] = points[np.argmin(diffs)]
+    ordered[3] = points[np.argmax(diffs)]
 
-    # Rotate so the top-left point is first.
-    start = np.argmin(
-      ordered[:, 0] + ordered[:, 1]
-    )
+    return ordered
 
-    ordered = np.roll(
-      ordered,
-      -start,
-      axis=0,
-    )
-
-    # Make sure the order is clockwise.
-    cross = (
-      (ordered[1, 0] - ordered[0, 0])
-      * (ordered[2, 1] - ordered[1, 1])
-      - (ordered[1, 1] - ordered[0, 1])
-      * (ordered[2, 0] - ordered[1, 0])
-    )
-
-    if cross < 0:
-      ordered = np.array(
-        [
-          ordered[0],
-          ordered[3],
-          ordered[2],
-          ordered[1],
-        ],
-        dtype=np.float32,
-      )
-
-    return ordered.astype(
-      np.float32
-    )
-
+  @staticmethod
   def _line_from_points(
-    self,
     p1: np.ndarray,
     p2: np.ndarray,
-  ) -> np.ndarray:
+  ) -> tuple[float, float, float] | None:
     """
-    Return normalized line coefficients:
+    Return the infinite line through p1 and p2 as:
+
       ax + by + c = 0
+
+    Returns None for coincident points.
     """
-    x1, y1 = p1
-    x2, y2 = p2
+    x1, y1 = float(p1[0]), float(p1[1])
+    x2, y2 = float(p2[0]), float(p2[1])
 
     a = y1 - y2
     b = x2 - x1
     c = x1 * y2 - x2 * y1
 
-    norm = np.hypot(
-      a,
-      b,
-    )
+    norm = math.hypot(a, b)
 
     if norm < 1e-8:
-      raise ValueError(
-        "Degenerate line"
-      )
+      return None
 
-    return np.array(
-      [
-        a / norm,
-        b / norm,
-        c / norm,
-      ],
-      dtype=np.float64,
+    return (
+      a / norm,
+      b / norm,
+      c / norm,
     )
 
+  @staticmethod
   def _intersect_lines(
-    self,
-    line1: np.ndarray,
-    line2: np.ndarray,
+    line1: tuple[float, float, float],
+    line2: tuple[float, float, float],
   ) -> np.ndarray | None:
     """
-    Intersect two lines represented as:
+    Intersect two infinite lines represented as:
+
       ax + by + c = 0
     """
     a1, b1, c1 = line1
     a2, b2, c2 = line2
 
-    denominator = (
-      a1 * b2
-      - a2 * b1
-    )
+    denominator = a1 * b2 - a2 * b1
 
     if abs(denominator) < 1e-8:
       return None
 
     x = (
-      b1 * c2
-      - b2 * c1
+      b1 * c2 - b2 * c1
     ) / denominator
 
     y = (
-      c1 * a2
-      - c2 * a1
+      c1 * a2 - c2 * a1
     ) / denominator
 
     return np.array(
@@ -772,40 +738,1296 @@ class FormJobService:
       dtype=np.float32,
     )
 
+  @staticmethod
   def _line_angle(
-    self,
     p1: np.ndarray,
     p2: np.ndarray,
   ) -> float:
     """
-    Return line angle in radians in [0, pi).
+    Return the line angle in degrees.
     """
-    angle = np.arctan2(
-      p2[1] - p1[1],
-      p2[0] - p1[0],
+    dx = float(p2[0] - p1[0])
+    dy = float(p2[1] - p1[1])
+
+    return math.degrees(
+      math.atan2(dy, dx)
     )
 
-    if angle < 0:
-      angle += np.pi
-
-    return angle
-
+  @staticmethod
   def _angle_difference(
-    self,
-    a: float,
-    b: float,
+    angle1: float,
+    angle2: float,
   ) -> float:
     """
-    Smallest difference between two unoriented line angles.
+    Return the smallest difference between two
+    line angles, treating lines 180 degrees apart
+    as equivalent.
     """
-    diff = abs(a - b) % np.pi
-
-    return min(
-      diff,
-      np.pi - diff,
+    difference = abs(
+      ((angle1 - angle2 + 90.0) % 180.0)
+      - 90.0
     )
 
+    return difference
 
+  def _detect_form_boundary_with_lines(
+    self,
+    image: np.ndarray,
+  ) -> tuple[np.ndarray | None, float]:
+    """
+    Detect the outer printed form/table boundary using
+    horizontal and vertical printed lines.
+
+    This intentionally does NOT require the physical paper
+    corners to be visible. For photographed construction
+    forms, the printed form/table boundary is often a much
+    more reliable target.
+
+    Returns:
+
+      (corners, confidence)
+
+    where corners are ordered:
+
+      top-left
+      top-right
+      bottom-right
+      bottom-left
+    """
+    if image is None or image.size == 0:
+      return None, 0.0
+
+    original_height, original_width = image.shape[:2]
+
+    if original_width < 100 or original_height < 100:
+      return None, 0.0
+
+    # Work on a smaller copy for faster and more stable line detection.
+    max_dimension = 1600.0
+    scale = min(
+      1.0,
+      max_dimension / max(
+        original_width,
+        original_height,
+      ),
+    )
+
+    if scale < 1.0:
+      small = cv2.resize(
+        image,
+        None,
+        fx=scale,
+        fy=scale,
+        interpolation=cv2.INTER_AREA,
+      )
+    else:
+      small = image.copy()
+
+    gray = cv2.cvtColor(
+      small,
+      cv2.COLOR_BGR2GRAY,
+    )
+
+    # Normalize uneven lighting from a photograph.
+    background = cv2.GaussianBlur(
+      gray,
+      (0, 0),
+      21,
+    )
+
+    normalized = cv2.divide(
+      gray,
+      background,
+      scale=255,
+    )
+
+    # Two complementary edge sources.
+    edges = cv2.Canny(
+      normalized,
+      50,
+      150,
+      apertureSize=3,
+    )
+
+    adaptive = cv2.adaptiveThreshold(
+      normalized,
+      255,
+      cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+      cv2.THRESH_BINARY_INV,
+      31,
+      9,
+    )
+
+    combined = cv2.bitwise_or(
+      edges,
+      adaptive,
+    )
+
+    # Keep long horizontal and vertical form lines.
+    horizontal_kernel_length = max(
+      25,
+      int(small.shape[1] * 0.10),
+    )
+
+    vertical_kernel_length = max(
+      25,
+      int(small.shape[0] * 0.10),
+    )
+
+    horizontal_kernel = cv2.getStructuringElement(
+      cv2.MORPH_RECT,
+      (
+        horizontal_kernel_length,
+        1,
+      ),
+    )
+
+    vertical_kernel = cv2.getStructuringElement(
+      cv2.MORPH_RECT,
+      (
+        1,
+        vertical_kernel_length,
+      ),
+    )
+
+    horizontal = cv2.morphologyEx(
+      combined,
+      cv2.MORPH_OPEN,
+      horizontal_kernel,
+    )
+
+    vertical = cv2.morphologyEx(
+      combined,
+      cv2.MORPH_OPEN,
+      vertical_kernel,
+    )
+
+    line_image = cv2.bitwise_or(
+      horizontal,
+      vertical,
+    )
+
+    # Close small gaps in photographed lines.
+    line_image = cv2.morphologyEx(
+      line_image,
+      cv2.MORPH_CLOSE,
+      np.ones(
+        (3, 3),
+        dtype=np.uint8,
+      ),
+    )
+
+    hough_threshold = max(
+      40,
+      int(min(
+        small.shape[:2]
+      ) * 0.10),
+    )
+
+    min_line_length = max(
+      50,
+      int(min(
+        small.shape[:2]
+      ) * 0.15),
+    )
+
+    max_line_gap = max(
+      10,
+      int(min(
+        small.shape[:2]
+      ) * 0.03),
+    )
+
+    lines = cv2.HoughLinesP(
+      line_image,
+      rho=1,
+      theta=np.pi / 180,
+      threshold=hough_threshold,
+      minLineLength=min_line_length,
+      maxLineGap=max_line_gap,
+    )
+
+    if lines is None:
+      logger.info(
+        "Form boundary detection: no Hough lines found"
+      )
+      return None, 0.0
+
+    horizontal_candidates: list[
+      tuple[np.ndarray, np.ndarray, float, float]
+    ] = []
+
+    vertical_candidates: list[
+      tuple[np.ndarray, np.ndarray, float, float]
+    ] = []
+
+    for raw_line in lines[:, 0]:
+      x1, y1, x2, y2 = [
+        float(value)
+        for value in raw_line
+      ]
+
+      p1 = np.array(
+        [x1, y1],
+        dtype=np.float32,
+      )
+
+      p2 = np.array(
+        [x2, y2],
+        dtype=np.float32,
+      )
+
+      length = float(
+        np.linalg.norm(p2 - p1)
+      )
+
+      if length < min_line_length:
+        continue
+
+      angle = self._line_angle(
+        p1,
+        p2,
+      )
+
+      # Normalize line angle to [-90, 90).
+      while angle >= 90.0:
+        angle -= 180.0
+
+      while angle < -90.0:
+        angle += 180.0
+
+      horizontal_difference = min(
+        abs(angle),
+        abs(abs(angle) - 180.0),
+      )
+
+      vertical_difference = abs(
+        abs(angle) - 90.0
+      )
+
+      if horizontal_difference <= 15.0:
+        horizontal_candidates.append(
+          (
+            p1,
+            p2,
+            length,
+            angle,
+          )
+        )
+
+      elif vertical_difference <= 15.0:
+        vertical_candidates.append(
+          (
+            p1,
+            p2,
+            length,
+            angle,
+          )
+        )
+
+    if (
+      len(horizontal_candidates) < 2
+      or len(vertical_candidates) < 2
+    ):
+      logger.info(
+        "Form boundary detection: insufficient line families "
+        "horizontal=%d vertical=%d",
+        len(horizontal_candidates),
+        len(vertical_candidates),
+      )
+      return None, 0.0
+
+    def select_outer_pair(
+      candidates: list[
+        tuple[np.ndarray, np.ndarray, float, float]
+      ],
+      horizontal_axis: bool,
+    ) -> tuple[
+      tuple[
+        tuple[np.ndarray, np.ndarray, float, float],
+        tuple[np.ndarray, np.ndarray, float, float],
+      ] | None,
+      float,
+    ]:
+      best_pair = None
+      best_score = -1.0
+
+      # Compare the strongest reasonably separated lines.
+      candidates = sorted(
+        candidates,
+        key=lambda item: item[2],
+        reverse=True,
+      )[:80]
+
+      for index, first in enumerate(candidates):
+        for second in candidates[index + 1:]:
+          p1a, p1b, length1, angle1 = first
+          p2a, p2b, length2, angle2 = second
+
+          if self._angle_difference(
+            angle1,
+            angle2,
+          ) > 8.0:
+            continue
+
+          if horizontal_axis:
+            position1 = (
+              float(p1a[1] + p1b[1])
+              / 2.0
+            )
+            position2 = (
+              float(p2a[1] + p2b[1])
+              / 2.0
+            )
+          else:
+            position1 = (
+              float(p1a[0] + p1b[0])
+              / 2.0
+            )
+            position2 = (
+              float(p2a[0] + p2b[0])
+              / 2.0
+            )
+
+          separation = abs(
+            position1 - position2
+          )
+
+          minimum_separation = (
+            min(small.shape[:2]) * 0.20
+          )
+
+          if separation < minimum_separation:
+            continue
+
+          score = (
+            min(length1, length2)
+            * separation
+          )
+
+          if score > best_score:
+            best_score = score
+            best_pair = (
+              first,
+              second,
+            )
+
+      return best_pair, best_score
+
+    horizontal_pair, horizontal_score = (
+      select_outer_pair(
+        horizontal_candidates,
+        horizontal_axis=True,
+      )
+    )
+
+    vertical_pair, vertical_score = (
+      select_outer_pair(
+        vertical_candidates,
+        horizontal_axis=False,
+      )
+    )
+
+    if (
+      horizontal_pair is None
+      or vertical_pair is None
+    ):
+      logger.info(
+        "Form boundary detection: could not find "
+        "two separated horizontal/vertical boundaries"
+      )
+      return None, 0.0
+
+    top_line, bottom_line = horizontal_pair
+    left_line, right_line = vertical_pair
+
+    top = self._line_from_points(
+      top_line[0],
+      top_line[1],
+    )
+
+    bottom = self._line_from_points(
+      bottom_line[0],
+      bottom_line[1],
+    )
+
+    left = self._line_from_points(
+      left_line[0],
+      left_line[1],
+    )
+
+    right = self._line_from_points(
+      right_line[0],
+      right_line[1],
+    )
+
+    if any(
+      line is None
+      for line in (
+        top,
+        bottom,
+        left,
+        right,
+      )
+    ):
+      return None, 0.0
+
+    top_left = self._intersect_lines(
+      top,
+      left,
+    )
+
+    top_right = self._intersect_lines(
+      top,
+      right,
+    )
+
+    bottom_right = self._intersect_lines(
+      bottom,
+      right,
+    )
+
+    bottom_left = self._intersect_lines(
+      bottom,
+      left,
+    )
+
+    if any(
+      point is None
+      for point in (
+        top_left,
+        top_right,
+        bottom_right,
+        bottom_left,
+      )
+    ):
+      return None, 0.0
+
+    corners = np.array(
+      [
+        top_left,
+        top_right,
+        bottom_right,
+        bottom_left,
+      ],
+      dtype=np.float32,
+    )
+
+    # Convert from working-image coordinates back to original image.
+    if scale != 1.0:
+      corners /= scale
+
+    corners = self._order_quad_points(
+      corners
+    )
+
+    # Validate that the quadrilateral is inside the image.
+    margin_x = original_width * 0.10
+    margin_y = original_height * 0.10
+
+    if np.any(
+      corners[:, 0] < -margin_x
+    ) or np.any(
+      corners[:, 0] > original_width + margin_x
+    ):
+      logger.info(
+        "Form boundary detection: invalid X coordinates: %s",
+        corners.tolist(),
+      )
+      return None, 0.0
+
+    if np.any(
+      corners[:, 1] < -margin_y
+    ) or np.any(
+      corners[:, 1] > original_height + margin_y
+    ):
+      logger.info(
+        "Form boundary detection: invalid Y coordinates: %s",
+        corners.tolist(),
+      )
+      return None, 0.0
+
+    area = abs(
+      cv2.contourArea(
+        corners.reshape((-1, 1, 2))
+      )
+    )
+
+    image_area = (
+      original_width
+      * original_height
+    )
+
+    area_ratio = area / image_area
+
+    if area_ratio < 0.20:
+      logger.info(
+        "Form boundary detection: detected area too small: %.3f",
+        area_ratio,
+      )
+      return None, 0.0
+
+    top_width = np.linalg.norm(
+      corners[1] - corners[0]
+    )
+
+    bottom_width = np.linalg.norm(
+      corners[2] - corners[3]
+    )
+
+    left_height = np.linalg.norm(
+      corners[3] - corners[0]
+    )
+
+    right_height = np.linalg.norm(
+      corners[2] - corners[1]
+    )
+
+    widths = [
+      top_width,
+      bottom_width,
+    ]
+
+    heights = [
+      left_height,
+      right_height,
+    ]
+
+    if min(widths) < 100 or min(heights) < 100:
+      return None, 0.0
+
+    width_ratio = (
+      max(widths) / min(widths)
+    )
+
+    height_ratio = (
+      max(heights) / min(heights)
+    )
+
+    if width_ratio > 3.0 or height_ratio > 3.0:
+      logger.info(
+        "Form boundary detection: implausible quadrilateral "
+        "width_ratio=%.2f height_ratio=%.2f",
+        width_ratio,
+        height_ratio,
+      )
+      return None, 0.0
+
+    # Confidence combines how large the detected boundary is
+    # and how strong/separated the source lines were.
+    normalized_horizontal_score = min(
+      1.0,
+      horizontal_score
+      / (
+        original_width
+        * original_height
+        * 0.10
+      ),
+    )
+
+    normalized_vertical_score = min(
+      1.0,
+      vertical_score
+      / (
+        original_width
+        * original_height
+        * 0.10
+      ),
+    )
+
+    area_confidence = min(
+      1.0,
+      area_ratio / 0.50,
+    )
+
+    shape_confidence = 1.0 / max(
+      1.0,
+      (width_ratio - 1.0) * 2.0 + 1.0,
+    )
+
+    confidence = (
+      0.35 * normalized_horizontal_score
+      + 0.35 * normalized_vertical_score
+      + 0.20 * area_confidence
+      + 0.10 * shape_confidence
+    )
+
+    confidence = float(
+      max(
+        0.0,
+        min(1.0, confidence),
+      )
+    )
+
+    logger.info(
+      "Form boundary detected: corners=%s "
+      "area_ratio=%.3f confidence=%.3f",
+      corners.tolist(),
+      area_ratio,
+      confidence,
+    )
+
+    return corners, confidence
+
+  def _perspective_crop(
+    self,
+    image: np.ndarray,
+    corners: np.ndarray,
+  ) -> np.ndarray:
+    """
+    Perspective-correct the detected form boundary.
+
+    The input corners must be ordered:
+
+      top-left
+      top-right
+      bottom-right
+      bottom-left
+    """
+    corners = self._order_quad_points(
+      corners
+    )
+
+    top_width = np.linalg.norm(
+      corners[1] - corners[0]
+    )
+
+    bottom_width = np.linalg.norm(
+      corners[2] - corners[3]
+    )
+
+    left_height = np.linalg.norm(
+      corners[3] - corners[0]
+    )
+
+    right_height = np.linalg.norm(
+      corners[2] - corners[1]
+    )
+
+    output_width = max(
+      1,
+      int(
+        round(
+          max(
+            top_width,
+            bottom_width,
+          )
+        )
+      ),
+    )
+
+    output_height = max(
+      1,
+      int(
+        round(
+          max(
+            left_height,
+            right_height,
+          )
+        )
+      ),
+    )
+
+    destination = np.array(
+      [
+        [0, 0],
+        [output_width - 1, 0],
+        [
+          output_width - 1,
+          output_height - 1,
+        ],
+        [
+          0,
+          output_height - 1,
+        ],
+      ],
+      dtype=np.float32,
+    )
+
+    transform = cv2.getPerspectiveTransform(
+      corners,
+      destination,
+    )
+
+    warped = cv2.warpPerspective(
+      image,
+      transform,
+      (
+        output_width,
+        output_height,
+      ),
+      flags=cv2.INTER_CUBIC,
+      borderMode=cv2.BORDER_REPLICATE,
+    )
+
+    logger.info(
+      "Perspective correction: "
+      "%dx%d -> %dx%d",
+      image.shape[1],
+      image.shape[0],
+      warped.shape[1],
+      warped.shape[0],
+    )
+
+    return warped
+
+  def _detect_document_with_vision(
+    self,
+    image: np.ndarray,
+    original_width: int,
+    original_height: int,
+  ) -> tuple[str, list[list[float]] | None]:
+    """
+    Vision fallback for cases where OpenCV cannot confidently
+    find the printed form boundary.
+
+    The requested corners are the visible printed form/table
+    boundary, NOT necessarily the physical paper corners.
+    """
+    try:
+      success, encoded = cv2.imencode(
+        ".jpg",
+        image,
+        [
+          cv2.IMWRITE_JPEG_QUALITY,
+          90,
+        ],
+      )
+
+      if not success:
+        logger.warning(
+          "Vision document detection: JPEG encoding failed"
+        )
+        return "camera_document", None
+
+      image_base64 = base64.b64encode(
+        encoded.tobytes()
+      ).decode("utf-8")
+
+      client = OpenAI()
+
+      response = client.responses.create(
+        model="gpt-5.6-luna",
+        input=[
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": f"""
+Analyze this construction form photograph.
+
+Determine whether this is:
+
+1. a photographed physical document/form
+2. a screenshot or digital image
+3. something else
+
+If it is a photographed physical form, identify the four
+corners of the VISIBLE PRINTED FORM/TABLE BOUNDARY.
+
+IMPORTANT:
+- Do NOT assume the physical paper corners are visible.
+- The paper may extend outside the photograph.
+- If the paper edges are clipped, use the outermost clear
+  printed form/table boundary.
+- The four corners must describe one coherent quadrilateral.
+- Do not transpose x and y.
+- x increases from left to right.
+- y increases from top to bottom.
+- Coordinates are based on the image dimensions below.
+
+Image dimensions:
+width = {original_width}
+height = {original_height}
+
+Return ONLY valid JSON in this exact format:
+
+{{
+  "image_type": "camera_document",
+  "corners": [
+    [x1, y1],
+    [x2, y2],
+    [x3, y3],
+    [x4, y4]
+  ]
+}}
+
+The corners must be ordered:
+top-left,
+top-right,
+bottom-right,
+bottom-left.
+
+For a screenshot/digital image where perspective correction
+is unnecessary, return:
+
+{{
+  "image_type": "screenshot",
+  "corners": null
+}}
+
+If you cannot confidently determine the boundary, return:
+
+{{
+  "image_type": "unknown",
+  "corners": null
+}}
+""",
+              },
+              {
+                "type": "input_image",
+                "image_url": (
+                  "data:image/jpeg;base64,"
+                  + image_base64
+                ),
+              },
+            ],
+          }
+        ],
+      )
+
+      output_text = getattr(
+        response,
+        "output_text",
+        "",
+      )
+
+      if not output_text:
+        logger.warning(
+          "Vision document detection: empty response"
+        )
+        return "camera_document", None
+
+      # Remove accidental markdown fences.
+      cleaned_text = output_text.strip()
+
+      if cleaned_text.startswith("```"):
+        cleaned_text = re.sub(
+          r"^```(?:json)?\s*",
+          "",
+          cleaned_text,
+          flags=re.IGNORECASE,
+        )
+
+        cleaned_text = re.sub(
+          r"\s*```$",
+          "",
+          cleaned_text,
+        )
+
+      result = json.loads(
+        cleaned_text
+      )
+
+      image_type = str(
+        result.get(
+          "image_type",
+          "camera_document",
+        )
+      ).lower()
+
+      corners = result.get(
+        "corners"
+      )
+
+      if not corners:
+        return image_type, None
+
+      if (
+        not isinstance(corners, list)
+        or len(corners) != 4
+      ):
+        logger.warning(
+          "Vision document detection: invalid corner count"
+        )
+        return image_type, None
+
+      parsed_corners = []
+
+      for point in corners:
+        if (
+          not isinstance(point, list)
+          or len(point) != 2
+        ):
+          logger.warning(
+            "Vision document detection: invalid point: %s",
+            point,
+          )
+          return image_type, None
+
+        x = float(point[0])
+        y = float(point[1])
+
+        parsed_corners.append(
+          [x, y]
+        )
+
+      return (
+        image_type,
+        parsed_corners,
+      )
+
+    except Exception:
+      logger.exception(
+        "Vision document boundary detection failed"
+      )
+      return "camera_document", None
+
+  def _clean_form_image(
+    self,
+    input_file: Path,
+    output_file: Path,
+  ) -> None:
+    """
+    Clean and perspective-correct a photographed construction form.
+
+    IMPORTANT:
+    Perspective correction happens at most once.
+    """
+    logger.info(
+      "========== FORM IMAGE CLEAN START =========="
+    )
+
+    logger.info(
+      "Input: %s",
+      input_file,
+    )
+
+    logger.info(
+      "Output: %s",
+      output_file,
+    )
+
+    image = cv2.imread(
+      str(input_file)
+    )
+
+    if image is None:
+      raise ValueError(
+        f"Could not read image: {input_file}"
+      )
+
+    original_height, original_width = (
+      image.shape[:2]
+    )
+
+    logger.info(
+      "Original image dimensions: %dx%d",
+      original_width,
+      original_height,
+    )
+
+    image_type = "camera_document"
+
+    # ---------------------------------------------------------
+    # 1. Try OpenCV first.
+    # ---------------------------------------------------------
+    document_corners, document_score = (
+      self._detect_form_boundary_with_lines(
+        image
+      )
+    )
+
+    logger.info(
+      "OpenCV form-boundary result: "
+      "corners=%s score=%.3f",
+      (
+        document_corners.tolist()
+        if document_corners is not None
+        else None
+      ),
+      document_score,
+    )
+
+    # ---------------------------------------------------------
+    # 2. Fall back to Vision if OpenCV failed.
+    # ---------------------------------------------------------
+    if document_corners is None:
+      image_type, vision_corners = (
+        self._detect_document_with_vision(
+          image,
+          original_width,
+          original_height,
+        )
+      )
+
+      logger.info(
+        "Vision form-boundary result: "
+        "image_type=%s corners=%s",
+        image_type,
+        vision_corners,
+      )
+
+      if vision_corners is not None:
+        try:
+          document_corners = (
+            np.array(
+              vision_corners,
+              dtype=np.float32,
+            )
+          )
+
+          if document_corners.shape != (4, 2):
+            logger.warning(
+              "Vision returned invalid corner shape: %s",
+              document_corners.shape,
+            )
+            document_corners = None
+          else:
+            document_corners = (
+              self._order_quad_points(
+                document_corners
+              )
+            )
+
+        except Exception:
+          logger.exception(
+            "Failed to parse Vision document corners"
+          )
+          document_corners = None
+
+    # ---------------------------------------------------------
+    # 3. Perspective correction.
+    #
+    # This is the ONLY place in this function where the
+    # perspective transform happens.
+    # ---------------------------------------------------------
+    if (
+      document_corners is not None
+      and image_type != "screenshot"
+    ):
+      logger.info(
+        "Applying perspective correction exactly once"
+      )
+
+      image = self._perspective_crop(
+        image,
+        document_corners,
+      )
+    else:
+      logger.info(
+        "Skipping perspective correction"
+      )
+
+    # ---------------------------------------------------------
+    # 4. Small residual deskew.
+    #
+    # This is NOT another perspective transformation.
+    # It only corrects a small remaining rotation.
+    # ---------------------------------------------------------
+    gray = cv2.cvtColor(
+      image,
+      cv2.COLOR_BGR2GRAY,
+    )
+
+    edges = cv2.Canny(
+      gray,
+      50,
+      150,
+      apertureSize=3,
+    )
+
+    lines = cv2.HoughLinesP(
+      edges,
+      rho=1,
+      theta=np.pi / 180,
+      threshold=max(
+        50,
+        int(min(image.shape[:2]) * 0.10),
+      ),
+      minLineLength=max(
+        50,
+        int(min(image.shape[:2]) * 0.20),
+      ),
+      maxLineGap=max(
+        10,
+        int(min(image.shape[:2]) * 0.03),
+      ),
+    )
+
+    if lines is not None:
+      near_horizontal_angles = []
+
+      for raw_line in lines[:, 0]:
+        x1, y1, x2, y2 = [
+          float(value)
+          for value in raw_line
+        ]
+
+        dx = x2 - x1
+        dy = y2 - y1
+
+        if abs(dx) < 1e-6:
+          continue
+
+        angle = math.degrees(
+          math.atan2(dy, dx)
+        )
+
+        while angle >= 90:
+          angle -= 180
+
+        while angle < -90:
+          angle += 180
+
+        if abs(angle) <= 10.0:
+          near_horizontal_angles.append(
+            angle
+          )
+
+      if near_horizontal_angles:
+        median_angle = float(
+          np.median(
+            near_horizontal_angles
+          )
+        )
+
+        if (
+          abs(median_angle) >= 0.25
+          and abs(median_angle) <= 10.0
+        ):
+          logger.info(
+            "Applying residual deskew: %.3f degrees",
+            median_angle,
+          )
+
+          height, width = image.shape[:2]
+
+          center = (
+            width / 2.0,
+            height / 2.0,
+          )
+
+          rotation_matrix = (
+            cv2.getRotationMatrix2D(
+              center,
+              median_angle,
+              1.0,
+            )
+          )
+
+          image = cv2.warpAffine(
+            image,
+            rotation_matrix,
+            (width, height),
+            flags=cv2.INTER_CUBIC,
+            borderMode=cv2.BORDER_REPLICATE,
+          )
+        else:
+          logger.info(
+            "Residual deskew not needed: %.3f degrees",
+            median_angle,
+          )
+
+    # ---------------------------------------------------------
+    # 5. Limit excessively large output images.
+    # ---------------------------------------------------------
+    height, width = image.shape[:2]
+
+    max_dimension = 3000
+
+    if max(
+      width,
+      height,
+    ) > max_dimension:
+      resize_scale = (
+        max_dimension
+        / max(width, height)
+      )
+
+      new_width = max(
+        1,
+        int(width * resize_scale),
+      )
+
+      new_height = max(
+        1,
+        int(height * resize_scale),
+      )
+
+      logger.info(
+        "Resizing cleaned image: %dx%d -> %dx%d",
+        width,
+        height,
+        new_width,
+        new_height,
+      )
+
+      image = cv2.resize(
+        image,
+        (
+          new_width,
+          new_height,
+        ),
+        interpolation=cv2.INTER_AREA,
+      )
+
+    # ---------------------------------------------------------
+    # 6. Mild contrast enhancement.
+    # ---------------------------------------------------------
+    lab = cv2.cvtColor(
+      image,
+      cv2.COLOR_BGR2LAB,
+    )
+
+    l_channel, a_channel, b_channel = (
+      cv2.split(lab)
+    )
+
+    clahe = cv2.createCLAHE(
+      clipLimit=1.5,
+      tileGridSize=(8, 8),
+    )
+
+    l_channel = clahe.apply(
+      l_channel
+    )
+
+    enhanced_lab = cv2.merge(
+      (
+        l_channel,
+        a_channel,
+        b_channel,
+      )
+    )
+
+    image = cv2.cvtColor(
+      enhanced_lab,
+      cv2.COLOR_LAB2BGR,
+    )
+
+    # ---------------------------------------------------------
+    # 7. Save.
+    # ---------------------------------------------------------
+    output_file.parent.mkdir(
+      parents=True,
+      exist_ok=True,
+    )
+
+    success = cv2.imwrite(
+      str(output_file),
+      image,
+      [
+        cv2.IMWRITE_JPEG_QUALITY,
+        95,
+      ],
+    )
+
+    if not success:
+      raise ValueError(
+        f"Could not write cleaned image: {output_file}"
+      )
+
+    logger.info(
+      "Cleaned image dimensions: %dx%d",
+      image.shape[1],
+      image.shape[0],
+    )
+
+    logger.info(
+      "========== FORM IMAGE CLEAN END =========="
+    )
 
   def _rotate_image_for_form_editing(
     self,
@@ -1775,19 +2997,21 @@ PDF.
       image,
     )
 
-    font_path = (
+    font_path = Path(
       "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf"
     )
 
-    if font_path:
+    if font_path.exists():
       logger.info(
         "Using image form font: %s",
         font_path,
       )
     else:
       logger.warning(
-        "No suitable system font found; using Pillow default font.",
+        "Japanese font not found: %s",
+        font_path,
       )
+      font_path = None
 
     applied_count = 0
 
@@ -2035,9 +3259,21 @@ PDF.
       input_file,
     )
 
-    font_path = (
+    font_path = Path(
       "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf"
     )
+
+    if font_path.exists():
+      logger.info(
+        "Using PDF form font: %s",
+        font_path,
+      )
+    else:
+      logger.warning(
+        "Japanese font not found for PDF editing: %s",
+        font_path,
+      )
+      font_path = None
 
     applied_count = 0
 
