@@ -225,7 +225,7 @@ class FormJobService:
 
           for input_file in image_input_files:
 
-            self._apply_image_edits(
+            self._build_editable_pdf_from_image(
               input_file=input_file,
               image_edits=image_edits,
               output_dir=output_dir,
@@ -3550,7 +3550,121 @@ PDF.
 
     return output_path
 
-  
+  def _build_editable_pdf_from_image(
+    self,
+    input_file: Path,
+    image_edits: list[dict],
+    output_dir: Path,
+  ) -> Path:
+
+    import fitz
+
+    output_dir.mkdir(
+      parents=True,
+      exist_ok=True,
+    )
+
+    with Image.open(input_file) as pil_image:
+      pil_image.load()
+      image_width, image_height = pil_image.size
+
+    document = fitz.open()
+
+    page = document.new_page(
+      width=image_width,
+      height=image_height,
+    )
+
+    page.insert_image(
+      fitz.Rect(0, 0, image_width, image_height),
+      filename=str(input_file),
+    )
+
+    font_path = Path(
+      "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf"
+    )
+
+    font_name = "NotoSansJP"
+
+    if font_path.exists():
+      page.insert_font(
+        fontfile=str(font_path),
+        fontname=font_name,
+      )
+    else:
+      logger.warning(
+        "Japanese font not found for editable PDF widgets: %s",
+        font_path,
+      )
+      font_name = "helv"
+
+    applied_count = 0
+
+    for index, edit in enumerate(image_edits):
+
+      filename = edit.get("filename")
+
+      if filename and filename != input_file.name:
+        continue
+
+      text = edit.get("text")
+      x = edit.get("x")
+      y = edit.get("y")
+      width = edit.get("width")
+      height = edit.get("height")
+
+      if not text:
+        continue
+
+      try:
+        x = float(x)
+        y = float(y)
+        width = float(width)
+        height = float(height)
+      except (TypeError, ValueError):
+        logger.warning(
+          "Skipping editable PDF field with invalid coordinates: %s",
+          edit,
+        )
+        continue
+
+      if width <= 0 or height <= 0:
+        continue
+
+      rect = fitz.Rect(
+        x,
+        y,
+        x + width,
+        y + height,
+      )
+
+      widget = fitz.Widget()
+      widget.field_name = f"field_{index}"
+      widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+      widget.rect = rect
+      widget.field_value = str(text)
+      widget.text_font = font_name
+      widget.text_fontsize = max(8, int(height * 0.6))
+      widget.border_color = None
+      widget.fill_color = None
+
+      page.add_widget(widget)
+
+      applied_count += 1
+
+    output_path = output_dir / f"{input_file.stem}.pdf"
+
+    document.save(output_path)
+    document.close()
+
+    logger.info(
+      "Saved editable PDF with %d field(s): %s",
+      applied_count,
+      output_path,
+    )
+
+    return output_path
+
   def _apply_pdf_edits(
     self,
     input_file: Path,
