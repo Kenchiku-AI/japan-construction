@@ -961,11 +961,11 @@ class FormJobService:
       tuple[np.ndarray, np.ndarray, float, float]
     ] = []
 
-    for raw_line in lines[:, 0]:
-      x1, y1, x2, y2 = [
+    for raw_line in lines.reshape(-1, 4):
+      x1, y1, x2, y2 = (
         float(value)
         for value in raw_line
-      ]
+      )
 
       p1 = np.array(
         [x1, y1],
@@ -1723,16 +1723,11 @@ If you cannot confidently determine the boundary, return:
     # ---------------------------------------------------------
     # 1. Try OpenCV first.
     # ---------------------------------------------------------
-    try:
-      document_corners, document_score = (
-        self._detect_form_boundary_with_lines(image)
+    document_corners, document_score = (
+      self._detect_form_boundary_with_lines(
+        image
       )
-    except Exception:
-      logger.exception(
-        "OpenCV form-boundary detection failed"
-      )
-      document_corners = None
-      document_score = 0.0
+    )
 
     logger.info(
       "OpenCV form-boundary result: "
@@ -1854,11 +1849,11 @@ If you cannot confidently determine the boundary, return:
     if lines is not None:
       near_horizontal_angles = []
 
-      for raw_line in lines[:, 0]:
-        x1, y1, x2, y2 = [
+      for raw_line in lines.reshape(-1, 4):
+        x1, y1, x2, y2 = (
           float(value)
           for value in raw_line
-        ]
+        )
 
         dx = x2 - x1
         dy = y2 - y1
