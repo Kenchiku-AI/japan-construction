@@ -1723,11 +1723,16 @@ If you cannot confidently determine the boundary, return:
     # ---------------------------------------------------------
     # 1. Try OpenCV first.
     # ---------------------------------------------------------
-    document_corners, document_score = (
-      self._detect_form_boundary_with_lines(
-        image
+    try:
+      document_corners, document_score = (
+        self._detect_form_boundary_with_lines(image)
       )
-    )
+    except Exception:
+      logger.exception(
+        "OpenCV form-boundary detection failed"
+      )
+      document_corners = None
+      document_score = 0.0
 
     logger.info(
       "OpenCV form-boundary result: "
