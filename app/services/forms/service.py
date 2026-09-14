@@ -10,6 +10,8 @@ import re
 import shutil
 from typing import Any
 from openai import OpenAI
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageDraw, ImageFont
@@ -4758,6 +4760,11 @@ PDF.
     input_files: list[Path],
   ) -> str:
 
+    current_date = datetime.now(
+      ZoneInfo("Asia/Tokyo")
+    ).strftime("%Y年%-m月%-d日")
+
+
     file_list = "\n".join(
       f"- {path.name}"
       for path in input_files
@@ -4818,6 +4825,26 @@ Form name:
 
 Form description:
 {job.description or "No description provided."}
+
+============================================================
+PROCESSING CONTEXT
+============================================================
+
+Current date in Japan:
+{current_date}
+
+IMPORTANT:
+- Treat the above date as the authoritative current processing date.
+- When a form asks for the date it is being created, prepared, or
+  completed, use this date unless the form explicitly provides a
+  different creation/completion date.
+- In particular, fields such as 作成日, 作成年月日,
+  （年 月 日 作成）, Date Created, or Date Prepared should use:
+  {current_date}
+- This date is provided by the application and does not need to come
+  from the Kenchiku data graph.
+- Do NOT put this date into historical/event fields such as 生年月日,
+  入社日, 雇入年月日, 資格取得日, 工事開始日, 工事完了日, etc.
 
 ============================================================
 INPUT FILES
@@ -5230,7 +5257,8 @@ Examples:
 - Date Created
 - Date Prepared
 
-→ Use today's current date when no explicit date is provided.
+→ Use the CURRENT DATE IN JAPAN provided in the PROCESSING CONTEXT
+section when no explicit date is provided.
 
 2. FORM COMPLETION DATE
 
@@ -5240,7 +5268,7 @@ Examples:
 - Date Completed
 
 → If the field clearly means the date this form is being completed,
-use today's current date.
+use the Current date in Japan provided in the PROCESSING CONTEXT section above.
 
 3. SUBMISSION DATE
 
