@@ -58,6 +58,12 @@ class Company(Base):
     nullable=False,
   )
 
+  billing_exempt = Column(
+    Boolean,
+    default=False,
+    nullable=False,
+  )
+
   conversations = relationship(
     "LineConversation",
     back_populates="company",
