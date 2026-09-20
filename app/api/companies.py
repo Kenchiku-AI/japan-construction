@@ -198,6 +198,7 @@ async def list_companies(
         active_project_guests_count=row.active_project_guests_count,
         employees_count=row.employees_count,
         billing_plan_id=company.billing_plan_id,
+        billing_exempt=company.billing_exempt,
         created_at=company.created_at,
         updated_at=company.updated_at,
       )
@@ -427,6 +428,7 @@ async def get_company(
     is_payment_method_valid=billing_status.is_payment_method_valid,
     free_trial_days_left=billing_status.free_trial_days_left,
     billing_plan_id=company.billing_plan_id,
+    billing_exempt=company.billing_exempt,
     paid_features_force_disabled=company.paid_features_force_disabled,
     line_channel_secret_last4=company.line_channel_secret_last4,
     line_channel_access_token_last5=company.line_channel_access_token_last5,
@@ -574,12 +576,17 @@ async def update_company(
     require_company_manager(current_user, company_id)
 
   if (
-    payload.paid_features_force_disabled is not None
+    (
+      payload.billing_plan_id is not None
+      or "billing_plan_id" in payload.model_fields_set
+      or payload.billing_exempt is not None
+      or payload.paid_features_force_disabled is not None
+    )
     and current_user.role != "admin"
   ):
     raise HTTPException(
       status_code=status.HTTP_403_FORBIDDEN,
-      detail="Only admins can change the paid features force-disable setting",
+      detail="Only admins can change billing settings",
     )
 
   result = await db.execute(
@@ -618,6 +625,9 @@ async def update_company(
 
   if payload.paid_features_force_disabled is not None:
     company.paid_features_force_disabled = payload.paid_features_force_disabled
+
+  if payload.billing_exempt is not None:
+    company.billing_exempt = payload.billing_exempt
 
   if "billing_plan_id" in payload.model_fields_set:
     if not company.stripe_customer_id:

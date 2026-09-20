@@ -22,6 +22,9 @@ class BillingStatus:
   free_trial_days_left: int | None
 
 def get_billing_status(company: Company) -> BillingStatus:
+  if company.billing_exempt:
+    return BillingStatus(is_payment_method_valid=True, free_trial_days_left=None)
+
   if not company.stripe_subscription_id:
     return BillingStatus(is_payment_method_valid=True, free_trial_days_left=None)
 
@@ -139,6 +142,9 @@ async def can_use_billed_features(company_id: str, db: AsyncSession) -> tuple[bo
 
   if company.paid_features_force_disabled:
     return False, "paid_features_force_disabled"
+
+  if company.billing_exempt:
+    return True, None
 
   if not get_billing_status(company).is_payment_method_valid:
     return False, "subscription_past_due"
