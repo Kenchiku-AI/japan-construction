@@ -250,3 +250,41 @@ async def create_subscription(company: Company, db: AsyncSession) -> None:
       str(e),
     )
     raise
+
+async def cancel_company_subscription(company: Company) -> None:
+  if not company.stripe_subscription_id:
+    return
+
+  subscription_id = company.stripe_subscription_id
+
+  try:
+    stripe.Subscription.cancel(subscription_id)
+    logger.info(
+      "Canceled Stripe subscription %s for company %s",
+      subscription_id,
+      company.id,
+    )
+  except stripe.error.InvalidRequestError as e:
+    # Treat an already-deleted Stripe subscription as success.
+    if e.code == "resource_missing":
+      logger.info(
+        "Stripe subscription %s for company %s was already missing",
+        subscription_id,
+        company.id,
+      )
+      return
+
+    logger.exception(
+      "Failed to cancel Stripe subscription %s for company %s",
+      subscription_id,
+      company.id,
+    )
+    raise
+
+  except stripe.error.StripeError:
+    logger.exception(
+      "Failed to cancel Stripe subscription %s for company %s",
+      subscription_id,
+      company.id,
+    )
+    raise

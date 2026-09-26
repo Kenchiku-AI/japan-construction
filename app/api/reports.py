@@ -2192,7 +2192,6 @@ async def delete_report_image(
       detail="Report not found",
     )
 
-  # CHANGED:
   await require_report_access(
     current_user,
     report,
@@ -2219,16 +2218,68 @@ async def delete_report_image(
       detail="Image not found",
     )
 
+  # Get the Image before deleting the link so we have the S3 key.
+  image = await db.scalar(
+    select(Image).where(
+      Image.id == image_id,
+    )
+  )
+
+  if image is None:
+    raise HTTPException(
+      status_code=404,
+      detail="Image not found",
+    )
+
+  image_url = image.image_url
+
   await db.delete(link)
 
-  await db.commit()
+  # Check whether any other report still references this image.
+  remaining_report_link = await db.scalar(
+    select(ReportImageLink.id)
+    .where(
+      ReportImageLink.image_id == image_id,
+      ReportImageLink.id != link.id,
+    )
+    .limit(1)
+  )
 
-  # TODO: Delete image from S3 only when no remaining links reference the Image.
+  image_is_unreferenced = remaining_report_link is None
+
+  if image_is_unreferenced:
+    # No other reports reference this image, so remove the Image
+    # database record as well. This will also cascade to its
+    # configured image relationships.
+    await db.delete(image)
+
+  try:
+    await db.commit()
+  except Exception:
+    await db.rollback()
+    raise
+
+  # Only delete the S3 object if the Image is no longer referenced
+  # by any other report.
+  if image_is_unreferenced and image_url:
+    try:
+      s3_client.delete_object(
+        Bucket=BUCKET_NAME,
+        Key=image_url,
+      )
+    except Exception:
+      # The database deletion has already succeeded, so we can't
+      # roll it back here. Log the S3 failure for cleanup/retry.
+      logger.exception(
+        "Failed to delete S3 image %s for image %s",
+        image_url,
+        image_id,
+      )
 
   return {
     "success": True,
   }
-
+  
 @router.get(
   "/templates/{report_template_id}",
   response_model=ReportTemplateRead,

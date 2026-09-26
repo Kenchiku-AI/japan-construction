@@ -4,7 +4,7 @@ from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
-from sqlalchemy import and_, desc, func, select, or_
+from sqlalchemy import and_, desc, func, select, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,6 +16,7 @@ from app.db.models import (
   ProjectStatus,
   Report,
   User,
+  Image,
   ImageTag,
   ProjectGuestLink,
   BillingPlan,
@@ -47,11 +48,13 @@ from app.services.billing import (
   get_payment_method_display,
   can_use_billed_features,
   get_billing_status,
-  create_subscription
+  create_subscription,
+  cancel_company_subscription,
 )
 from app.services.forms.company_graph import build_company_graph_json
 from app.services.invitations import create_company_invitation
 from app.services.email import send_company_created_admin_email
+from app.services.s3 import BUCKET_NAME, s3_client
 from app.db.models.conversation_item_type import ConversationItemType, ConversationItemTypeLink
 from app.db.models.custom_field import CustomField, CustomFieldCompanyLink
 from app.schemas.conversation import ConversationItemTypeCreate, ConversationItemTypeUpdate
@@ -1183,5 +1186,155 @@ async def delete_conversation_item_type(
       await db.delete(link)
 
   await db.commit()
+
+  return None
+
+
+@router.delete(
+  "/{company_id}",
+  status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_company(
+  company_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  # Admin-only operation.
+  if current_user.role != "admin":
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Only admins can delete companies",
+    )
+
+  company = await db.scalar(
+    select(Company).where(Company.id == company_id)
+  )
+
+  if company is None:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Company not found",
+    )
+
+  # Cancel Stripe before deleting the company.
+  #
+  # If this fails, we leave the company intact so the operation can
+  # safely be retried.
+  if company.stripe_subscription_id:
+    try:
+      await cancel_company_subscription(company)
+    except stripe.error.StripeError:
+      raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="Unable to cancel the company's Stripe subscription",
+      )
+
+  # Collect all S3 image keys before deleting the database records.
+  #
+  # Image.image_url contains the S3 object key, e.g.
+  # "images/12345678-....jpg"
+  image_result = await db.execute(
+    select(Image.image_url).where(
+      Image.company_id == company_id
+    )
+  )
+
+  image_keys = [
+    key
+    for key in image_result.scalars().all()
+    if key
+  ]
+
+  try:
+    # Users must be detached from the company BEFORE deleting the
+    # company because users.company_id currently has ON DELETE CASCADE.
+    #
+    # This preserves the users and simply makes company_id NULL.
+    await db.execute(
+      update(User)
+      .where(User.company_id == company_id)
+      .values(company_id=None)
+    )
+
+    # Delete the company.
+    #
+    # This will cascade to:
+    # - projects
+    # - reports
+    # - images
+    # - image tags
+    # - company report templates
+    # - LINE conversations
+    # - custom objects
+    # - custom fields
+    # - custom relationships
+    # - report/image/project link tables
+    # - other configured cascade relationships
+    #
+    # Your updated Company.images relationship means Image records
+    # are deleted through ORM cascade.
+    await db.delete(company)
+
+    # Force the SQL DELETE/cascades to execute before committing.
+    await db.flush()
+
+    await db.commit()
+
+  except Exception:
+    await db.rollback()
+
+    logger.exception(
+      "Failed to delete company %s from the database",
+      company_id,
+    )
+
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail="Failed to delete company",
+    )
+
+  # The database deletion has succeeded at this point.
+  #
+  # Delete the corresponding S3 objects. S3 delete_objects supports
+  # a maximum of 1000 objects per request, so process them in batches.
+  try:
+    for i in range(0, len(image_keys), 1000):
+      batch = image_keys[i:i + 1000]
+
+      s3_client.delete_objects(
+        Bucket=BUCKET_NAME,
+        Delete={
+          "Objects": [
+            {"Key": key}
+            for key in batch
+          ],
+          "Quiet": True,
+        },
+      )
+
+    logger.info(
+      "Deleted company %s and %d S3 images",
+      company_id,
+      len(image_keys),
+    )
+
+  except Exception:
+    # The company/database records are already gone, so we cannot roll
+    # the database transaction back here. Log the failure so the orphaned
+    # S3 objects can be cleaned up.
+    logger.exception(
+      "Company %s was deleted from the database, but deleting its "
+      "%d S3 images failed",
+      company_id,
+      len(image_keys),
+    )
+
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail=(
+        "Company was deleted, but some associated S3 images "
+        "could not be deleted"
+      ),
+    )
 
   return None
