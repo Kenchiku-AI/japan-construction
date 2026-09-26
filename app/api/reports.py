@@ -28,6 +28,7 @@ from app.db.models import (
   LineConversation,
   LineMessage,
   LineMessageType,
+  LineMessageImageLink,
   ReportProjectLink,
 )
 from app.schemas.report import (
