@@ -2218,7 +2218,8 @@ async def delete_report_image(
       detail="Image not found",
     )
 
-  # Get the Image before deleting the link so we have the S3 key.
+  # Get the Image before deleting the report link so we have the
+  # S3 key if the image becomes completely unreferenced.
   image = await db.scalar(
     select(Image).where(
       Image.id == image_id,
@@ -2233,6 +2234,7 @@ async def delete_report_image(
 
   image_url = image.image_url
 
+  # Remove this report's reference to the image.
   await db.delete(link)
 
   # Check whether any other report still references this image.
@@ -2245,12 +2247,24 @@ async def delete_report_image(
     .limit(1)
   )
 
-  image_is_unreferenced = remaining_report_link is None
+  # Check whether any LINE message still references this image.
+  remaining_line_link = await db.scalar(
+    select(LineMessageImageLink.id)
+    .where(
+      LineMessageImageLink.image_id == image_id,
+    )
+    .limit(1)
+  )
+
+  image_is_unreferenced = (
+    remaining_report_link is None
+    and remaining_line_link is None
+  )
 
   if image_is_unreferenced:
-    # No other reports reference this image, so remove the Image
-    # database record as well. This will also cascade to its
-    # configured image relationships.
+    # The image is no longer referenced anywhere, so remove the
+    # database record. The configured ORM cascades will clean up
+    # its related image links/tags.
     await db.delete(image)
 
   try:
@@ -2259,8 +2273,8 @@ async def delete_report_image(
     await db.rollback()
     raise
 
-  # Only delete the S3 object if the Image is no longer referenced
-  # by any other report.
+  # Only remove the S3 object once the image is no longer referenced
+  # by either reports or LINE messages.
   if image_is_unreferenced and image_url:
     try:
       s3_client.delete_object(
@@ -2268,8 +2282,8 @@ async def delete_report_image(
         Key=image_url,
       )
     except Exception:
-      # The database deletion has already succeeded, so we can't
-      # roll it back here. Log the S3 failure for cleanup/retry.
+      # The database deletion already succeeded, so it cannot be
+      # rolled back here. Log the failure for later cleanup.
       logger.exception(
         "Failed to delete S3 image %s for image %s",
         image_url,
@@ -2279,7 +2293,7 @@ async def delete_report_image(
   return {
     "success": True,
   }
-  
+
 @router.get(
   "/templates/{report_template_id}",
   response_model=ReportTemplateRead,
