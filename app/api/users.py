@@ -8,6 +8,7 @@ from fastapi import (
   APIRouter,
   Depends,
   BackgroundTasks,
+  Query,
 )
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,6 +73,7 @@ async def read_current_user(
 )
 async def get_user(
   user_id: UUID,
+  company_id: UUID | None = Query(default=None),
   current_user: User = Depends(get_current_user),
   db: AsyncSession = Depends(get_db),
 ):
@@ -79,6 +81,8 @@ async def get_user(
   # -------------------------------------------------------------------------
   # Authorization
   # -------------------------------------------------------------------------
+
+  target_company_id = None
 
   if current_user.role != "admin" and current_user.id != user_id:
 
@@ -135,6 +139,24 @@ async def get_user(
         )
 
   # -------------------------------------------------------------------------
+  # Determine which company's custom-field / relationship definitions
+  # should be used.
+  #
+  # If the requested user is the current user:
+  #   - use the explicitly supplied company_id if present
+  #   - otherwise use current_user.company_id
+  #
+  # If the requested user is someone else:
+  #   - ALWAYS use current_user.company_id
+  #   - ignore any supplied company_id
+  # -------------------------------------------------------------------------
+
+  if user_id == current_user.id and company_id is not None:
+    custom_definition_company_id = company_id
+  else:
+    custom_definition_company_id = current_user.company_id
+
+  # -------------------------------------------------------------------------
   # Load user and existing custom fields
   # -------------------------------------------------------------------------
 
@@ -165,23 +187,28 @@ async def get_user(
   #
   # get_user_custom_fields() queries the definitions and combines them
   # with any existing values, so definitions without values are included.
+  #
+  # The company_id ensures that only definitions belonging to the selected
+  # company are returned.
   # -------------------------------------------------------------------------
 
   custom_fields = await get_user_custom_fields(
     user,
     db,
+    company_id=custom_definition_company_id,
   )
 
   # -------------------------------------------------------------------------
   # Custom relationships
   #
-  # Query all relationship definitions for this company where the user
-  # is the source entity.
+  # Only relationship definitions belonging to the selected company
+  # are returned.
   # -------------------------------------------------------------------------
 
   custom_relationships = await get_user_custom_relationships(
     user,
     db,
+    company_id=custom_definition_company_id,
   )
 
   # -------------------------------------------------------------------------
