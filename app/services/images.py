@@ -181,6 +181,7 @@ async def add_description_and_tags(
     image.description = description
 
 async def regenerate_image_description(
+  *,
   image: Image,
   report: Report,
   image_url: str,
@@ -189,6 +190,7 @@ async def regenerate_image_description(
   stmt = select(Company).where(
     Company.id == image.company_id
   )
+
   result = await db.execute(stmt)
   company = result.scalar_one_or_none()
 
@@ -202,15 +204,17 @@ async def regenerate_image_description(
 
   context_lines = []
 
-  for field in sorted(
-    report.fields,
-    key=lambda field: field.order,
-  ):
-    if not field.value or not field.value.strip():
+  for field in report.fields:
+    if not field.value:
+      continue
+
+    value = field.value.strip()
+
+    if not value:
       continue
 
     context_lines.append(
-      f"{field.name}: {field.value}"
+      f"{field.name}: {value}"
     )
 
   report_context = (
@@ -219,14 +223,24 @@ async def regenerate_image_description(
     else None
   )
 
+  stmt = select(ImageTag).where(
+    ImageTag.company_id == company.id
+  )
+
+  result = await db.execute(stmt)
+  tags_list = result.scalars().all()
+
+  ai_result = None
+
   for attempt in range(3):
     try:
-      description = await get_image_description(
+      ai_result = await get_image_tags_and_description(
         image_url=image_url,
+        tags=tags_list,
+        include_description=True,
         report_context=report_context,
       )
-      image.description = description
-      return
+      break
 
     except Exception:
       if attempt == 2:
@@ -234,6 +248,12 @@ async def regenerate_image_description(
 
       await asyncio.sleep(1)
 
+  description = ai_result.get("description")
+
+  if description is not None:
+    image.description = description
+
+    
 async def process_status_image(
   image: Image,
   image_url: str,
