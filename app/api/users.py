@@ -41,7 +41,7 @@ from app.schemas.user import (
   UserBase,
   UserDetails,
   UserUpdate,
-  GuestCompanyRead,
+  CompanyListItem,
 )
 from app.schemas.custom_field import CustomFieldRead
 from app.schemas.custom_relationship import CustomRelationshipRead
@@ -141,31 +141,6 @@ async def get_user(
         )
 
   # -------------------------------------------------------------------------
-  # Determine which company's custom-field / relationship definitions
-  # should be used.
-  #
-  # Admins:
-  #   - use the explicitly supplied company_id if present
-  #   - otherwise use current_user.company_id
-  #
-  # Non-admins requesting themselves:
-  #   - use the explicitly supplied company_id if present
-  #   - otherwise use current_user.company_id
-  #
-  # Non-admins requesting someone else:
-  #   - ALWAYS use current_user.company_id
-  #   - ignore any supplied company_id
-  # -------------------------------------------------------------------------
-
-  if (
-    current_user.role == "admin"
-    or user_id == current_user.id
-  ) and company_id is not None:
-    custom_definition_company_id = company_id
-  else:
-    custom_definition_company_id = current_user.company_id
-
-  # -------------------------------------------------------------------------
   # Load user and existing custom fields
   # -------------------------------------------------------------------------
 
@@ -190,6 +165,54 @@ async def get_user(
       status_code=status.HTTP_404_NOT_FOUND,
       detail="User not found",
     )
+
+  # -------------------------------------------------------------------------
+  # Companies
+  #
+  # Includes the user's own company, if any, plus companies for projects
+  # where the user is a guest.
+  # -------------------------------------------------------------------------
+
+  companies = await get_user_companies(
+    user.id,
+    db,
+  )
+
+  # -------------------------------------------------------------------------
+  # Determine which company's custom-field / relationship definitions
+  # should be used.
+  #
+  # Admins:
+  #   - use the explicitly supplied company_id if present
+  #   - otherwise use the user's own company_id
+  #   - if the user's company_id is NULL, use the first company in companies
+  #
+  # Non-admins requesting themselves:
+  #   - use the explicitly supplied company_id if present
+  #   - otherwise use the user's own company_id
+  #   - if the user's company_id is NULL, use the first company in companies
+  #
+  # Non-admins requesting someone else:
+  #   - ALWAYS use current_user.company_id
+  #   - ignore any supplied company_id
+  # -------------------------------------------------------------------------
+
+  if current_user.role == "admin" or user_id == current_user.id:
+
+    if company_id is not None:
+      custom_definition_company_id = company_id
+
+    elif user.company_id is not None:
+      custom_definition_company_id = user.company_id
+
+    elif companies:
+      custom_definition_company_id = companies[0].id
+
+    else:
+      custom_definition_company_id = None
+
+  else:
+    custom_definition_company_id = current_user.company_id
 
   # -------------------------------------------------------------------------
   # Custom fields
@@ -220,11 +243,6 @@ async def get_user(
     company_id=custom_definition_company_id,
   )
 
-  guest_companies = await get_user_guest_companies(
-    user.id,
-    db,
-  )
-
   # -------------------------------------------------------------------------
   # Response
   # -------------------------------------------------------------------------
@@ -238,7 +256,7 @@ async def get_user(
     role=user.role,
     custom_fields=custom_fields,
     custom_relationships=custom_relationships,
-    guest_companies=guest_companies,
+    companies=companies,
   )
 
 
@@ -374,7 +392,7 @@ async def patch_user(
     db,
   )
 
-  guest_companies = await get_user_guest_companies(
+  companies = await get_user_companies(
     user.id,
     db,
   )
@@ -388,36 +406,36 @@ async def patch_user(
     role=user.role,
     custom_fields=custom_fields,
     custom_relationships=custom_relationships,
-    guest_companies=guest_companies,
+    companies=companies,
   )
 
 
-async def get_user_guest_companies(
-  user_id: UUID,
+async def get_user_companies(
+  user: User,
   db: AsyncSession,
-) -> list[GuestCompanyRead]:
+) -> list[CompanyListItem]:
   result = await db.execute(
-    select(
-      Company.id,
-      Company.name,
+    select(Company.id, Company.name)
+    .where(Company.id == user.company_id)
+    .union(
+      select(Company.id, Company.name)
+      .join(
+        Project,
+        Project.company_id == Company.id,
+      )
+      .join(
+        ProjectGuestLink,
+        ProjectGuestLink.project_id == Project.id,
+      )
+      .where(
+        ProjectGuestLink.user_id == user.id,
+      )
     )
-    .join(
-      Project,
-      Project.company_id == Company.id,
-    )
-    .join(
-      ProjectGuestLink,
-      ProjectGuestLink.project_id == Project.id,
-    )
-    .where(
-      ProjectGuestLink.user_id == user_id,
-    )
-    .distinct()
     .order_by(Company.name)
   )
 
   return [
-    GuestCompanyRead(
+    CompanyListItem(
       id=company_id,
       name=company_name,
     )
