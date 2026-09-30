@@ -15,6 +15,9 @@ from app.db.models import (
   ImageTagLink,
   LineMessage,
   LineMessageImageLink,
+  Report,
+  ReportField,
+  ReportImageLink,
 )
 from app.db.session import AsyncSessionLocal
 from app.services.openai import get_image_tags_and_description
@@ -47,6 +50,59 @@ async def process_image(
     f"Unknown processing_type: {image.processing_type}"
   )
 
+async def _get_report_context(
+  image: Image,
+  db: AsyncSession,
+) -> str | None:
+  stmt = (
+    select(Report)
+    .join(
+      ReportImageLink,
+      ReportImageLink.report_id == Report.id,
+    )
+    .where(
+      ReportImageLink.image_id == image.id,
+    )
+    .order_by(
+      Report.updated_at.desc(),
+      Report.id.desc(),
+    )
+    .limit(1)
+  )
+
+  result = await db.execute(stmt)
+  report = result.scalar_one_or_none()
+
+  if not report:
+    return None
+
+  field_stmt = (
+    select(ReportField)
+    .where(
+      ReportField.report_id == report.id,
+      ReportField.value.is_not(None),
+    )
+    .order_by(ReportField.order)
+  )
+
+  field_result = await db.execute(field_stmt)
+  fields = field_result.scalars().all()
+
+  context_lines = []
+
+  for field in fields:
+    if not field.value or not field.value.strip():
+      continue
+
+    context_lines.append(
+      f"{field.name}: {field.value}"
+    )
+
+  if not context_lines:
+    return None
+
+  return "\n".join(context_lines)
+
 async def add_description_and_tags(
   image: Image,
   image_url: str,
@@ -60,6 +116,11 @@ async def add_description_and_tags(
 
   if not company:
     raise ValueError(f"Company not found: {image.company_id}")
+
+  report_context = await _get_report_context(
+    image=image,
+    db=db,
+  )
 
   stmt = select(ImageTag).where(
     ImageTag.company_id == company.id
@@ -75,6 +136,7 @@ async def add_description_and_tags(
         image_url=image_url,
         tags=tags_list,
         include_description=company.image_descriptions_enabled,
+        report_context=report_context,
       )
       break
 
@@ -117,6 +179,60 @@ async def add_description_and_tags(
 
   if description is not None:
     image.description = description
+
+async def regenerate_image_description(
+  image: Image,
+  report: Report,
+  image_url: str,
+  db: AsyncSession,
+):
+  stmt = select(Company).where(
+    Company.id == image.company_id
+  )
+  result = await db.execute(stmt)
+  company = result.scalar_one_or_none()
+
+  if not company:
+    raise ValueError(
+      f"Company not found: {image.company_id}"
+    )
+
+  if not company.image_descriptions_enabled:
+    return
+
+  context_lines = []
+
+  for field in sorted(
+    report.fields,
+    key=lambda field: field.order,
+  ):
+    if not field.value or not field.value.strip():
+      continue
+
+    context_lines.append(
+      f"{field.name}: {field.value}"
+    )
+
+  report_context = (
+    "\n".join(context_lines)
+    if context_lines
+    else None
+  )
+
+  for attempt in range(3):
+    try:
+      description = await get_image_description(
+        image_url=image_url,
+        report_context=report_context,
+      )
+      image.description = description
+      return
+
+    except Exception:
+      if attempt == 2:
+        raise
+
+      await asyncio.sleep(1)
 
 async def process_status_image(
   image: Image,

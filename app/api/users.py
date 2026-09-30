@@ -142,16 +142,23 @@ async def get_user(
   # Determine which company's custom-field / relationship definitions
   # should be used.
   #
-  # If the requested user is the current user:
+  # Admins:
   #   - use the explicitly supplied company_id if present
   #   - otherwise use current_user.company_id
   #
-  # If the requested user is someone else:
+  # Non-admins requesting themselves:
+  #   - use the explicitly supplied company_id if present
+  #   - otherwise use current_user.company_id
+  #
+  # Non-admins requesting someone else:
   #   - ALWAYS use current_user.company_id
   #   - ignore any supplied company_id
   # -------------------------------------------------------------------------
 
-  if user_id == current_user.id and company_id is not None:
+  if (
+    current_user.role == "admin"
+    or user_id == current_user.id
+  ) and company_id is not None:
     custom_definition_company_id = company_id
   else:
     custom_definition_company_id = current_user.company_id
