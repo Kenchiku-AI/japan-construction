@@ -378,15 +378,53 @@ async def patch_user(
   )
 
 
-async def get_user_custom_fields(
-  user: User,
-  db: AsyncSession,
-) -> list[CustomFieldRead]:
 
   definitions_result = await db.execute(
     select(CustomFieldDefinition)
     .where(
       CustomFieldDefinition.company_id == user.company_id,
+      CustomFieldDefinition.entity_type == "user",
+    )
+    .order_by(
+      CustomFieldDefinition.sort_order,
+      CustomFieldDefinition.name,
+    )
+  )
+
+  definitions = definitions_result.scalars().all()
+
+  existing_fields = {
+    link.custom_field.custom_field_definition_id: link.custom_field
+    for link in user.custom_field_links
+    if link.custom_field is not None
+  }
+
+  return [
+    CustomFieldRead(
+      id=existing_fields[definition.id].id
+        if definition.id in existing_fields
+        else None,
+      value=existing_fields[definition.id].value
+        if definition.id in existing_fields
+        else None,
+      definition=definition,
+    )
+    for definition in definitions
+  
+
+async def get_user_custom_fields(
+  user: User,
+  db: AsyncSession,
+  company_id: UUID | None = None,
+) -> list[CustomFieldRead]:
+
+  if company_id is None:
+    return []
+
+  definitions_result = await db.execute(
+    select(CustomFieldDefinition)
+    .where(
+      CustomFieldDefinition.company_id == company_id,
       CustomFieldDefinition.entity_type == "user",
     )
     .order_by(
@@ -420,9 +458,10 @@ async def get_user_custom_fields(
 async def get_user_custom_relationships(
   user: User,
   db: AsyncSession,
+  company_id: UUID | None = None,
 ) -> list[CustomRelationshipRead]:
 
-  if user.company_id is None:
+  if company_id is None:
     return []
 
   # -------------------------------------------------------------------------
@@ -432,7 +471,7 @@ async def get_user_custom_relationships(
   definitions_result = await db.execute(
     select(CustomRelationshipDefinition)
     .where(
-      CustomRelationshipDefinition.company_id == user.company_id,
+      CustomRelationshipDefinition.company_id == company_id,
       CustomRelationshipDefinition.source_entity_type == "user",
     )
     .order_by(
@@ -453,12 +492,15 @@ async def get_user_custom_relationships(
 
   # -------------------------------------------------------------------------
   # Get existing relationships for this user.
+  #
+  # Use the selected company_id rather than user.company_id because the
+  # caller may be requesting custom relationships for another company.
   # -------------------------------------------------------------------------
 
   relationships_result = await db.execute(
     select(CustomRelationship)
     .where(
-      CustomRelationship.company_id == user.company_id,
+      CustomRelationship.company_id == company_id,
       CustomRelationship.source_entity_type == "user",
       CustomRelationship.source_entity_id == user.id,
       CustomRelationship.custom_relationship_definition_id.in_(
