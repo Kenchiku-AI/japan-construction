@@ -102,7 +102,8 @@ async def transcribe_and_extract_json(
 async def get_image_tags_and_description(
   image_url: str,
   tags: Iterable[ImageTag],
-  include_description: bool
+  include_description: bool,
+  report_context: str | None = None,
 ) -> dict:
   tag_list = [
     {
@@ -120,9 +121,18 @@ async def get_image_tags_and_description(
 また、工事報告書に適した簡潔で専門的な説明文を
 1〜2文で含めてください。
 
+説明文を作成する際は、提供された工事報告書の入力値を
+画像を理解するためのコンテキストとして参考にしてください。
+
+ただし、説明文に記載してよい情報は、画像から実際に視認できる内容のみです。
+報告書の入力値だけを根拠として、画像に写っていない作業、人物、資材、
+場所、状況などを推測して記載してはいけません。
+
 厳守事項:
 - 説明文は必ず日本語で記述すること
 - 画像に実際に写っている内容のみ記述すること
+- 報告書の入力値は補助的なコンテキストとしてのみ使用すること
+- 報告書に書かれていても画像から確認できない内容は記述しないこと
 - 「この画像は〜」「写真には〜」「画像には〜」などの
   前置き表現は使用しないこと
 - 作業内容、使用機械、資材、安全状況など、
@@ -141,6 +151,7 @@ async def get_image_tags_and_description(
 - 「油圧ショベルによる掘削作業が進行中」
 - 「足場上で外装パネルの設置作業を実施」
 """
+
     json_format = """
 以下の形式の有効なJSONのみを返してください:
 
@@ -159,6 +170,26 @@ async def get_image_tags_and_description(
 }
 """
 
+  if report_context:
+    report_context_instruction = f"""
+この画像は、以下の工事報告書に関連付けられています。
+
+--- 工事報告書の入力値 ---
+{report_context}
+--- 工事報告書の入力値ここまで ---
+
+これらの入力値は、画像の内容を理解するための補助的なコンテキストとして使用してください。
+
+重要:
+- この報告書の入力値を参考にして、画像の内容をより正確に理解してください。
+- ただし、報告書に記載されているだけで、画像から確認できない内容を説明文に追加してはいけません。
+- 画像から確認できる内容を最優先してください。
+- 報告書の入力値と画像の内容が一致する場合は、その情報を踏まえて具体的な説明を作成してください。
+- 報告書の入力値と画像の内容が異なる場合は、画像から確認できる内容を優先してください。
+"""
+  else:
+    report_context_instruction = ""
+
   response = await client.responses.create(
     model="gpt-4.1-mini",
     temperature=0,
@@ -176,6 +207,8 @@ async def get_image_tags_and_description(
 以下は、この画像に適用される可能性のあるタグ一覧です。
 
 {tag_list_json}
+
+{report_context_instruction}
 
 {json_format}
 
