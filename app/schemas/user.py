@@ -22,12 +22,17 @@ class UserCreate(UserBase):
   password: str = Field(..., min_length=8)
   invitation_token: str
 
-class UserWithCompanyIdAndRole(UserBase):
+class GuestCompanyRead(BaseModel):
+  id: UUID
+  name: str
+
+class UserDetails(UserBase):
   id: UUID
   company_id: Optional[UUID] = None
   role: UserRole
   custom_fields: List[CustomFieldRead] = Field(default_factory=list)
   custom_relationships: List[CustomRelationshipRead] = Field(default_factory=list)
+  guest_companies: List[GuestCompanyRead] = Field(default_factory=list)
 
   model_config = {
     "from_attributes": True

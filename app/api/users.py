@@ -21,6 +21,7 @@ from app.core.dependencies import get_current_user
 from app.core.config import settings
 from app.core.security import hash_token
 
+from app.db.models.company import Company
 from app.db.models.custom_field import (
   CustomField,
   CustomFieldUserLink,
@@ -38,8 +39,9 @@ from app.db.session import get_db
 from app.schemas.user import (
   UserWithCompanyAndProjects,
   UserBase,
-  UserWithCompanyIdAndRole,
+  UserDetails,
   UserUpdate,
+  GuestCompanyRead,
 )
 from app.schemas.custom_field import CustomFieldRead
 from app.schemas.custom_relationship import CustomRelationshipRead
@@ -69,7 +71,7 @@ async def read_current_user(
 
 @router.get(
   "/{user_id}",
-  response_model=UserWithCompanyIdAndRole,
+  response_model=UserDetails,
 )
 async def get_user(
   user_id: UUID,
@@ -218,11 +220,16 @@ async def get_user(
     company_id=custom_definition_company_id,
   )
 
+  guest_companies = await get_user_guest_companies(
+    user.id,
+    db,
+  )
+
   # -------------------------------------------------------------------------
   # Response
   # -------------------------------------------------------------------------
 
-  return UserWithCompanyIdAndRole(
+  return UserDetails(
     id=user.id,
     email=user.email,
     first_name=user.first_name,
@@ -231,12 +238,13 @@ async def get_user(
     role=user.role,
     custom_fields=custom_fields,
     custom_relationships=custom_relationships,
+    guest_companies=guest_companies,
   )
 
 
 @router.patch(
   "/{user_id}",
-  response_model=UserWithCompanyIdAndRole,
+  response_model=UserDetails,
 )
 async def patch_user(
   user_id: UUID,
@@ -366,7 +374,12 @@ async def patch_user(
     db,
   )
 
-  return UserWithCompanyIdAndRole(
+  guest_companies = await get_user_guest_companies(
+    user.id,
+    db,
+  )
+
+  return UserDetails(
     id=user.id,
     email=user.email,
     first_name=user.first_name,
@@ -375,7 +388,41 @@ async def patch_user(
     role=user.role,
     custom_fields=custom_fields,
     custom_relationships=custom_relationships,
+    guest_companies=guest_companies,
   )
+
+
+async def get_user_guest_companies(
+  user_id: UUID,
+  db: AsyncSession,
+) -> list[GuestCompanyRead]:
+  result = await db.execute(
+    select(
+      Company.id,
+      Company.name,
+    )
+    .join(
+      Project,
+      Project.company_id == Company.id,
+    )
+    .join(
+      ProjectGuestLink,
+      ProjectGuestLink.project_id == Project.id,
+    )
+    .where(
+      ProjectGuestLink.user_id == user_id,
+    )
+    .distinct()
+    .order_by(Company.name)
+  )
+
+  return [
+    GuestCompanyRead(
+      id=company_id,
+      name=company_name,
+    )
+    for company_id, company_name in result.all()
+  ]
 
 
 async def get_user_custom_fields(
