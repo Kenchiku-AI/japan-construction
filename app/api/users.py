@@ -378,40 +378,6 @@ async def patch_user(
   )
 
 
-
-  definitions_result = await db.execute(
-    select(CustomFieldDefinition)
-    .where(
-      CustomFieldDefinition.company_id == user.company_id,
-      CustomFieldDefinition.entity_type == "user",
-    )
-    .order_by(
-      CustomFieldDefinition.sort_order,
-      CustomFieldDefinition.name,
-    )
-  )
-
-  definitions = definitions_result.scalars().all()
-
-  existing_fields = {
-    link.custom_field.custom_field_definition_id: link.custom_field
-    for link in user.custom_field_links
-    if link.custom_field is not None
-  }
-
-  return [
-    CustomFieldRead(
-      id=existing_fields[definition.id].id
-        if definition.id in existing_fields
-        else None,
-      value=existing_fields[definition.id].value
-        if definition.id in existing_fields
-        else None,
-      definition=definition,
-    )
-    for definition in definitions
-  
-
 async def get_user_custom_fields(
   user: User,
   db: AsyncSession,
