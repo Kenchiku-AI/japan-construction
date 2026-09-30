@@ -7,6 +7,7 @@ from PIL import Image as PILImage
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db.models import (
   Company,
@@ -18,6 +19,7 @@ from app.db.models import (
   Report,
   ReportField,
   ReportImageLink,
+  ReportTemplate,
 )
 from app.db.session import AsyncSessionLocal
 from app.services.openai import get_image_tags_and_description
@@ -187,8 +189,11 @@ async def regenerate_image_description(
   image_url: str,
   db: AsyncSession,
 ):
-  stmt = select(Company).where(
-    Company.id == image.company_id
+  stmt = (
+    select(Company)
+    .where(
+      Company.id == image.company_id
+    )
   )
 
   result = await db.execute(stmt)
@@ -202,9 +207,77 @@ async def regenerate_image_description(
   if not company.image_descriptions_enabled:
     return
 
-  context_lines = []
+  # ---------------------------------------------------------
+  # Load the report template and its fields.
+  # ---------------------------------------------------------
 
-  for field in report.fields:
+  template_stmt = (
+    select(ReportTemplate)
+    .where(
+      ReportTemplate.id == report.template_id,
+    )
+    .options(
+      selectinload(ReportTemplate.fields),
+    )
+  )
+
+  template_result = await db.execute(template_stmt)
+
+  template = template_result.scalar_one_or_none()
+
+  if not template:
+    raise ValueError(
+      f"Report template not found: {report.template_id}"
+    )
+
+  # ---------------------------------------------------------
+  # Build report context for the image description model.
+  # ---------------------------------------------------------
+
+  context_lines = [
+    "【工事報告書】",
+    f"報告書名: {report.name}",
+    "",
+    "【報告書テンプレート】",
+    f"テンプレート名: {template.name}",
+  ]
+
+  if template.description:
+    context_lines.append(
+      f"テンプレート説明: {template.description}"
+    )
+
+  context_lines.extend([
+    "",
+    "【テンプレート項目】",
+  ])
+
+  template_fields = sorted(
+    template.fields,
+    key=lambda field: field.order,
+  )
+
+  if template_fields:
+    for field in template_fields:
+      context_lines.append(
+        f"- {field.name}: {field.description}"
+      )
+  else:
+    context_lines.append("なし")
+
+  context_lines.extend([
+    "",
+    "【この報告書の現在の値】",
+  ])
+
+  report_fields = sorted(
+    report.fields,
+    key=lambda field: field.order,
+  )
+
+  has_report_values = False
+
+  for field in report_fields:
     if not field.value:
       continue
 
@@ -214,21 +287,33 @@ async def regenerate_image_description(
       continue
 
     context_lines.append(
-      f"{field.name}: {value}"
+      f"- {field.name}: {value}"
     )
 
-  report_context = (
-    "\n".join(context_lines)
-    if context_lines
-    else None
-  )
+    has_report_values = True
 
-  stmt = select(ImageTag).where(
-    ImageTag.company_id == company.id
+  if not has_report_values:
+    context_lines.append("なし")
+
+  report_context = "\n".join(context_lines)
+
+  # ---------------------------------------------------------
+  # Load company image tags.
+  # ---------------------------------------------------------
+
+  stmt = (
+    select(ImageTag)
+    .where(
+      ImageTag.company_id == company.id
+    )
   )
 
   result = await db.execute(stmt)
   tags_list = result.scalars().all()
+
+  # ---------------------------------------------------------
+  # Generate the description.
+  # ---------------------------------------------------------
 
   ai_result = None
 
@@ -253,7 +338,6 @@ async def regenerate_image_description(
   if description is not None:
     image.description = description
 
-    
 async def process_status_image(
   image: Image,
   image_url: str,
