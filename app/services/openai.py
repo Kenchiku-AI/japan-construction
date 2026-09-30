@@ -185,6 +185,11 @@ async def get_image_tags_and_description(
 }
 """
 
+  logger.info(
+    "===== DESCRIPTION INSTRUCTION =====\n%s\n===== End Prompt =====",
+    description_instruction,
+  )
+
   response = await client.responses.create(
     model="gpt-4.1-mini",
     temperature=0,
