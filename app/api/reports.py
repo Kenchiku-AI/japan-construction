@@ -58,7 +58,11 @@ from app.services.openai import (
   transcribe_and_extract_json,
   extract_report_fields_from_line_conversations,
 )
-from app.services.images import create_image_from_line_message
+from app.services.images import (
+  create_image_from_line_message,
+  create_presigned_image_url,
+  regenerate_image_description,
+)
 from app.services.billing import can_use_billed_features
 from app.services.s3 import s3_client, BUCKET_NAME
 
@@ -1154,6 +1158,8 @@ async def update_report(
 
     report.status = payload.status
 
+  fields_changed = False
+
   if payload.field_values:
     field_map = {
       field.id: field
@@ -1167,11 +1173,32 @@ async def update_report(
           detail=f"Field {field_id} does not belong to this report",
         )
 
-      field_map[field_id].value = value
+      field = field_map[field_id]
+
+      if field.value != value:
+        field.value = value
+        fields_changed = True
 
   report.updated_at = datetime.now(timezone.utc)
 
   await db.commit()
+
+  if fields_changed:
+    for image_link in report.image_links:
+      image = image_link.image
+
+      image_url = create_presigned_image_url(
+        image.image_url,
+      )
+
+      await regenerate_image_description(
+        image=image,
+        report=report,
+        image_url=image_url,
+        db=db,
+      )
+
+    await db.commit()
 
   # ---------------------------------------------------------
   # Re-fetch so the response contains the current persisted
@@ -2015,10 +2042,71 @@ async def report_line_conversations(
       )
     )
 
+    fields_changed = False
+
+    field_map = {
+      field.id: field
+      for field in report.fields
+    }
+
+    for field_id, value in changed_fields.items():
+      field = field_map.get(field_id)
+
+      if not field:
+        raise HTTPException(
+          status_code=400,
+          detail=f"Field {field_id} does not belong to this report",
+        )
+
+      if field.value != value:
+        field.value = value
+        fields_changed = True
+
+    if fields_changed:
+      report.updated_at = datetime.now(timezone.utc)
+
+      await db.commit()
+
+      # Reload image links after sync_report_line_images()
+      # so newly linked images are included.
+      image_links_result = await db.execute(
+        select(ReportImageLink)
+        .where(
+          ReportImageLink.report_id == report.id,
+        )
+        .options(
+          selectinload(ReportImageLink.image),
+        )
+      )
+
+      image_links = image_links_result.scalars().all()
+
+      for image_link in image_links:
+        image = image_link.image
+
+        if image is None:
+          continue
+
+        image_url = create_presigned_image_url(
+          image.image_url,
+        )
+
+        await regenerate_image_description(
+          image=image,
+          report=report,
+          image_url=image_url,
+          db=db,
+        )
+
+      await db.commit()
+
     return ReportSpeechResponse(
       field_values=changed_fields,
       image_sync_failed=image_sync_failed,
     )
+
+  except HTTPException:
+    raise
 
   except Exception:
     logger.exception(

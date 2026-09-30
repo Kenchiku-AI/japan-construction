@@ -180,6 +180,60 @@ async def add_description_and_tags(
   if description is not None:
     image.description = description
 
+async def regenerate_image_description(
+  image: Image,
+  report: Report,
+  image_url: str,
+  db: AsyncSession,
+):
+  stmt = select(Company).where(
+    Company.id == image.company_id
+  )
+  result = await db.execute(stmt)
+  company = result.scalar_one_or_none()
+
+  if not company:
+    raise ValueError(
+      f"Company not found: {image.company_id}"
+    )
+
+  if not company.image_descriptions_enabled:
+    return
+
+  context_lines = []
+
+  for field in sorted(
+    report.fields,
+    key=lambda field: field.order,
+  ):
+    if not field.value or not field.value.strip():
+      continue
+
+    context_lines.append(
+      f"{field.name}: {field.value}"
+    )
+
+  report_context = (
+    "\n".join(context_lines)
+    if context_lines
+    else None
+  )
+
+  for attempt in range(3):
+    try:
+      description = await get_image_description(
+        image_url=image_url,
+        report_context=report_context,
+      )
+      image.description = description
+      return
+
+    except Exception:
+      if attempt == 2:
+        raise
+
+      await asyncio.sleep(1)
+
 async def process_status_image(
   image: Image,
   image_url: str,
