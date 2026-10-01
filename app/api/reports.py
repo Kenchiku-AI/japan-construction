@@ -3,7 +3,14 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import (
+  APIRouter, 
+  Depends, 
+  HTTPException, 
+  status, 
+  Query, 
+  BackgroundTasks,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func, exists
 from sqlalchemy.orm import selectinload, aliased, joinedload
@@ -62,6 +69,7 @@ from app.services.images import (
   create_image_from_line_message,
   create_presigned_image_url,
   regenerate_image_description,
+  regenerate_report_image_descriptions_background,
 )
 from app.services.billing import can_use_billed_features
 from app.services.s3 import s3_client, BUCKET_NAME
@@ -999,6 +1007,7 @@ async def get_report(
 async def update_report(
   report_id: UUID,
   payload: ReportUpdate,
+  background_tasks: BackgroundTasks,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
@@ -1184,21 +1193,18 @@ async def update_report(
   await db.commit()
 
   if fields_changed:
+    # Mark all affected images as processing and persist this
+    # before returning the updated report.
     for image_link in report.image_links:
-      image = image_link.image
-
-      image_url = create_presigned_image_url(
-        image.image_url,
-      )
-
-      await regenerate_image_description(
-        image=image,
-        report=report,
-        image_url=image_url,
-        db=db,
-      )
+      image_link.image.status = "processing"
 
     await db.commit()
+
+    # Regeneration happens after the response is sent.
+    background_tasks.add_task(
+      regenerate_report_image_descriptions_background,
+      report.id,
+    )
 
   # ---------------------------------------------------------
   # Re-fetch so the response contains the current persisted
