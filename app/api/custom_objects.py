@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.core.dependencies import (
   get_current_user,
   require_company_manager,
+  require_company_or_project_guest_access,
 )
 from app.db.session import get_db
 from app.db.models import (
@@ -63,9 +64,10 @@ async def list_custom_object_definitions(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  require_company_manager(
+  await require_company_or_project_guest_access(
     current_user,
     company_id,
+    db,
   )
 
   result = await db.execute(
@@ -77,7 +79,6 @@ async def list_custom_object_definitions(
   )
 
   return result.scalars().all()
-
 
 @router.post(
   "/definitions",
@@ -139,11 +140,11 @@ async def get_custom_object_definition(
       detail="Custom object definition not found",
     )
 
-  if current_user.role != "admin":
-    require_company_manager(
-      current_user,
-      definition.company_id,
-    )
+  await require_company_or_project_guest_access(
+    current_user,
+    definition.company_id,
+    db,
+  )
 
   relationships = sorted(
     definition.custom_relationship_definitions_as_source,
@@ -160,6 +161,7 @@ async def get_custom_object_definition(
     created_at=definition.created_at,
     updated_at=definition.updated_at,
   )
+
 
 @router.patch(
   "/definitions/{definition_id}",
@@ -1061,11 +1063,19 @@ async def get_custom_object(
       detail="Custom object not found",
     )
 
-  if current_user.role != "admin":
-    require_company_manager(
-      current_user,
-      custom_object.company_id,
+  definition = custom_object.definition
+
+  if not definition:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Custom object definition not found",
     )
+
+  await require_company_or_project_guest_access(
+    current_user,
+    definition.company_id,
+    db,
+  )
 
   return await build_custom_object_detail_response(
     db,
@@ -1083,11 +1093,6 @@ async def create_custom_object(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  require_company_manager(
-    current_user,
-    payload.company_id,
-  )
-
   definition_result = await db.execute(
     select(CustomObjectDefinition)
     .where(
@@ -1105,6 +1110,12 @@ async def create_custom_object(
       status_code=status.HTTP_404_NOT_FOUND,
       detail="Custom object definition not found",
     )
+
+  await require_company_or_project_guest_access(
+    current_user,
+    definition.company_id,
+    db,
+  )
 
   custom_object = CustomObject(
     company_id=payload.company_id,
@@ -1222,6 +1233,7 @@ async def create_custom_object(
       )
 
       db.add(custom_relationship)
+
   await db.commit()
 
   result = await db.execute(
@@ -1266,12 +1278,6 @@ async def update_custom_object(
       detail="Custom object not found",
     )
 
-  if current_user.role != "admin":
-    require_company_manager(
-      current_user,
-      custom_object.company_id,
-    )
-
   updates = payload.model_dump(
     exclude_unset=True,
   )
@@ -1298,6 +1304,12 @@ async def update_custom_object(
       status_code=status.HTTP_400_BAD_REQUEST,
       detail="Custom object definition belongs to a different company",
     )
+
+  await require_company_or_project_guest_access(
+    current_user,
+    definition.company_id,
+    db,
+  )
 
   # Get all field definitions for this custom object definition
   field_definitions_result = await db.execute(
@@ -1392,11 +1404,9 @@ async def update_custom_object(
 
   # Update supplied relationships
   if "relationships" in updates:
-
     for relationship_definition_id, target_entity_ids in (
       updates["relationships"].items()
     ):
-
       relationship_definition = (
         relationship_definitions_by_id.get(
           relationship_definition_id
@@ -1439,7 +1449,6 @@ async def update_custom_object(
 
       # Create new relationships
       for target_entity_id in target_entity_ids:
-
         custom_relationship = CustomRelationship(
           company_id=custom_object.company_id,
           custom_relationship_definition_id=(
@@ -1489,6 +1498,7 @@ async def update_custom_object(
     custom_object,
   )
 
+
 @router.delete(
   "/{custom_object_id}",
   status_code=status.HTTP_204_NO_CONTENT,
@@ -1509,11 +1519,22 @@ async def delete_custom_object(
       detail="Custom object not found",
     )
 
-  if current_user.role != "admin":
-    require_company_manager(
-      current_user,
-      custom_object.company_id,
+  definition = await db.get(
+    CustomObjectDefinition,
+    custom_object.custom_object_definition_id,
+  )
+
+  if not definition:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Custom object definition not found",
     )
+
+  await require_company_or_project_guest_access(
+    current_user,
+    definition.company_id,
+    db,
+  )
 
   await db.delete(custom_object)
   await db.commit()

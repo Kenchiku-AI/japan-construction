@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.core.dependencies import (
   get_current_user,
   require_company_manager,
+  require_project_access,
 )
 from app.db.session import get_db
 from app.db.models import (
@@ -465,10 +466,17 @@ async def update_custom_field(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  field = await db.get(
-    CustomField,
-    field_id,
+  result = await db.execute(
+    select(CustomField)
+    .where(
+      CustomField.id == field_id,
+    )
+    .options(
+      selectinload(CustomField.definition),
+    )
   )
+
+  field = result.scalar_one_or_none()
 
   if not field:
     raise HTTPException(
@@ -476,11 +484,11 @@ async def update_custom_field(
       detail="Custom field not found",
     )
 
-  if current_user.role != "admin":
-    require_company_manager(
-      current_user,
-      field.company_id,
-    )
+  await _require_custom_field_update_access(
+    db=db,
+    current_user=current_user,
+    field=field,
+  )
 
   field.value = payload.value
 
@@ -567,37 +575,6 @@ async def list_company_custom_fields(
 
   return result.scalars().all()
 
-
-@router.post(
-  "/company/{company_id}",
-  response_model=CustomFieldRead,
-  status_code=status.HTTP_201_CREATED,
-)
-async def create_company_custom_field(
-  company_id: UUID,
-  payload: CustomFieldCreate,
-  db: AsyncSession = Depends(get_db),
-  current_user: User = Depends(get_current_user),
-):
-  require_company_manager(
-    current_user,
-    company_id,
-  )
-
-  return await _create_field(
-    db=db,
-    company_id=company_id,
-    definition_id=payload.custom_field_definition_id,
-    value=payload.value,
-    entity_type="company",
-    entity_id=company_id,
-  )
-
-
-# ---------------------------------------------------------------------------
-# Project fields
-# ---------------------------------------------------------------------------
-
 @router.get(
   "/project/{project_id}",
   response_model=List[CustomFieldRead],
@@ -639,43 +616,6 @@ async def list_project_custom_fields(
   )
 
   return result.scalars().all()
-
-
-@router.post(
-  "/project/{project_id}",
-  response_model=CustomFieldRead,
-  status_code=status.HTTP_201_CREATED,
-)
-async def create_project_custom_field(
-  project_id: UUID,
-  payload: CustomFieldCreate,
-  db: AsyncSession = Depends(get_db),
-  current_user: User = Depends(get_current_user),
-):
-  project = await db.get(
-    Project,
-    project_id,
-  )
-
-  if not project:
-    raise HTTPException(
-      status_code=status.HTTP_404_NOT_FOUND,
-      detail="Project not found",
-    )
-
-  require_company_manager(
-    current_user,
-    project.company_id,
-  )
-
-  return await _create_field(
-    db=db,
-    company_id=project.company_id,
-    definition_id=payload.custom_field_definition_id,
-    value=payload.value,
-    entity_type="project",
-    entity_id=project_id,
-  )
 
 
 # ---------------------------------------------------------------------------
@@ -748,14 +688,41 @@ async def create_user_custom_field(
       detail="User not found",
     )
 
+  definition = await db.get(
+    CustomFieldDefinition,
+    payload.custom_field_definition_id,
+  )
+
+  if not definition:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Custom field definition not found",
+    )
+
+  if definition.entity_type != "user":
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail=(
+        f"This field definition is for '{definition.entity_type}' "
+        "and cannot be used for 'user'"
+      ),
+    )
+
+  if current_user.id != user_id:
+    require_company_manager(
+      current_user,
+      definition.company_id,
+    )
+
   return await _create_field(
     db=db,
-    company_id=user.company_id,
-    definition_id=payload.custom_field_definition_id,
+    company_id=definition.company_id,
+    definition_id=definition.id,
     value=payload.value,
     entity_type="user",
     entity_id=user_id,
   )
+
 
 # ---------------------------------------------------------------------------
 # Company fields
@@ -787,10 +754,6 @@ async def create_company_custom_field(
   )
 
 
-# ---------------------------------------------------------------------------
-# Project fields
-# ---------------------------------------------------------------------------
-
 @router.post(
   "/project/{project_id}",
   response_model=CustomFieldRead,
@@ -813,9 +776,11 @@ async def create_project_custom_field(
       detail="Project not found",
     )
 
-  require_company_manager(
+  await require_project_access(
     current_user,
+    project.id,
     project.company_id,
+    db,
   )
 
   return await _create_field(
@@ -825,53 +790,6 @@ async def create_project_custom_field(
     value=payload.value,
     entity_type="project",
     entity_id=project_id,
-  )
-
-
-# ---------------------------------------------------------------------------
-# User fields
-# ---------------------------------------------------------------------------
-
-@router.post(
-  "/user/{user_id}",
-  response_model=CustomFieldRead,
-  status_code=status.HTTP_201_CREATED,
-)
-async def create_user_custom_field(
-  user_id: UUID,
-  payload: CustomFieldCreate,
-  db: AsyncSession = Depends(get_db),
-  current_user: User = Depends(get_current_user),
-):
-  user = await db.get(
-    User,
-    user_id,
-  )
-
-  if not user:
-    raise HTTPException(
-      status_code=status.HTTP_404_NOT_FOUND,
-      detail="User not found",
-    )
-
-  if not user.company_id:
-    raise HTTPException(
-      status_code=status.HTTP_400_BAD_REQUEST,
-      detail="User does not belong to a company",
-    )
-
-  require_company_manager(
-    current_user,
-    user.company_id,
-  )
-
-  return await _create_field(
-    db=db,
-    company_id=user.company_id,
-    definition_id=payload.custom_field_definition_id,
-    value=payload.value,
-    entity_type="user",
-    entity_id=user_id,
   )
 
 
@@ -944,14 +862,26 @@ async def create_custom_object_field(
       detail="Custom object not found",
     )
 
-  require_company_manager(
+  definition = await db.get(
+    CustomFieldDefinition,
+    payload.custom_field_definition_id,
+  )
+
+  if not definition:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Custom field definition not found",
+    )
+
+  await require_company_or_project_guest_access(
     current_user,
-    custom_object.company_id,
+    definition.company_id,
+    db,
   )
 
   return await _create_field(
     db=db,
-    company_id=custom_object.company_id,
+    company_id=definition.company_id,
     definition_id=payload.custom_field_definition_id,
     value=payload.value,
     entity_type="custom_object",
@@ -1077,3 +1007,100 @@ async def _create_field(
   )
 
   return result.scalar_one()
+
+async def _require_custom_field_update_access(
+  db: AsyncSession,
+  current_user: User,
+  field: CustomField,
+) -> None:
+  if current_user.role == "admin":
+    return
+
+  definition = field.definition
+
+  if not definition:
+    definition = await db.get(
+      CustomFieldDefinition,
+      field.custom_field_definition_id,
+    )
+
+  if not definition:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Custom field definition not found",
+    )
+
+  project_link_result = await db.execute(
+    select(CustomFieldProjectLink).where(
+      CustomFieldProjectLink.custom_field_id == field.id,
+    )
+  )
+  project_link = project_link_result.scalar_one_or_none()
+
+  if project_link:
+    project = await db.get(Project, project_link.project_id)
+
+    if not project:
+      raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Project not found",
+      )
+
+    await require_project_access(
+      current_user,
+      project.id,
+      project.company_id,
+      db,
+    )
+    return
+
+  user_link_result = await db.execute(
+    select(CustomFieldUserLink).where(
+      CustomFieldUserLink.custom_field_id == field.id,
+    )
+  )
+  user_link = user_link_result.scalar_one_or_none()
+
+  if user_link:
+    if current_user.id == user_link.user_id:
+      return
+
+    require_company_manager(
+      current_user,
+      definition.company_id,
+    )
+    return
+
+  company_link_result = await db.execute(
+    select(CustomFieldCompanyLink).where(
+      CustomFieldCompanyLink.custom_field_id == field.id,
+    )
+  )
+  company_link = company_link_result.scalar_one_or_none()
+
+  if company_link:
+    require_company_manager(
+      current_user,
+      company_link.company_id,
+    )
+    return
+
+  custom_object_link_result = await db.execute(
+    select(CustomFieldCustomObjectLink).where(
+      CustomFieldCustomObjectLink.custom_field_id == field.id,
+    )
+  )
+  custom_object_link = custom_object_link_result.scalar_one_or_none()
+
+  if custom_object_link:
+    await require_company_or_project_guest_access(
+      current_user,
+      definition.company_id,
+      db,
+    )
+    return
+
+  raise HTTPException(
+    status_code=status.HTTP_400_BAD_REQUEST,
+    detail="Custom field is not linked to a valid entity",
+  )
