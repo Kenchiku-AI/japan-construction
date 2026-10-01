@@ -9,12 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import (
   get_current_user,
   require_company_manager,
+  require_project_access,
 )
 from app.db.session import get_db
 from app.db.models import (
   Company,
   Project,
   User,
+  ProjectGuestLink,
   CustomObject,
   CustomObjectDefinition,
   CustomFieldDefinition,
@@ -402,17 +404,20 @@ async def create_custom_relationship(
       detail="Custom relationship definition not found",
     )
 
-  if current_user.role != "admin":
-    require_company_manager(
-      current_user,
-      definition.company_id,
-    )
+  await _require_custom_relationship_update_access(
+    db=db,
+    current_user=current_user,
+    definition=definition,
+    source_entity_id=payload.source_entity_id,
+    target_entity_ids=[payload.target_entity_id],
+  )
 
   await _validate_relationship_entities(
     db=db,
     definition=definition,
     source_entity_id=payload.source_entity_id,
     target_entity_id=payload.target_entity_id,
+    current_user=current_user,
   )
 
   await _validate_duplicate_relationship(
@@ -443,7 +448,6 @@ async def create_custom_relationship(
   await db.refresh(relationship)
 
   return relationship
-
 
 @router.get(
   "/{relationship_id}",
@@ -495,30 +499,27 @@ async def update_custom_relationships(
       detail="Custom relationship definition not found",
     )
 
-  if current_user.role != "admin":
-    require_company_manager(
-      current_user,
-      definition.company_id,
-    )
+  target_entity_ids = list(
+    dict.fromkeys(payload.target_entity_ids)
+  )
 
-  # A "many" relationship can have multiple targets.
-  # A "one" relationship can have at most one.
+  await _require_custom_relationship_update_access(
+    db=db,
+    current_user=current_user,
+    definition=definition,
+    source_entity_id=payload.source_entity_id,
+    target_entity_ids=target_entity_ids,
+  )
+
   if (
     definition.cardinality == CustomRelationshipCardinality.one
-    and len(payload.target_entity_ids) > 1
+    and len(target_entity_ids) > 1
   ):
     raise HTTPException(
       status_code=status.HTTP_400_BAD_REQUEST,
       detail="This relationship only allows one target",
     )
 
-  # Remove duplicate target IDs from the request.
-  target_entity_ids = list(
-    dict.fromkeys(payload.target_entity_ids)
-  )
-
-  # Validate all requested targets.
-  # If a target entity no longer exists, silently filter it out.
   valid_target_entity_ids = []
 
   for target_entity_id in target_entity_ids:
@@ -528,18 +529,19 @@ async def update_custom_relationships(
         definition=definition,
         source_entity_id=payload.source_entity_id,
         target_entity_id=target_entity_id,
+        current_user=current_user,
       )
+
       valid_target_entity_ids.append(target_entity_id)
+
     except HTTPException as exc:
       if exc.status_code == status.HTTP_404_NOT_FOUND:
         continue
 
       raise
 
-  # Get all existing relationships for this source + definition.
   existing_result = await db.execute(
-    select(CustomRelationship)
-    .where(
+    select(CustomRelationship).where(
       CustomRelationship.custom_relationship_definition_id
       == definition.id,
       CustomRelationship.source_entity_id
@@ -557,7 +559,6 @@ async def update_custom_relationships(
   requested_target_ids = set(valid_target_entity_ids)
   existing_target_ids = set(existing_by_target_id.keys())
 
-  # Delete relationships whose target is no longer requested.
   for target_entity_id in (
     existing_target_ids - requested_target_ids
   ):
@@ -565,7 +566,6 @@ async def update_custom_relationships(
       existing_by_target_id[target_entity_id]
     )
 
-  # Create relationships for newly requested targets.
   for target_entity_id in (
     requested_target_ids - existing_target_ids
   ):
@@ -588,7 +588,6 @@ async def update_custom_relationships(
 
   await db.commit()
 
-  # Return the final set of relationships.
   result = await db.execute(
     select(CustomRelationship)
     .where(
@@ -778,6 +777,7 @@ async def _validate_relationship_entities(
   definition: CustomRelationshipDefinition,
   source_entity_id: UUID,
   target_entity_id: UUID,
+  current_user: User | None = None,
 ):
   source_company_id = await _get_entity_company_id(
     db=db,
@@ -791,13 +791,41 @@ async def _validate_relationship_entities(
     entity_id=target_entity_id,
   )
 
-  if source_company_id != definition.company_id:
+  source_company_matches = (
+    source_company_id == definition.company_id
+  )
+
+  target_company_matches = (
+    target_company_id == definition.company_id
+  )
+
+  # A user's own User entity may be used with a relationship
+  # definition owned by another company.
+  if (
+    not source_company_matches
+    and current_user
+    and definition.source_entity_type
+    == CustomRelationshipEntityType.user
+    and source_entity_id == current_user.id
+  ):
+    source_company_matches = True
+
+  if (
+    not target_company_matches
+    and current_user
+    and definition.target_entity_type
+    == CustomRelationshipEntityType.user
+    and target_entity_id == current_user.id
+  ):
+    target_company_matches = True
+
+  if not source_company_matches:
     raise HTTPException(
       status_code=status.HTTP_400_BAD_REQUEST,
       detail="Source entity belongs to a different company",
     )
 
-  if target_company_id != definition.company_id:
+  if not target_company_matches:
     raise HTTPException(
       status_code=status.HTTP_400_BAD_REQUEST,
       detail="Target entity belongs to a different company",
@@ -939,3 +967,91 @@ async def _get_entity_company_id(
     )
 
   return entity.company_id
+
+
+async def _require_custom_relationship_update_access(
+  db: AsyncSession,
+  current_user: User,
+  definition: CustomRelationshipDefinition,
+  source_entity_id: UUID | None = None,
+  target_entity_ids: list[UUID] | None = None,
+) -> None:
+  if current_user.role == "admin":
+    return
+
+  target_entity_ids = target_entity_ids or []
+
+  entity_types_and_ids = [
+    (definition.source_entity_type, source_entity_id),
+  ]
+
+  entity_types_and_ids.extend(
+    (definition.target_entity_type, target_entity_id)
+    for target_entity_id in target_entity_ids
+  )
+
+  # Project relationships require access to the specific project.
+  for entity_type, entity_id in entity_types_and_ids:
+    if (
+      entity_type == CustomRelationshipEntityType.project
+      and entity_id is not None
+    ):
+      project = await db.get(Project, entity_id)
+
+      if not project:
+        raise HTTPException(
+          status_code=status.HTTP_404_NOT_FOUND,
+          detail="Project not found",
+        )
+
+      await require_project_access(
+        current_user,
+        project.id,
+        project.company_id,
+        db,
+      )
+
+      return
+
+  # A user can create/update a relationship involving their own
+  # User entity.
+  for entity_type, entity_id in entity_types_and_ids:
+    if (
+      entity_type == CustomRelationshipEntityType.user
+      and entity_id == current_user.id
+    ):
+      return
+
+  # Company relationships require manager privileges.
+  if (
+    definition.source_entity_type
+    == CustomRelationshipEntityType.company
+    or definition.target_entity_type
+    == CustomRelationshipEntityType.company
+  ):
+    require_company_manager(
+      current_user,
+      definition.company_id,
+    )
+    return
+
+  # Custom-object relationships allow company members or anyone
+  # who is a guest on at least one project owned by the company.
+  if (
+    definition.source_entity_type
+    == CustomRelationshipEntityType.custom_object
+    or definition.target_entity_type
+    == CustomRelationshipEntityType.custom_object
+  ):
+    await require_company_or_project_guest_access(
+      current_user,
+      definition.company_id,
+      db,
+    )
+    return
+
+  # User relationships involving another user require manager access.
+  require_company_manager(
+    current_user,
+    definition.company_id,
+  )

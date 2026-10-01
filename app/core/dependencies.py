@@ -5,10 +5,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from uuid import UUID
-
 from app.core.config import settings
 from app.db.session import get_db
-from app.db.models import User, ProjectGuestLink
+from app.db.models import (
+  User,
+  Project,
+  ProjectGuestLink,
+)
 
 oauth2_scheme = OAuth2PasswordBearer(
   tokenUrl="/auth/login",
@@ -104,4 +107,34 @@ async def require_project_access(
     raise HTTPException(
       status_code=status.HTTP_403_FORBIDDEN,
       detail="Not authorized to access this project",
+    )
+
+async def require_company_or_project_guest_access(
+  user: User,
+  company_id: UUID,
+  db: AsyncSession,
+):
+  if user.role == "admin":
+    return
+
+  if user.company_id == company_id:
+    return
+
+  result = await db.execute(
+    select(ProjectGuestLink)
+    .join(
+      Project,
+      Project.id == ProjectGuestLink.project_id,
+    )
+    .where(
+      ProjectGuestLink.user_id == user.id,
+      Project.company_id == company_id,
+    )
+    .limit(1)
+  )
+
+  if not result.scalar_one_or_none():
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail="Not authorized to access this company's custom fields or relationships",
     )
