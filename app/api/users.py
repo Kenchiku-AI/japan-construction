@@ -411,36 +411,70 @@ async def patch_user(
 
 
 async def get_user_companies(
-  user: User,
+  user_id: UUID,
   db: AsyncSession,
 ) -> list[CompanyListItem]:
-  result = await db.execute(
-    select(Company.id, Company.name)
-    .where(Company.id == user.company_id)
-    .union(
-      select(Company.id, Company.name)
-      .join(
-        Project,
-        Project.company_id == Company.id,
-      )
-      .join(
-        ProjectGuestLink,
-        ProjectGuestLink.project_id == Project.id,
-      )
-      .where(
-        ProjectGuestLink.user_id == user.id,
-      )
+
+  user_company_result = await db.execute(
+    select(
+      Company.id,
+      Company.name,
     )
+    .join(
+      User,
+      User.company_id == Company.id,
+    )
+    .where(
+      User.id == user_id,
+    )
+  )
+
+  user_company = user_company_result.first()
+
+  guest_companies_result = await db.execute(
+    select(
+      Company.id,
+      Company.name,
+    )
+    .join(
+      Project,
+      Project.company_id == Company.id,
+    )
+    .join(
+      ProjectGuestLink,
+      ProjectGuestLink.project_id == Project.id,
+    )
+    .where(
+      ProjectGuestLink.user_id == user_id,
+      Company.id != (
+        user_company[0]
+        if user_company
+        else None
+      ),
+    )
+    .distinct()
     .order_by(Company.name)
   )
 
-  return [
+  companies = []
+
+  if user_company:
+    companies.append(
+      CompanyListItem(
+        id=user_company[0],
+        name=user_company[1],
+      )
+    )
+
+  companies.extend(
     CompanyListItem(
       id=company_id,
       name=company_name,
     )
-    for company_id, company_name in result.all()
-  ]
+    for company_id, company_name in guest_companies_result.all()
+  )
+
+  return companies
 
 
 async def get_user_custom_fields(
