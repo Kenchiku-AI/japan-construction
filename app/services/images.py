@@ -338,6 +338,78 @@ async def regenerate_image_description(
   if description is not None:
     image.description = description
 
+
+async def regenerate_report_image_descriptions_background(
+  report_id: uuid.UUID,
+):
+  async with AsyncSessionLocal() as db:
+    stmt = (
+      select(Report)
+      .where(
+        Report.id == report_id,
+      )
+      .options(
+        selectinload(Report.fields),
+        selectinload(Report.image_links)
+          .selectinload(ReportImageLink.image),
+      )
+    )
+
+    result = await db.execute(stmt)
+
+    report = result.scalar_one_or_none()
+
+    if not report:
+      logger.warning(
+        "Report %s not found while regenerating image descriptions",
+        report_id,
+      )
+      return
+
+    for image_link in report.image_links:
+      image = image_link.image
+
+      try:
+        image_url = create_presigned_image_url(
+          image.image_url,
+        )
+
+        await regenerate_image_description(
+          image=image,
+          report=report,
+          image_url=image_url,
+          db=db,
+        )
+
+        image.status = "completed"
+
+        await db.commit()
+
+      except Exception:
+        await db.rollback()
+
+        # Re-load the image after rollback because SQLAlchemy
+        # may have expired the current object state.
+        image_result = await db.execute(
+          select(Image).where(
+            Image.id == image.id,
+          )
+        )
+
+        image = image_result.scalar_one_or_none()
+
+        if image:
+          image.status = "failed"
+          await db.commit()
+
+        logger.exception(
+          "Failed to regenerate image description for image %s "
+          "in report %s",
+          image.id if image else "unknown",
+          report_id,
+        )
+
+
 async def process_status_image(
   image: Image,
   image_url: str,
