@@ -2597,23 +2597,35 @@ NEVER transpose rows and columns.
       pdf_renders: list[dict] = []
 
       if has_pdf:
+        modes = set()
+
         for pdf_file in input_files:
           if pdf_file.suffix.lower() != ".pdf":
             continue
 
-          pdf_content, renders = self._build_pdf_agent_content(
+          pdf_content, renders, mode = self._build_pdf_agent_inputs(
             pdf_file,
           )
 
           content.extend(pdf_content)
           pdf_renders.extend(renders)
+          modes.add(mode)
 
-        content.append(
-          {
-            "type": "input_text",
-            "text": self._pdf_prompt_instructions(),
-          }
-        )
+        if "cells" in modes:
+          content.append(
+            {
+              "type": "input_text",
+              "text": self._cell_prompt_instructions(),
+            }
+          )
+
+        if "coords" in modes:
+          content.append(
+            {
+              "type": "input_text",
+              "text": self._pdf_prompt_instructions(),
+            }
+          )
 
       tools = []
 
@@ -2710,6 +2722,12 @@ NEVER transpose rows and columns.
         self._convert_pdf_edit_pixels_to_points(
           agent_output,
           pdf_renders,
+        )
+
+      if has_pdf:
+        self._resolve_cell_edits(
+          agent_output,
+          input_files,
         )
 
       if not has_image and not has_pdf:
@@ -4031,13 +4049,13 @@ NEVER transpose rows and columns.
     value: str,
     font_name: str,
     font_size: float,
+    multiline: bool = False,
   ) -> None:
     """
     Add a real editable AcroForm text field to an existing PDF.
 
-    `rect` is given in VISUAL page coordinates (what you see on
-    screen). For rotated pages it is converted to the unrotated
-    coordinate system that widgets require.
+    `rect` is in VISUAL page coordinates. For rotated pages it is
+    converted to the unrotated coordinates widgets require.
     """
 
     import fitz
@@ -4055,33 +4073,881 @@ NEVER transpose rows and columns.
     widget.rect = widget_rect
     widget.field_value = str(value)
 
+    if multiline:
+      widget.field_flags = fitz.PDF_TX_FIELD_IS_MULTILINE
+
     widget.text_font = font_name
-    widget.text_fontsize = max(
-      4,
-      float(font_size),
-    )
+    widget.text_fontsize = max(3, float(font_size))
 
     widget.border_color = None
     widget.fill_color = None
     widget.text_color = (0, 0, 0)
 
-    page.add_widget(
-      widget,
-    )
+    page.add_widget(widget)
 
     widget.update()
 
     logger.info(
-      "Created editable PDF field: "
-      "field_name=%r rect=%s widget_rect=%s value=%r "
-      "font=%r fontsize=%.2f",
+      "Created editable PDF field: field_name=%r rect=%s "
+      "widget_rect=%s value=%r font=%r fontsize=%.2f multiline=%s",
       field_name,
       rect,
       widget_rect,
       value,
       font_name,
       font_size,
-    )  
+      multiline,
+    )
+
+
+  _PLACEHOLDER_CHARS = set("年月日歳才（）()［］[]～〜~:：/／-－—、,.。")
+
+  # ------------------------------------------------------------------
+  # geometry
+  # ------------------------------------------------------------------
+  def _form_lines(self, page):
+    """Solid and dotted horizontal/vertical rules from vector drawings."""
+    solid_h, solid_v, dot_h, dot_v, tiny = [], [], [], [], []
+
+    for dr in page.get_drawings():
+      dashes = dr.get("dashes")
+      dashed = bool(dashes) and dashes not in ("[] 0", "[] 0.0")
+      stroked = "s" in str(dr.get("type", ""))
+
+      for item in dr.get("items", []):
+        op = item[0]
+        try:
+          if op == "l":
+            p1, p2 = item[1], item[2]
+            if abs(p1.y - p2.y) <= 0.75 and abs(p1.x - p2.x) >= 4:
+              seg = ((p1.y + p2.y) / 2, min(p1.x, p2.x), max(p1.x, p2.x))
+              (dot_h if dashed else solid_h).append(seg)
+            elif abs(p1.x - p2.x) <= 0.75 and abs(p1.y - p2.y) >= 4:
+              seg = ((p1.x + p2.x) / 2, min(p1.y, p2.y), max(p1.y, p2.y))
+              (dot_v if dashed else solid_v).append(seg)
+          elif op in ("re", "qu"):
+            r = item[1] if op == "re" else item[1].rect
+            w, h = r.width, r.height
+            if w <= 2.0 and h <= 2.0:
+              tiny.append(((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2))
+            elif h <= 2.0 and w >= 4:
+              solid_h.append(((r.y0 + r.y1) / 2, r.x0, r.x1))
+            elif w <= 2.0 and h >= 4:
+              solid_v.append(((r.x0 + r.x1) / 2, r.y0, r.y1))
+            elif w > 4 and h > 4 and stroked:
+              solid_h += [(r.y0, r.x0, r.x1), (r.y1, r.x0, r.x1)]
+              solid_v += [(r.x0, r.y0, r.y1), (r.x1, r.y0, r.y1)]
+        except Exception:
+          continue
+
+    # Dotted rules drawn as rows of tiny squares.
+    def runs(points, key, along):
+      groups = {}
+      for p in points:
+        groups.setdefault(round(p[key] * 2) / 2, []).append(p[along])
+      out = []
+      for k, vals in groups.items():
+        vals.sort()
+        start, prev, count = vals[0], vals[0], 1
+        for v in vals[1:] + [None]:
+          if v is not None and v - prev <= 8:
+            prev, count = v, count + 1
+            continue
+          if count >= 6:
+            out.append((k, start, prev))
+          if v is not None:
+            start, prev, count = v, v, 1
+      return out
+
+    dot_h += runs(tiny, 1, 0)
+    dot_v += runs(tiny, 0, 1)
+
+    return solid_h, solid_v, dot_h, dot_v
+
+  def _detect_cells(self, page, solid_h, solid_v, dot_h, dot_v):
+    """Enclosed rectangular regions (table cells) via raster flood fill."""
+    import fitz
+
+    s = 3.0
+    ox, oy = page.rect.x0, page.rect.y0
+    W = int(page.rect.width * s) + 2
+    H = int(page.rect.height * s) + 2
+    img = np.full((H, W), 255, np.uint8)
+    pad = 0.8
+
+    def P(x, y):
+      return int(round((x - ox) * s)), int(round((y - oy) * s))
+
+    for y, x0, x1 in solid_h + dot_h:
+      cv2.line(img, P(x0 - pad, y), P(x1 + pad, y), 0, 3)
+    for x, y0, y1 in solid_v + dot_v:
+      cv2.line(img, P(x, y0 - pad), P(x, y1 + pad), 0, 3)
+
+    n, _, stats, _ = cv2.connectedComponentsWithStats(
+      (img == 255).astype(np.uint8), connectivity=4
+    )
+
+    cells = []
+    for i in range(1, n):
+      x, y, w, h, area = stats[i]
+      if x <= 0 or y <= 0 or x + w >= W - 1 or y + h >= H - 1:
+        continue
+      if area / float(w * h) < 0.92:
+        continue
+      r = fitz.Rect(
+        ox + x / s, oy + y / s, ox + (x + w) / s, oy + (y + h) / s
+      )
+      if r.width < 8 or r.height < 5:
+        continue
+      if (
+        r.width > 0.6 * page.rect.width
+        and r.height > 0.5 * page.rect.height
+      ):
+        continue
+      cells.append(r)
+
+    return cells
+
+  # ------------------------------------------------------------------
+  # text helpers
+  # ------------------------------------------------------------------
+  @staticmethod
+  def _page_chars(page):
+    import fitz
+
+    chars = []
+    raw = page.get_text("rawdict")
+    for b in raw.get("blocks", []):
+      if b.get("type") != 0:
+        continue
+      for l in b.get("lines", []):
+        for sp in l.get("spans", []):
+          for ch in sp.get("chars", []):
+            if ch["c"].strip() == "":
+              continue
+            chars.append({"c": ch["c"], "r": fitz.Rect(ch["bbox"])})
+    return chars
+
+  @staticmethod
+  def _text_in(chars, rect):
+    sel = []
+    for ch in chars:
+      r = ch["r"]
+      cx, cy = (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2
+      if rect.x0 <= cx <= rect.x1 and rect.y0 <= cy <= rect.y1:
+        sel.append(ch)
+
+    if not sel:
+      return "", []
+
+    sel.sort(key=lambda c: ((c["r"].y0 + c["r"].y1) / 2, c["r"].x0))
+
+    lines, cur = [], [sel[0]]
+    for ch in sel[1:]:
+      cy = (ch["r"].y0 + ch["r"].y1) / 2
+      py = (cur[-1]["r"].y0 + cur[-1]["r"].y1) / 2
+      if abs(cy - py) <= 3.0:
+        cur.append(ch)
+      else:
+        lines.append(cur)
+        cur = [ch]
+    lines.append(cur)
+
+    out = []
+    for ln in lines:
+      ln.sort(key=lambda c: c["r"].x0)
+      s = ln[0]["c"]
+      for a, b in zip(ln, ln[1:]):
+        if b["r"].x0 - a["r"].x1 > 0.25 * a["r"].height:
+          s += " "
+        s += b["c"]
+      out.append(s)
+
+    text = " ".join(out)
+    text = re.sub(r"(?<=[^\x00-\x7f]) (?=[^\x00-\x7f])", "", text)
+    return text.strip(), sel
+
+  def _is_placeholder(self, text):
+    return all(c in self._PLACEHOLDER_CHARS or c.isspace() for c in text)
+
+  @staticmethod
+  def _left_label(chars, band, max_gap=40.0, max_span=110.0):
+    """Contiguous printed text immediately left of a field, same line."""
+    cand = []
+    for ch in chars:
+      r = ch["r"]
+      cy = (r.y0 + r.y1) / 2
+      if band.y0 - 3 <= cy <= band.y1 + 0.5 and r.x1 <= band.x0 + 1:
+        cand.append(ch)
+
+    cand.sort(key=lambda c: -c["r"].x1)
+
+    taken = []
+    for ch in cand:
+      if not taken:
+        if band.x0 - ch["r"].x1 > 40:
+          break
+        taken.append(ch)
+      elif taken[-1]["r"].x0 - ch["r"].x1 <= max_gap:
+        taken.append(ch)
+      else:
+        break
+      if band.x0 - taken[-1]["r"].x0 > max_span:
+        break
+
+    taken.sort(key=lambda c: c["r"].x0)
+    return "".join(c["c"] for c in taken)
+
+  # ------------------------------------------------------------------
+  # field extraction
+  # ------------------------------------------------------------------
+  def _extract_pdf_fields(self, page, page_number=1):
+    import fitz
+
+    if page.rotation != 0:
+      return []
+
+    chars = self._page_chars(page)
+    solid_h, solid_v, dot_h, dot_v = self._form_lines(page)
+    rects = self._detect_cells(page, solid_h, solid_v, dot_h, dot_v)
+
+    cells = []
+    for r in rects:
+      text, sel = self._text_in(
+        chars,
+        fitz.Rect(r.x0 + 0.5, r.y0 + 0.5, r.x1 - 0.5, r.y1 - 0.5),
+      )
+      cells.append({
+        "r": r,
+        "text": text,
+        "chars": sel,
+        "fillable": self._is_placeholder(text) and r.width >= 12,
+      })
+
+    text_cells = [c for c in cells if not c["fillable"] and c["text"]]
+    fillable = [c for c in cells if c["fillable"]]
+
+    def xov(a, b):
+      return min(a.x1, b.x1) - max(a.x0, b.x0)
+
+    # Stacks: fillable cells joined vertically by dotted rules.
+    def dotted_below(c):
+      r = c["r"]
+      for y, x0, x1 in dot_h:
+        if (
+          abs(y - r.y1) <= 2.0
+          and min(x1, r.x1) - max(x0, r.x0) >= 0.5 * r.width
+        ):
+          return True
+      return False
+
+    for c in fillable:
+      c["dot_below"] = dotted_below(c)
+      c["chain"] = [c]
+
+    for c in sorted(fillable, key=lambda c: (c["r"].y0, c["r"].x0)):
+      if not c["dot_below"]:
+        continue
+      for d in fillable:
+        if (
+          abs(d["r"].y0 - c["r"].y1) <= 2.5
+          and abs(d["r"].x0 - c["r"].x0) <= 2.5
+          and abs(d["r"].x1 - c["r"].x1) <= 2.5
+        ):
+          chain = c["chain"] + [d]
+          for m in chain:
+            m["chain"] = chain
+          break
+
+    for c in fillable:
+      chain = sorted(c["chain"], key=lambda m: m["r"].y0)
+      c["stack_k"] = chain.index(c) + 1
+      c["stack_n"] = len(chain)
+      c["top"] = chain[0]["r"].y0
+
+    bands, last = [], None
+    for t in sorted({round(c["top"], 1) for c in fillable}):
+      if last is None or t - last > 2.0:
+        bands.append(t)
+      last = t
+
+    def band_of(top):
+      for i, b in enumerate(bands):
+        if abs(top - b) <= 2.0:
+          return i + 1
+      return 0
+
+    fields = []
+
+    for c in fillable:
+      r = c["r"]
+
+      col_top = min(
+        d["r"].y0
+        for d in fillable
+        if xov(d["r"], r) >= 0.5 * min(d["r"].width, r.width)
+      )
+
+      cand = [
+        t for t in text_cells
+        if t["r"].y1 <= col_top + 2.0
+        and xov(t["r"], r) >= 0.5 * min(t["r"].width, r.width)
+      ]
+      cand.sort(key=lambda t: -t["r"].y1)
+
+      accepted, edge = [], col_top
+      for t in cand:
+        if edge - t["r"].y1 <= 6.0:   # contiguous header stack only
+          accepted.append(t)
+          edge = t["r"].y0
+      accepted.sort(key=lambda t: t["r"].y0)
+
+      same = [
+        t for t in accepted
+        if abs(t["r"].x0 - r.x0) <= 3 and abs(t["r"].x1 - r.x1) <= 3
+      ]
+      group = [t["text"] for t in accepted if t not in same]
+
+      if same and len(same) == c["stack_n"]:
+        label = same[c["stack_k"] - 1]["text"]
+      else:
+        label = " / ".join(t["text"] for t in same)
+
+      left = ""
+      lefts = [
+        t for t in text_cells
+        if t["r"].x1 <= r.x0 + 2.0
+        and r.x0 - t["r"].x1 <= 40
+        and min(t["r"].y1, r.y1) - max(t["r"].y0, r.y0)
+        >= 0.5 * min(t["r"].height, r.height)
+      ]
+      if lefts:
+        left = max(lefts, key=lambda t: t["r"].x1)["text"]
+
+      anchors = [a for a in c["chars"] if a["c"] in "年月日歳"]
+      opens = [a for a in c["chars"] if a["c"] in "（("]
+      closes = [a for a in c["chars"] if a["c"] in "）)"]
+
+      fields.append({
+        "kind": "cell",
+        "page": page_number,
+        "rect": r,
+        "label": label,
+        "group": " / ".join(group),
+        "left": left,
+        "band": band_of(c["top"]),
+        "stack": f"{c['stack_k']}/{c['stack_n']}",
+        "printed": re.sub(r"\s+", "", c["text"]),
+        "anchors": anchors,
+        "bracket": (
+          (opens[0]["r"], closes[-1]["r"]) if opens and closes else None
+        ),
+        "printed_chars": c["chars"],
+      })
+
+    # Underline fields: long rules that are not the border of any cell.
+    all_cells = [c["r"] for c in cells]
+
+    merged = {}
+    for y, x0, x1 in solid_h:
+      if x1 - x0 >= 35:
+        merged.setdefault(round(y), []).append((x0, x1, y))
+
+    for segs in merged.values():
+      segs.sort()
+      cur, joined = list(segs[0]), []
+      for x0, x1, y in segs[1:]:
+        if x0 <= cur[1] + 3:
+          cur[1] = max(cur[1], x1)
+        else:
+          joined.append(tuple(cur))
+          cur = [x0, x1, y]
+      joined.append(tuple(cur))
+
+      for x0, x1, y in joined:
+        if x1 - x0 < 35:
+          continue
+
+        is_border = any(
+          (abs(cr.y0 - y) <= 2.5 or abs(cr.y1 - y) <= 2.5)
+          and min(cr.x1, x1) - max(cr.x0, x0)
+          >= 0.3 * min(cr.width, x1 - x0)
+          for cr in all_cells
+        )
+        if is_border:
+          continue
+
+        band = fitz.Rect(x0 + 1, y - 11, x1 - 1, y - 0.8)
+
+        # Stay clear of printed text at either end of the line.
+        for ch in chars:
+          cr = ch["r"]
+          if min(cr.y1, band.y1) - max(cr.y0, band.y0) < 0.5 * cr.height:
+            continue
+          if cr.x1 > band.x0 and cr.x0 < band.x0 + 25:
+            band.x0 = max(band.x0, cr.x1 + 1)
+          elif cr.x0 < band.x1 and cr.x1 > band.x1 - 25:
+            band.x1 = min(band.x1, cr.x0 - 1)
+
+        if band.width < 20:
+          continue
+
+        fields.append({
+          "kind": "underline",
+          "page": page_number,
+          "rect": band,
+          "label": "",
+          "group": "",
+          "left": self._left_label(chars, band),
+          "right": self._text_in(
+            chars,
+            fitz.Rect(band.x1, band.y0 - 3, band.x1 + 40, band.y1 + 0.5),
+          )[0],
+          "above": self._text_in(
+            chars,
+            fitz.Rect(band.x0 - 80, band.y0 - 30, band.x1, band.y0),
+          )[0],
+          "band": 0,
+          "stack": "",
+          "printed": "",
+          "anchors": [],
+          "bracket": None,
+          "printed_chars": [],
+        })
+
+    # Loose "年 月 日" slots that are not inside any cell.
+    line_groups = []
+    for ch in sorted(chars, key=lambda c: (c["r"].y0 + c["r"].y1) / 2):
+      cy = (ch["r"].y0 + ch["r"].y1) / 2
+      if line_groups and abs(cy - line_groups[-1][0]) <= 3:
+        line_groups[-1][1].append(ch)
+      else:
+        line_groups.append([cy, [ch]])
+
+    for _, ln in line_groups:
+      ln.sort(key=lambda c: c["r"].x0)
+      for i in range(len(ln) - 2):
+        a, b, d = ln[i], ln[i + 1], ln[i + 2]
+
+        if (a["c"], b["c"], d["c"]) != ("年", "月", "日"):
+          continue
+
+        # Real fill-in slots have blank space between the characters;
+        # a printed word like 雇入年月日 does not.
+        wdt = a["r"].width
+        if (
+          b["r"].x0 - a["r"].x1 < wdt
+          or d["r"].x0 - b["r"].x1 < wdt
+        ):
+          continue
+
+        center = fitz.Point(
+          (a["r"].x0 + a["r"].x1) / 2,
+          (a["r"].y0 + a["r"].y1) / 2,
+        )
+        if any(cr.contains(center) for cr in all_cells):
+          continue
+
+        prev = ln[i - 1]["r"].x1 + 0.5 if i > 0 else a["r"].x0 - 40
+        slot = fitz.Rect(
+          max(prev, a["r"].x0 - 40), a["r"].y0, d["r"].x1, a["r"].y1
+        )
+
+        fields.append({
+          "kind": "date_slot",
+          "page": page_number,
+          "rect": slot,
+          "label": "",
+          "group": "",
+          "left": self._left_label(chars, slot),
+          "right": self._text_in(
+            chars,
+            fitz.Rect(slot.x1, slot.y0, slot.x1 + 60, slot.y1),
+          )[0],
+          "above": self._text_in(
+            chars,
+            fitz.Rect(
+              slot.x0 - 100, slot.y0 - 30, slot.x1 + 100, slot.y0
+            ),
+          )[0],
+          "band": 0,
+          "stack": "",
+          "printed": "年月日",
+          "anchors": [a, b, d],
+          "bracket": None,
+          "printed_chars": [],
+        })
+
+    fields.sort(key=lambda f: (round(f["rect"].y0 / 4), f["rect"].x0))
+    for i, f in enumerate(fields, 1):
+      f["id"] = f"f{page_number}_{i}"
+
+    return fields
+
+  # ------------------------------------------------------------------
+  # catalog + overlay image for the model
+  # ------------------------------------------------------------------
+  def _format_field_catalog(self, fields):
+    lines = []
+    for f in fields:
+      r = f["rect"]
+      parts = [
+        f["id"],
+        f["kind"],
+        "rect=%d,%d,%d,%d" % (r.x0, r.y0, r.x1, r.y1),
+      ]
+      if f["band"]:
+        parts.append(f"band={f['band']}")
+      if f["stack"] and f["stack"] != "1/1":
+        parts.append(f"stack={f['stack']}")
+      for key in ("label", "group", "left", "above", "right", "printed"):
+        if f.get(key):
+          parts.append(f'{key}="{f[key]}"')
+      lines.append(" | ".join(parts))
+    return "\n".join(lines)
+
+  def _render_field_overlay(self, page, fields, long_edge_px=2600):
+    import io
+
+    import fitz
+
+    zoom = long_edge_px / max(page.rect.width, page.rect.height)
+    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    draw = ImageDraw.Draw(img)
+
+    try:
+      font = ImageFont.truetype(
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13
+      )
+    except Exception:
+      font = ImageFont.load_default()
+
+    for f in fields:
+      r = f["rect"]
+      x0 = (r.x0 - page.rect.x0) * zoom
+      y0 = (r.y0 - page.rect.y0) * zoom
+      x1 = (r.x1 - page.rect.x0) * zoom
+      y1 = (r.y1 - page.rect.y0) * zoom
+      draw.rectangle([x0, y0, x1, y1], outline=(255, 0, 0), width=1)
+      draw.text(
+        (x0 + 2, y0 + 1),
+        f["id"].split("_", 1)[1],
+        fill=(220, 0, 0),
+        font=font,
+      )
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+
+    return (
+      "data:image/png;base64,"
+      + base64.b64encode(buf.getvalue()).decode("utf-8")
+    )
+
+  # ------------------------------------------------------------------
+  # field + text -> exact coordinate edits
+  # ------------------------------------------------------------------
+  @staticmethod
+  def _ymd(text):
+    m = re.search(r"(\d{4})\D+(\d{1,2})\D+(\d{1,2})", str(text))
+    if not m:
+      return None
+    return m.group(1), str(int(m.group(2))), str(int(m.group(3)))
+
+  def _fit_font(self, text, width, height):
+    """Returns (font_size, needs_multiline)."""
+    import fitz
+
+    font_file = Path(
+      "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf"
+    )
+    try:
+      font = fitz.Font(fontfile=str(font_file))
+    except Exception:
+      font = fitz.Font("japan")
+
+    single = min(8.0, max(3.5, height * 0.8))
+    while single > 5.0 and font.text_length(text, fontsize=single) > width:
+      single -= 0.25
+
+    if font.text_length(text, fontsize=single) <= width:
+      return single, False
+
+    size = min(7.0, max(3.5, height * 0.8))
+    while size > 3.5:
+      lines, cur = 1, 0.0
+      for ch in text:
+        cw = font.text_length(ch, fontsize=size)
+        if cur + cw > width:
+          lines, cur = lines + 1, cw
+        else:
+          cur += cw
+      if lines * size * 1.2 <= height:
+        break
+      size -= 0.25
+
+    return size, True
+
+  def _expand_field_edit(self, field, text, filename):
+    import fitz
+
+    text = str(text).strip()
+    if not text:
+      return []
+
+    base = field["id"]
+    rect = field["rect"]
+
+    def edit(name, r, value, size, multiline=False):
+      return dict(
+        filename=filename,
+        page=field["page"],
+        field_name=name,
+        x0=r.x0, y0=r.y0, x1=r.x1, y1=r.y1,
+        text=str(value),
+        coordinate_space="pdf_points",
+        exact=True,
+        font_size=size,
+        multiline=multiline,
+      )
+
+    anchors = field["anchors"]
+    by_char = {}
+    for a in anchors:
+      by_char.setdefault(a["c"], a["r"])
+
+    # Date: numbers go before the printed 年 / 月 / 日.
+    ymd = self._ymd(text)
+    if ymd and all(k in by_char for k in "年月日"):
+      ar, mr, dr = by_char["年"], by_char["月"], by_char["日"]
+      top = min(ar.y0, mr.y0, dr.y0) - 1
+      bot = max(ar.y1, mr.y1, dr.y1) + 1
+      left = max(
+        rect.x0 + (0.5 if field["kind"] == "cell" else 0.0),
+        ar.x0 - 34,
+      )
+      parts = [
+        ("y", fitz.Rect(left, top, ar.x0 - 0.3, bot), ymd[0]),
+        ("m", fitz.Rect(ar.x1 + 0.3, top, mr.x0 - 0.3, bot), ymd[1]),
+        ("d", fitz.Rect(mr.x1 + 0.3, top, dr.x0 - 0.3, bot), ymd[2]),
+      ]
+      return [
+        edit(f"{base}_{k}", r, v, 7.5)
+        for k, r, v in parts
+        if r.width > 2
+      ]
+
+    # A single printed unit (年 / 歳): number goes just before it.
+    if len(anchors) == 1 and field["kind"] == "cell":
+      m = re.search(r"\d+", text)
+      if m:
+        a = anchors[0]["r"]
+        r = fitz.Rect(
+          max(rect.x0 + 0.5, a.x0 - 18), a.y0 - 1, a.x0 - 0.5, a.y1 + 1
+        )
+        return [edit(base, r, m.group(0), 7.5)]
+
+    # Ordinary text field.
+    x0, x1 = rect.x0 + 1.0, rect.x1 - 1.0
+    if field.get("bracket"):
+      opening, closing = field["bracket"]
+      x0, x1 = opening.x1 + 1.0, closing.x0 - 1.0
+
+    y0, y1 = rect.y0 + 0.5, rect.y1 - 0.5
+    printed = field.get("printed_chars") or []
+    if printed:
+      y0 = min(c["r"].y0 for c in printed) - 1.5
+      y1 = max(c["r"].y1 for c in printed) + 1.5
+    elif rect.height > 14:
+      mid = (rect.y0 + rect.y1) / 2
+      y0, y1 = mid - 6, mid + 6
+
+    box = fitz.Rect(x0, y0, x1, y1)
+    size, multiline = self._fit_font(text, box.width - 1, box.height)
+
+    if multiline:
+      box = fitz.Rect(
+        rect.x0 + 1, rect.y0 + 1, rect.x1 - 1, rect.y1 - 1
+      )
+      size, _ = self._fit_font(text, box.width - 1, box.height)
+      return [edit(base, box, text, size, True)]
+
+    return [edit(base, box, text, size)]
+
+  # ------------------------------------------------------------------
+  # integration with the agent
+  # ------------------------------------------------------------------
+  def _build_pdf_agent_inputs(self, input_file: Path):
+    """
+    Returns (content_items, renders, mode).
+
+    mode "cells":  vector PDF without AcroForm fields -> field catalog.
+    mode "coords": anything else -> the gridded-image coordinate path.
+    """
+    import fitz
+
+    if not hasattr(self, "_pdf_field_catalogs"):
+      self._pdf_field_catalogs = {}
+
+    fields, overlays, has_widgets = [], [], False
+
+    try:
+      with fitz.open(input_file) as doc:
+        has_widgets = any(
+          next(iter(page.widgets() or []), None) is not None
+          for page in doc
+        )
+        if not has_widgets:
+          for index, page in enumerate(doc, 1):
+            page_fields = self._extract_pdf_fields(page, index)
+            fields.extend(page_fields)
+            if page_fields:
+              overlays.append(
+                (index, self._render_field_overlay(page, page_fields))
+              )
+    except Exception:
+      logger.exception("Field extraction failed for %s", input_file)
+      fields, overlays, has_widgets = [], [], True
+
+    if has_widgets or len(fields) < 3:
+      content, renders = self._build_pdf_agent_content(input_file)
+      return content, renders, "coords"
+
+    self._pdf_field_catalogs[input_file.name] = {
+      f["id"]: f for f in fields
+    }
+
+    logger.info(
+      "PDF %s: detected %d fillable field(s)",
+      input_file.name,
+      len(fields),
+    )
+
+    content = [
+      {
+        "type": "input_text",
+        "text": (
+          f"PDF file: {input_file.name}. Each following image is one "
+          f"page; every detected fillable region is outlined in red "
+          f"and tagged with the number part of its id (e.g. '12' on "
+          f"page 1 means field id 'f1_12')."
+        ),
+      }
+    ]
+
+    for page_number, data_url in overlays:
+      content.append(
+        {"type": "input_text", "text": f"Page {page_number}:"}
+      )
+      content.append(
+        {"type": "input_image", "image_url": data_url, "detail": "high"}
+      )
+
+    content.append(
+      {
+        "type": "input_text",
+        "text": (
+          f"FIELD CATALOG for {input_file.name}:\n"
+          + self._format_field_catalog(fields)
+        ),
+      }
+    )
+
+    return content, [], "cells"
+
+  def _cell_prompt_instructions(self) -> str:
+    return """
+============================================================
+PDF EDITING BY FIELD ID — CRITICAL
+============================================================
+
+For PDFs with a FIELD CATALOG you do NOT return coordinates. You pick
+fields by id and give the text; the application positions it exactly.
+
+Return edits in a "cell_edits" array:
+
+{
+  "filename": "example.pdf",
+  "cell": "f1_14",
+  "text": "2017/04/01"
+}
+
+(leave "pdf_edits", "image_edits" and "files" empty for these PDFs)
+
+CATALOG KEYS
+- kind: cell (table cell) | underline (line to write on) |
+  date_slot (printed 年 月 日 outside a table)
+- rect: x0,y0,x1,y1 in PDF points (only to understand layout/order)
+- label: header text of the column this cell belongs to
+- group: wider header spanning several columns
+- left / above / right: printed text next to a field without a header
+- band: cells in the same table row share the same band number
+- stack=k/n: this cell is the k-th of n sub-lines inside one row block;
+  if a header lists several labels, the k-th sub-line pairs with the
+  k-th label (top to bottom)
+- printed: text already printed inside the field (年月日, 年, 歳, （　）)
+
+HOW TO CHOOSE
+1. Work out the structure first. Repeated record rows (e.g. one worker
+   per row) are the repeating band numbers; each record uses ONE band.
+   Use the first band that has the table's data cells for record 1, the
+   next band for record 2, and so on. Never mix records across bands.
+2. Match each value to the field whose label / stack position / nearby
+   text means that value.
+3. Printed units are handled by the application: for a field whose
+   printed text is 年月日, give a full date as YYYY/MM/DD; for printed
+   年 or 歳, give the number (e.g. "9", "34"). Do not add the unit.
+4. One value per field. Never put two different items into one field.
+   If a field's printed text is （　）, give only what goes inside.
+5. If a value belongs in a field that is not in the catalog (e.g. a
+   circled choice), do not invent an id: list it in "missing_data".
+6. Never guess. Unknown values go to "missing_data". Never output
+   internal database UUIDs.
+
+Final JSON keys: summary, completed, files (empty), cell_edits,
+missing_data, recommendations. Human-readable text in Japanese.
+"""
+
+  def _resolve_cell_edits(self, agent_output: dict, input_files) -> None:
+    """Turn agent_output["cell_edits"] into exact coordinate pdf_edits."""
+    catalogs = getattr(self, "_pdf_field_catalogs", {})
+    cell_edits = agent_output.get("cell_edits") or []
+
+    if not catalogs or not cell_edits:
+      return
+
+    pdf_edits = agent_output.setdefault("pdf_edits", [])
+
+    for ce in cell_edits:
+      if not isinstance(ce, dict):
+        continue
+
+      cell_id = str(ce.get("cell", "")).strip()
+      filename = ce.get("filename")
+
+      if filename not in catalogs:
+        filename = next(
+          (n for n in catalogs if cell_id in catalogs[n]), None
+        )
+
+      if filename is None or cell_id not in catalogs[filename]:
+        logger.warning("Unknown field id from agent: %r", cell_id)
+        continue
+
+      pdf_edits.extend(
+        self._expand_field_edit(
+          catalogs[filename][cell_id],
+          ce.get("text", ""),
+          filename,
+        )
+      )
+
+    logger.info(
+      "Resolved %d cell edit(s) into %d pdf edit(s)",
+      len(cell_edits),
+      len(pdf_edits),
+    )
 
 
   def _build_editable_pdf_from_image(
@@ -5301,11 +6167,12 @@ NEVER transpose rows and columns.
         skipped_count += 1
         continue
 
-      rect = self._snap_pdf_rect_to_ruling_lines(
-        page=page,
-        rect=rect,
-        line_cache=ruling_line_cache,
-      )
+      if not edit.get("exact"):
+        rect = self._snap_pdf_rect_to_ruling_lines(
+          page=page,
+          rect=rect,
+          line_cache=ruling_line_cache,
+        )
 
       text_value = str(
         text
@@ -5315,13 +6182,18 @@ NEVER transpose rows and columns.
       # Calculate an appropriate font size.
       # ----------------------------------------------------------
 
-      font_size = min(
-        12.0,
-        max(
-          4.0,
-          rect.height * 0.65,
-        ),
-      )
+      multiline = bool(edit.get("multiline"))
+
+      if edit.get("font_size"):
+        font_size = float(edit["font_size"])
+      else:
+        font_size = min(
+          12.0,
+          max(
+            4.0,
+            rect.height * 0.65,
+          ),
+        )
 
       # ----------------------------------------------------------
       # Measure text and shrink until it fits horizontally.
@@ -5349,6 +6221,7 @@ NEVER transpose rows and columns.
         while (
           text_width > rect.width
           and font_size > 3.0
+          and not multiline
         ):
           font_size -= 0.25
 
@@ -5417,6 +6290,7 @@ NEVER transpose rows and columns.
           value=text_value,
           font_name=font_name,
           font_size=font_size,
+          multiline=multiline,
         )
 
         # Keep our in-memory registry current so another edit cannot
