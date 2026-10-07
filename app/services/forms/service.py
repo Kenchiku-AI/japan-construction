@@ -3464,14 +3464,13 @@ NEVER transpose rows and columns.
   def _render_pdf_pages_for_model(
     self,
     input_file: Path,
-    long_edge_px: int = 2400,
-    grid_step_px: int = 100,
+    long_edge_px: int = 2000,
+    grid_units: int = 50,
   ) -> list[dict]:
     """
-    Render every page of a PDF to a PNG with a labelled pixel grid.
-
-    The model returns coordinates in THIS image's pixel space. The
-    returned metadata lets us convert pixels -> PDF points exactly.
+    Render every page to a PNG with a labelled grid in NORMALIZED
+    units (0-1000 on each axis). Normalized coordinates are immune
+    to any internal resizing the vision model applies.
     """
     import io
 
@@ -3485,9 +3484,9 @@ NEVER transpose rows and columns.
 
     try:
       if font_path.exists():
-        font = ImageFont.truetype(str(font_path), 22)
+        font = ImageFont.truetype(str(font_path), 30)
       else:
-        font = ImageFont.load_default(size=22)
+        font = ImageFont.load_default(size=30)
     except Exception:
       font = ImageFont.load_default()
 
@@ -3496,9 +3495,6 @@ NEVER transpose rows and columns.
     try:
       for page_index in range(document.page_count):
         page = document[page_index]
-
-        # page.rect is the VISUAL (rotation-applied) rectangle, and
-        # get_pixmap renders the page the same way.
         page_rect = page.rect
 
         zoom = long_edge_px / max(
@@ -3528,52 +3524,59 @@ NEVER transpose rows and columns.
 
         draw = ImageDraw.Draw(overlay)
 
-        major_every = grid_step_px * 5
+        red = (255, 0, 0, 255)
 
-        # Grid lines.
-        for x in range(0, width_px, grid_step_px):
-          major = x % major_every == 0
+        for unit in range(0, 1001, grid_units):
+          major = unit % 100 == 0
+
+          x = round(unit / 1000 * (width_px - 1))
+          y = round(unit / 1000 * (height_px - 1))
+
+          line_fill = (255, 0, 0, 120 if major else 50)
+          line_width = 2 if major else 1
+
           draw.line(
             [(x, 0), (x, height_px)],
-            fill=(255, 0, 0, 110 if major else 45),
-            width=2 if major else 1,
+            fill=line_fill,
+            width=line_width,
           )
-
-        for y in range(0, height_px, grid_step_px):
-          major = y % major_every == 0
           draw.line(
             [(0, y), (width_px, y)],
-            fill=(255, 0, 0, 110 if major else 45),
-            width=2 if major else 1,
+            fill=line_fill,
+            width=line_width,
           )
 
-        label_fill = (255, 0, 0, 255)
+          label = str(unit)
+          tx = min(x + 3, width_px - 80)
+          ty = min(y + 2, height_px - 40)
 
-        # Edge labels (all four edges).
-        for x in range(0, width_px, grid_step_px):
-          draw.text((x + 3, 2), str(x), fill=label_fill, font=font)
+          # x labels on top and bottom edges
+          draw.text((tx, 2), label, fill=red, font=font)
           draw.text(
-            (x + 3, height_px - 28),
-            str(x),
-            fill=label_fill,
+            (tx, height_px - 38),
+            label,
+            fill=red,
             font=font,
           )
 
-        for y in range(0, height_px, grid_step_px):
-          draw.text((3, y + 2), str(y), fill=label_fill, font=font)
+          # y labels on left and right edges
+          draw.text((3, ty), label, fill=red, font=font)
           draw.text(
-            (width_px - 64, y + 2),
-            str(y),
-            fill=label_fill,
+            (width_px - 80, ty),
+            label,
+            fill=red,
             font=font,
           )
 
-        # Interior "x,y" labels at every major intersection.
-        for x in range(0, width_px, major_every):
-          for y in range(0, height_px, major_every):
+        # Interior "x,y" labels (normalized units).
+        for ux in range(100, 1000, 200):
+          for uy in range(100, 1000, 200):
             draw.text(
-              (x + 4, y + 4),
-              f"{x},{y}",
+              (
+                round(ux / 1000 * (width_px - 1)) + 4,
+                round(uy / 1000 * (height_px - 1)) + 4,
+              ),
+              f"{ux},{uy}",
               fill=(0, 0, 255, 255),
               font=font,
             )
@@ -3593,8 +3596,8 @@ NEVER transpose rows and columns.
             "page_count": document.page_count,
             "width_px": width_px,
             "height_px": height_px,
-            "scale_x": width_px / page_rect.width,
-            "scale_y": height_px / page_rect.height,
+            "page_width_pt": float(page_rect.width),
+            "page_height_pt": float(page_rect.height),
             "origin_x": float(page_rect.x0),
             "origin_y": float(page_rect.y0),
             "png_bytes": buffer.getvalue(),
@@ -3623,11 +3626,6 @@ NEVER transpose rows and columns.
     self,
     input_file: Path,
   ) -> tuple[list[dict], list[dict]]:
-    """
-    Build the OpenAI input content for one PDF: gridded page images,
-    plus a list of real AcroForm fields expressed in the same pixel
-    space. Returns (content_items, render_metadata).
-    """
     import fitz
 
     renders = self._render_pdf_pages_for_model(input_file)
@@ -3635,6 +3633,9 @@ NEVER transpose rows and columns.
     content: list[dict] = []
 
     document = fitz.open(input_file)
+
+    def clamp(value: float) -> int:
+      return int(max(0, min(1000, round(value))))
 
     try:
       field_lines: list[str] = []
@@ -3649,17 +3650,21 @@ NEVER transpose rows and columns.
           visual = fitz.Rect(widget.rect) * page.rotation_matrix
           visual.normalize()
 
-          x0 = round(
-            (visual.x0 - render["origin_x"]) * render["scale_x"]
+          x0 = clamp(
+            (visual.x0 - render["origin_x"])
+            / render["page_width_pt"] * 1000
           )
-          y0 = round(
-            (visual.y0 - render["origin_y"]) * render["scale_y"]
+          y0 = clamp(
+            (visual.y0 - render["origin_y"])
+            / render["page_height_pt"] * 1000
           )
-          x1 = round(
-            (visual.x1 - render["origin_x"]) * render["scale_x"]
+          x1 = clamp(
+            (visual.x1 - render["origin_x"])
+            / render["page_width_pt"] * 1000
           )
-          y1 = round(
-            (visual.y1 - render["origin_y"]) * render["scale_y"]
+          y1 = clamp(
+            (visual.y1 - render["origin_y"])
+            / render["page_height_pt"] * 1000
           )
 
           field_lines.append(
@@ -3667,7 +3672,7 @@ NEVER transpose rows and columns.
             f"field_name={widget.field_name!r} "
             f"type={widget.field_type_string} "
             f"current_value={widget.field_value!r} "
-            f"approx_pixel_rect=[{x0},{y0},{x1},{y1}]"
+            f"approx_rect=[{x0},{y0},{x1},{y1}]"
           )
 
       for render in renders:
@@ -3677,17 +3682,18 @@ NEVER transpose rows and columns.
             "text": (
               f"PDF file: {render['filename']} — page "
               f"{render['page']} of {render['page_count']}.\n"
-              f"The next image is a rendering of this page with a "
-              f"red coordinate grid.\n"
-              f"IMAGE SIZE: width={render['width_px']}px "
-              f"height={render['height_px']}px.\n"
-              f"Grid lines are every 100px. Red numbers on the "
-              f"edges are pixel coordinates (x along the top/bottom "
-              f"edges, y along the left/right edges). Blue labels "
-              f"show x,y at major intersections.\n"
-              f"ALL coordinates you return for this page MUST be "
-              f"pixel coordinates of THIS image "
-              f"(origin top-left, x right, y down)."
+              f"The next image is this page with a red coordinate "
+              f"grid.\n"
+              f"COORDINATES ARE NORMALIZED: x runs 0 to 1000 from "
+              f"the left edge to the right edge of the image, and "
+              f"y runs 0 to 1000 from the top edge to the bottom "
+              f"edge. (0,0) is top-left, (1000,1000) is "
+              f"bottom-right. Grid lines are every 50 units; the "
+              f"red numbers on the image edges are these units. "
+              f"Blue labels show x,y at some intersections.\n"
+              f"Do NOT use pixels. Read positions from the grid "
+              f"labels, and return x0,y0,x1,y1 in these 0-1000 "
+              f"units."
             ),
           }
         )
@@ -3705,7 +3711,6 @@ NEVER transpose rows and columns.
           }
         )
 
-        # Don't keep the PNG bytes around.
         render.pop("png_bytes", None)
 
       if field_lines:
@@ -3714,9 +3719,9 @@ NEVER transpose rows and columns.
             "type": "input_text",
             "text": (
               f"Existing AcroForm fields in {input_file.name} "
-              f"(use these EXACT field_name values; pixel rects are "
-              f"approximate and in the same pixel space as the "
-              f"images):\n" + "\n".join(field_lines)
+              f"(use these EXACT field_name values; rects are "
+              f"approximate, in the same 0-1000 units):\n"
+              + "\n".join(field_lines)
             ),
           }
         )
@@ -3744,9 +3749,8 @@ NEVER transpose rows and columns.
   ) -> None:
     """
     Convert coordinate edits in agent_output["pdf_edits"] from the
-    model's image pixels to PDF points (visual page coordinates).
-    Mutates the edits in place. AcroForm edits (no coordinates) are
-    left alone.
+    model's normalized 0-1000 space to PDF points (visual page
+    coordinates). AcroForm edits (no coordinates) are left alone.
     """
     pdf_edits = agent_output.get("pdf_edits") or []
 
@@ -3797,35 +3801,47 @@ NEVER transpose rows and columns.
         continue
 
       try:
-        px0 = float(edit["x0"])
-        py0 = float(edit["y0"])
-        px1 = float(edit["x1"])
-        py1 = float(edit["y1"])
+        n0x = float(edit["x0"])
+        n0y = float(edit["y0"])
+        n1x = float(edit["x1"])
+        n1y = float(edit["y1"])
       except (TypeError, ValueError):
         logger.warning(
-          "Invalid pixel coordinates in edit: %s",
+          "Invalid normalized coordinates in edit: %s",
           edit,
         )
         continue
 
-      left, right = sorted((px0, px1))
-      top, bottom = sorted((py0, py1))
+      left, right = sorted((n0x, n1x))
+      top, bottom = sorted((n0y, n1y))
 
-      left = max(0.0, min(left, render["width_px"]))
-      right = max(0.0, min(right, render["width_px"]))
-      top = max(0.0, min(top, render["height_px"]))
-      bottom = max(0.0, min(bottom, render["height_px"]))
+      left = max(0.0, min(left, 1000.0))
+      right = max(0.0, min(right, 1000.0))
+      top = max(0.0, min(top, 1000.0))
+      bottom = max(0.0, min(bottom, 1000.0))
 
       edit["page"] = page_number
-      edit["pixel_rect"] = [left, top, right, bottom]
-      edit["x0"] = render["origin_x"] + left / render["scale_x"]
-      edit["x1"] = render["origin_x"] + right / render["scale_x"]
-      edit["y0"] = render["origin_y"] + top / render["scale_y"]
-      edit["y1"] = render["origin_y"] + bottom / render["scale_y"]
+      edit["normalized_rect"] = [left, top, right, bottom]
+      edit["x0"] = (
+        render["origin_x"]
+        + left / 1000.0 * render["page_width_pt"]
+      )
+      edit["x1"] = (
+        render["origin_x"]
+        + right / 1000.0 * render["page_width_pt"]
+      )
+      edit["y0"] = (
+        render["origin_y"]
+        + top / 1000.0 * render["page_height_pt"]
+      )
+      edit["y1"] = (
+        render["origin_y"]
+        + bottom / 1000.0 * render["page_height_pt"]
+      )
       edit["coordinate_space"] = "pdf_points"
 
       logger.info(
-        "Converted edit %r pixels=[%.0f,%.0f,%.0f,%.0f] -> "
+        "Converted edit %r normalized=[%.0f,%.0f,%.0f,%.0f] -> "
         "points=[%.1f,%.1f,%.1f,%.1f]",
         edit.get("field_name"),
         left,
@@ -5571,10 +5587,10 @@ If no AcroForm field exists for the value, return:
   "filename": "example.pdf",
   "page": 1,
   "field_name": "worker_1_name",
-  "x0": 412,
-  "y0": 530,
-  "x1": 640,
-  "y1": 566,
+  "x0": 215,
+  "y0": 290,
+  "x1": 330,
+  "y1": 312,
   "text": "佐藤 健一"
 }
 
@@ -5584,28 +5600,26 @@ company_name, form_created_date). Never use the displayed value as the
 field_name.
 
 ------------------------------------------------------------
-3. COORDINATE SYSTEM — IMAGE PIXELS (OVERRIDES ANY OTHER INSTRUCTION)
+3. COORDINATE SYSTEM — NORMALIZED 0-1000 (OVERRIDES ANY OTHER INSTRUCTION)
 ------------------------------------------------------------
 
-x0, y0, x1, y1 are PIXEL coordinates of the page image you were shown:
+x0, y0, x1, y1 are NORMALIZED coordinates of the page image:
 
-- origin = top-left of the image
-- x increases to the right, y increases downward
-- use the stated image width/height; do NOT rescale
-- do NOT use PDF points, do NOT use normalized 0..1 values
+- x: 0 = left edge of the image, 1000 = right edge
+- y: 0 = top edge of the image, 1000 = bottom edge
+- origin = top-left; x increases right, y increases downward
+- NOT pixels, NOT PDF points
 
-Any other instruction in this prompt that mentions x0/y0/x1/y1 refers to
-these same image pixels.
+Read positions from the red grid labels on the image (every 50 units).
+Do not estimate pixel positions.
 
 HOW TO MEASURE:
-1. Find the target cell/blank on the image.
-2. Read the red grid numbers on the nearest grid lines to find where the
-   cell's LEFT, RIGHT, TOP and BOTTOM borders are, to within ~5 px.
-3. Return a rectangle that sits just INSIDE those borders
-   (about 2–4 px margin). The application will snap edges to nearby
-   printed lines, so be accurate rather than generous.
-4. Re-check: the rectangle's four edges must lie on the borders of ONE
-   cell. A rectangle spanning two rows or two columns is wrong.
+1. Find the target cell/blank.
+2. Locate its LEFT, RIGHT, TOP and BOTTOM borders against the nearest
+   grid lines and interpolate between them.
+3. Return a rectangle just INSIDE those borders.
+4. Re-check: all four edges must lie on the borders of ONE cell
+   (one worker block, one printed line, one column).
 
 ------------------------------------------------------------
 4. THE RECTANGLE MUST BE THE BLANK AREA
