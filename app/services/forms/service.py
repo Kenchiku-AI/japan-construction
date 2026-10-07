@@ -4080,11 +4080,16 @@ NEVER transpose rows and columns.
     widget.border_width = 0
     widget.fill_color = None
     widget.text_color = (0, 0, 0)
-    widget.text_alignment = 1
 
     page.add_widget(widget)
 
     widget.update()
+
+    page.parent.xref_set_key(
+      widget.xref,
+      "Q",
+      "1",
+    )
 
     logger.info(
       "Created editable PDF field: field_name=%r rect=%s "
@@ -5590,13 +5595,18 @@ missing_data, recommendations. Human-readable text in Japanese.
 
         widget.border_color = None
         widget.fill_color = None
-        widget.text_alignment = 1
 
         page.add_widget(
           widget
         )
 
         widget.update()
+
+        page.parent.xref_set_key(
+          widget.xref,
+          "Q",
+          "1",
+        )
 
         applied_count += 1
 
