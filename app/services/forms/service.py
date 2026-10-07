@@ -4916,15 +4916,21 @@ Final JSON keys: summary, completed, files (empty), cell_edits,
 missing_data, recommendations. Human-readable text in Japanese.
 """
 
-  def _resolve_cell_edits(self, agent_output: dict, input_files) -> None:
-    """Turn agent_output["cell_edits"] into exact coordinate pdf_edits."""
-    catalogs = getattr(self, "_pdf_field_catalogs", {})
-    cell_edits = agent_output.get("cell_edits") or []
 
-    if not catalogs or not cell_edits:
+  def _resolve_cell_edits(self, agent_output: dict, input_files) -> None:
+    """
+    Turn agent_output["cell_edits"] into exact coordinate pdf_edits, then
+    add an EMPTY editable field for every detected field that was not
+    populated, so users can fill those in by hand.
+    """
+    catalogs = getattr(self, "_pdf_field_catalogs", {})
+
+    if not catalogs:
       return
 
+    cell_edits = agent_output.get("cell_edits") or []
     pdf_edits = agent_output.setdefault("pdf_edits", [])
+    filled = {name: set() for name in catalogs}
 
     for ce in cell_edits:
       if not isinstance(ce, dict):
@@ -4942,17 +4948,30 @@ missing_data, recommendations. Human-readable text in Japanese.
         logger.warning("Unknown field id from agent: %r", cell_id)
         continue
 
-      pdf_edits.extend(
-        self._expand_field_edit(
-          catalogs[filename][cell_id],
-          ce.get("text", ""),
-          filename,
-        )
+      edits = self._expand_field_edit(
+        catalogs[filename][cell_id],
+        ce.get("text", ""),
+        filename,
       )
 
+      if edits:
+        filled[filename].add(cell_id)
+        pdf_edits.extend(edits)
+
+    blank_count = 0
+
+    for filename, catalog in catalogs.items():
+      for cell_id, field in catalog.items():
+        if cell_id in filled[filename]:
+          continue
+        pdf_edits.extend(self._blank_field_edits(field, filename))
+        blank_count += 1
+
     logger.info(
-      "Resolved %d cell edit(s) into %d pdf edit(s)",
+      "Resolved %d cell edit(s); added %d empty editable field(s); "
+      "total pdf edits=%d",
       len(cell_edits),
+      blank_count,
       len(pdf_edits),
     )
 
@@ -6421,6 +6440,42 @@ missing_data, recommendations. Human-readable text in Japanese.
     )
 
     return output_path
+
+
+  def _blank_field_edits(self, field, filename):
+    """Empty editable field(s) for a detected field (same geometry rules)."""
+    import fitz
+
+    anchors = field["anchors"]
+    chars = {a["c"] for a in anchors}
+
+    if all(k in chars for k in "年月日"):
+      sample = "2000/01/01"
+    elif len(anchors) == 1 and field["kind"] == "cell":
+      sample = "0"
+    else:
+      sample = "x"
+
+    rect = field["rect"]
+
+    if (
+      field["kind"] == "cell"
+      and sample == "x"
+      and not field.get("bracket")
+      and not field.get("printed_chars")
+      and rect.height >= 30
+    ):
+      return [dict(
+        filename=filename, page=field["page"], field_name=field["id"],
+        x0=rect.x0 + 1, y0=rect.y0 + 1, x1=rect.x1 - 1, y1=rect.y1 - 1,
+        text="", coordinate_space="pdf_points", exact=True,
+        font_size=6.5, multiline=True,
+      )]
+
+    edits = self._expand_field_edit(field, sample, filename)
+    for e in edits:
+      e["text"] = ""
+    return edits
 
 
   def _pdf_prompt_instructions(
