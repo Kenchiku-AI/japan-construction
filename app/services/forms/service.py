@@ -4083,12 +4083,17 @@ NEVER transpose rows and columns.
 
     page.add_widget(widget)
 
-    widget.update()
-
     page.parent.xref_set_key(
       widget.xref,
       "Q",
       "1",
+    )
+
+    widget.update()
+
+    self._center_pdf_widget_appearance(
+      page,
+      widget,
     )
 
     logger.info(
@@ -5600,12 +5605,17 @@ missing_data, recommendations. Human-readable text in Japanese.
           widget
         )
 
-        widget.update()
-
         page.parent.xref_set_key(
           widget.xref,
           "Q",
           "1",
+        )
+
+        widget.update()
+
+        self._center_pdf_widget_appearance(
+          page,
+          widget,
         )
 
         applied_count += 1
@@ -5704,6 +5714,174 @@ missing_data, recommendations. Human-readable text in Japanese.
     )
 
     return output_path
+
+
+  def _center_pdf_widget_appearance(self, page, widget):
+    """
+    Center the current value in the widget's generated appearance stream.
+
+    PyMuPDF 1.26.x does not expose Widget.text_alignment, and simply
+    adding /Q 1 does not change the appearance stream that PyMuPDF
+    already generated.
+
+    /Q 1 is still written to the widget so viewers will use centered
+    alignment when the user edits the field. This helper additionally
+    centers the currently displayed value.
+    """
+
+    try:
+      doc = page.parent
+
+      widget_xref = widget.xref
+
+      raw_widget = doc.xref_object(
+        widget_xref,
+        compressed=False,
+      )
+
+      match = re.search(
+        r"/AP\s*<<.*?/N\s+(\d+)\s+0\s+R",
+        raw_widget,
+        re.DOTALL,
+      )
+
+      if not match:
+        return
+
+      ap_xref = int(match.group(1))
+
+      ap_stream = doc.xref_stream(ap_xref)
+
+      if not ap_stream:
+        return
+
+      stream = ap_stream.decode(
+        "latin1",
+        errors="replace",
+      )
+
+      # Extract the appearance bounding box.
+      ap_object = doc.xref_object(
+        ap_xref,
+        compressed=False,
+      )
+
+      bbox_match = re.search(
+        r"/BBox\s*\[\s*"
+        r"([-0-9.]+)\s+"
+        r"([-0-9.]+)\s+"
+        r"([-0-9.]+)\s+"
+        r"([-0-9.]+)"
+        r"\s*\]",
+        ap_object,
+      )
+
+      if not bbox_match:
+        return
+
+      x0, y0, x1, y1 = map(
+        float,
+        bbox_match.groups(),
+      )
+
+      box_width = x1 - x0
+
+      # Find the text positioning operator immediately before
+      # the font/text operators.
+      td_match = re.search(
+        r"([-0-9.]+)\s+([-0-9.]+)\s+Td",
+        stream,
+      )
+
+      if not td_match:
+        return
+
+      old_x = float(td_match.group(1))
+      old_y = float(td_match.group(2))
+
+      # Determine the font and font size used by the appearance.
+      font_match = re.search(
+        r"/([A-Za-z0-9_-]+)\s+"
+        r"([-0-9.]+)\s+Tf",
+        stream,
+      )
+
+      if not font_match:
+        return
+
+      font_name = font_match.group(1)
+      font_size = float(font_match.group(2))
+
+      # Get the current displayed value.
+      value = str(
+        getattr(widget, "field_value", "") or ""
+      )
+
+      if not value:
+        return
+
+      # Map the appearance font to a PyMuPDF font for measuring.
+      #
+      # Mincho is the embedded Japanese CID font used by these PDFs.
+      # "japan" provides the corresponding Japanese metrics.
+      if font_name.lower() in {
+        "mincho",
+        "heiseimin",
+        "heiseimin-w3",
+      }:
+        measure_font = "japan"
+      else:
+        measure_font = "helv"
+
+      try:
+        text_width = fitz.get_text_length(
+          value,
+          fontname=measure_font,
+          fontsize=font_size,
+        )
+      except Exception:
+        logger.exception(
+          "Could not measure PDF field text: %r",
+          value,
+        )
+        return
+
+      new_x = max(
+        0.0,
+        (box_width - text_width) / 2.0,
+      )
+
+      # Replace only the first text-positioning operator.
+      new_td = (
+        f"{new_x:.4f} {old_y:.4f} Td"
+      )
+
+      new_stream = (
+        stream[:td_match.start()]
+        + new_td
+        + stream[td_match.end():]
+      )
+
+      doc.update_stream(
+        ap_xref,
+        new_stream.encode("latin1"),
+      )
+
+      logger.debug(
+        "Centered PDF appearance: field=%r "
+        "value=%r width=%.2f text_width=%.2f x=%.2f",
+        getattr(widget, "field_name", None),
+        value,
+        box_width,
+        text_width,
+        new_x,
+      )
+
+    except Exception:
+      logger.exception(
+        "Failed to center PDF widget appearance: %r",
+        getattr(widget, "field_name", None),
+      )
 
 
   def _apply_pdf_edits(
