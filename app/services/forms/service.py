@@ -2594,7 +2594,7 @@ NEVER transpose rows and columns.
           }
         )
 
-            pdf_renders: list[dict] = []
+      pdf_renders: list[dict] = []
 
       if has_pdf:
         for pdf_file in input_files:
