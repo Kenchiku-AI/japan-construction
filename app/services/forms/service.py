@@ -4083,12 +4083,6 @@ NEVER transpose rows and columns.
 
     page.add_widget(widget)
 
-    page.parent.xref_set_key(
-      widget.xref,
-      "Q",
-      "1",
-    )
-
     widget.update()
 
     self._center_pdf_widget_appearance(
@@ -5605,12 +5599,6 @@ missing_data, recommendations. Human-readable text in Japanese.
           widget
         )
 
-        page.parent.xref_set_key(
-          widget.xref,
-          "Q",
-          "1",
-        )
-
         widget.update()
 
         self._center_pdf_widget_appearance(
@@ -5718,39 +5706,73 @@ missing_data, recommendations. Human-readable text in Japanese.
 
   def _center_pdf_widget_appearance(self, page, widget):
     """
-    Center the current value in the widget's generated appearance stream.
+    Center the current value in the generated PDF appearance stream.
 
-    PyMuPDF 1.26.x does not expose Widget.text_alignment, and simply
-    adding /Q 1 does not change the appearance stream that PyMuPDF
-    already generated.
+    PyMuPDF 1.26.x generates the text appearance left-aligned even when
+    the PDF widget is intended to be center-aligned.
 
-    /Q 1 is still written to the widget so viewers will use centered
-    alignment when the user edits the field. This helper additionally
-    centers the currently displayed value.
+    We therefore:
+      1. Set /Q 1 on the widget.
+      2. Locate the generated /AP appearance stream.
+      3. Calculate the text width.
+      4. Replace the generated Td x-coordinate with the centered position.
+
+    IMPORTANT:
+    This must run AFTER widget.update(), because widget.update()
+    regenerates the appearance stream.
     """
 
     try:
       doc = page.parent
 
-      widget_xref = widget.xref
+      # ------------------------------------------------------------
+      # 1. Tell PDF viewers that the field is center-aligned.
+      # ------------------------------------------------------------
 
-      raw_widget = doc.xref_object(
-        widget_xref,
+      doc.xref_set_key(
+        widget.xref,
+        "Q",
+        "1",
+      )
+
+      # ------------------------------------------------------------
+      # 2. Locate the normal appearance stream.
+      # ------------------------------------------------------------
+
+      widget_object = doc.xref_object(
+        widget.xref,
         compressed=False,
       )
 
-      match = re.search(
+      ap_match = re.search(
         r"/AP\s*<<.*?/N\s+(\d+)\s+0\s+R",
-        raw_widget,
+        widget_object,
         re.DOTALL,
       )
 
-      if not match:
+      if not ap_match:
+        logger.warning(
+          "No normal appearance found for PDF widget %r",
+          getattr(widget, "field_name", None),
+        )
         return
 
-      ap_xref = int(match.group(1))
+      ap_xref = int(
+        ap_match.group(1)
+      )
 
-      ap_stream = doc.xref_stream(ap_xref)
+      # ------------------------------------------------------------
+      # 3. Read the appearance object and stream.
+      # ------------------------------------------------------------
+
+      ap_object = doc.xref_object(
+        ap_xref,
+        compressed=False,
+      )
+
+      ap_stream = doc.xref_stream(
+        ap_xref
+      )
 
       if not ap_stream:
         return
@@ -5760,11 +5782,9 @@ missing_data, recommendations. Human-readable text in Japanese.
         errors="replace",
       )
 
-      # Extract the appearance bounding box.
-      ap_object = doc.xref_object(
-        ap_xref,
-        compressed=False,
-      )
+      # ------------------------------------------------------------
+      # 4. Get the appearance bounding box.
+      # ------------------------------------------------------------
 
       bbox_match = re.search(
         r"/BBox\s*\[\s*"
@@ -5777,6 +5797,10 @@ missing_data, recommendations. Human-readable text in Japanese.
       )
 
       if not bbox_match:
+        logger.warning(
+          "No BBox found for PDF appearance of %r",
+          getattr(widget, "field_name", None),
+        )
         return
 
       x0, y0, x1, y1 = map(
@@ -5786,20 +5810,38 @@ missing_data, recommendations. Human-readable text in Japanese.
 
       box_width = x1 - x0
 
-      # Find the text positioning operator immediately before
-      # the font/text operators.
+      # ------------------------------------------------------------
+      # 5. Find the generated Td command.
+      #
+      # PyMuPDF generates something like:
+      #
+      #   0 3.2666565 Td
+      #   /Mincho 8 Tf
+      #   (...) Tj
+      #
+      # We replace only the X coordinate.
+      # ------------------------------------------------------------
+
       td_match = re.search(
         r"([-0-9.]+)\s+([-0-9.]+)\s+Td",
         stream,
       )
 
       if not td_match:
+        logger.warning(
+          "No Td positioning command found for PDF widget %r",
+          getattr(widget, "field_name", None),
+        )
         return
 
-      old_x = float(td_match.group(1))
-      old_y = float(td_match.group(2))
+      old_y = float(
+        td_match.group(2)
+      )
 
-      # Determine the font and font size used by the appearance.
+      # ------------------------------------------------------------
+      # 6. Find the generated font and font size.
+      # ------------------------------------------------------------
+
       font_match = re.search(
         r"/([A-Za-z0-9_-]+)\s+"
         r"([-0-9.]+)\s+Tf",
@@ -5807,23 +5849,37 @@ missing_data, recommendations. Human-readable text in Japanese.
       )
 
       if not font_match:
+        logger.warning(
+          "No font declaration found for PDF widget %r",
+          getattr(widget, "field_name", None),
+        )
         return
 
       font_name = font_match.group(1)
-      font_size = float(font_match.group(2))
 
-      # Get the current displayed value.
+      font_size = float(
+        font_match.group(2)
+      )
+
+      # ------------------------------------------------------------
+      # 7. Get the actual field value.
+      # ------------------------------------------------------------
+
       value = str(
-        getattr(widget, "field_value", "") or ""
+        getattr(
+          widget,
+          "field_value",
+          "",
+        ) or ""
       )
 
       if not value:
         return
 
-      # Map the appearance font to a PyMuPDF font for measuring.
-      #
-      # Mincho is the embedded Japanese CID font used by these PDFs.
-      # "japan" provides the corresponding Japanese metrics.
+      # ------------------------------------------------------------
+      # 8. Measure the text using the same Japanese font metrics.
+      # ------------------------------------------------------------
+
       if font_name.lower() in {
         "mincho",
         "heiseimin",
@@ -5846,14 +5902,22 @@ missing_data, recommendations. Human-readable text in Japanese.
         )
         return
 
+      # ------------------------------------------------------------
+      # 9. Calculate the centered X coordinate.
+      # ------------------------------------------------------------
+
       new_x = max(
         0.0,
         (box_width - text_width) / 2.0,
       )
 
-      # Replace only the first text-positioning operator.
+      # ------------------------------------------------------------
+      # 10. Replace the original Td X coordinate.
+      # ------------------------------------------------------------
+
       new_td = (
-        f"{new_x:.4f} {old_y:.4f} Td"
+        f"{new_x:.4f} "
+        f"{old_y:.4f} Td"
       )
 
       new_stream = (
@@ -5862,15 +5926,26 @@ missing_data, recommendations. Human-readable text in Japanese.
         + stream[td_match.end():]
       )
 
+      # ------------------------------------------------------------
+      # 11. Write the modified appearance stream back.
+      # ------------------------------------------------------------
+
       doc.update_stream(
         ap_xref,
-        new_stream.encode("latin1"),
+        new_stream.encode(
+          "latin1"
+        ),
       )
 
-      logger.debug(
-        "Centered PDF appearance: field=%r "
-        "value=%r width=%.2f text_width=%.2f x=%.2f",
-        getattr(widget, "field_name", None),
+      logger.info(
+        "Centered PDF field appearance: "
+        "field=%r value=%r box_width=%.2f "
+        "text_width=%.2f x=%.2f",
+        getattr(
+          widget,
+          "field_name",
+          None,
+        ),
         value,
         box_width,
         text_width,
@@ -5880,9 +5955,12 @@ missing_data, recommendations. Human-readable text in Japanese.
     except Exception:
       logger.exception(
         "Failed to center PDF widget appearance: %r",
-        getattr(widget, "field_name", None),
+        getattr(
+          widget,
+          "field_name",
+          None,
+        ),
       )
-
 
   def _apply_pdf_edits(
     self,
