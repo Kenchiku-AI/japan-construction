@@ -4080,6 +4080,7 @@ NEVER transpose rows and columns.
     widget.border_width = 0
     widget.fill_color = None
     widget.text_color = (0, 0, 0)
+    widget.text_alignment = 1
 
     page.add_widget(widget)
 
@@ -4895,35 +4896,354 @@ missing_data, recommendations. Human-readable text in Japanese.
 """
 
 
-  def _resolve_cell_edits(self, agent_output: dict, input_files) -> None:
+  def _compact_repeating_cell_edits(
+    self,
+    cell_edits: list[dict],
+    catalogs: dict,
+  ) -> list[dict]:
     """
-    Turn agent_output["cell_edits"] into exact coordinate pdf_edits, then
-    add an EMPTY editable field for every detected field that was not
-    populated, so users can fill those in by hand.
+    Compact populated repeating PDF rows upward.
+
+    Important:
+    - This does NOT remove any rows.
+    - This does NOT suppress blank editable fields.
+    - It only moves populated values from a later completely-populated
+      row into an earlier completely-empty structurally identical row.
+
+    Example:
+
+        row 1: empty
+        row 2: 佐藤
+        row 3: 鈴木
+        row 4: empty
+
+    becomes:
+
+        row 1: 佐藤
+        row 2: 鈴木
+        row 3: empty
+        row 4: empty
+
+    The subsequent _blank_field_edits() pass will make all of those
+    remaining empty fields editable.
     """
-    catalogs = getattr(self, "_pdf_field_catalogs", {})
+
+    if not cell_edits:
+      return cell_edits
+
+    def round_value(value, places=1):
+      try:
+        return round(float(value), places)
+      except (TypeError, ValueError):
+        return value
+
+    def field_layout_key(field):
+      """
+      Identify the logical field within a repeating row while ignoring
+      its vertical position and generated field id.
+      """
+
+      rect = field["rect"]
+
+      return (
+        field.get("kind", ""),
+        round_value(rect.x0),
+        round_value(rect.x1),
+        field.get("label", ""),
+        field.get("group", ""),
+        field.get("stack", ""),
+        field.get("printed", ""),
+        field.get("left", ""),
+      )
+
+    result = list(cell_edits)
+
+    for filename, catalog in catalogs.items():
+
+      # ------------------------------------------------------------
+      # Group fields by repeating band.
+      # ------------------------------------------------------------
+
+      bands = {}
+
+      for field_id, field in catalog.items():
+        band = field.get("band", 0)
+
+        if not band:
+          continue
+
+        bands.setdefault(band, []).append(
+          (field_id, field)
+        )
+
+      if len(bands) < 2:
+        continue
+
+      # ------------------------------------------------------------
+      # Build a structural signature for each band.
+      #
+      # Repeating worker rows should have the same collection of
+      # logical fields, even though their y coordinates / ids differ.
+      # ------------------------------------------------------------
+
+      band_signatures = {}
+
+      for band, fields in bands.items():
+        signature = tuple(
+          sorted(
+            field_layout_key(field)
+            for _, field in fields
+          )
+        )
+
+        band_signatures[band] = signature
+
+      # Only consider signatures that occur more than once.
+      repeated_families = {}
+
+      for band, signature in band_signatures.items():
+        repeated_families.setdefault(
+          signature,
+          [],
+        ).append(band)
+
+      # ------------------------------------------------------------
+      # Determine which catalog field ids were populated by the agent.
+      # ------------------------------------------------------------
+
+      populated_ids = set()
+
+      for edit in result:
+        if not isinstance(edit, dict):
+          continue
+
+        if edit.get("filename") not in (None, filename):
+          continue
+
+        cell_id = str(
+          edit.get("cell", "")
+        ).strip()
+
+        if cell_id in catalog:
+          populated_ids.add(cell_id)
+
+      # ------------------------------------------------------------
+      # Process each repeated family independently.
+      # ------------------------------------------------------------
+
+      for signature, family_bands in repeated_families.items():
+
+        if len(family_bands) < 2:
+          continue
+
+        family_bands = sorted(family_bands)
+
+        # Map field id -> band.
+        field_to_band = {}
+
+        # Map (band, structural field key) -> field id.
+        field_lookup = {}
+
+        for band in family_bands:
+          for field_id, field in bands[band]:
+
+            key = field_layout_key(field)
+
+            field_to_band[field_id] = band
+            field_lookup[(band, key)] = field_id
+
+        # ----------------------------------------------------------
+        # A band is occupied if the agent populated ANY field in it.
+        #
+        # We intentionally consider partially populated rows occupied.
+        # That prevents us from accidentally moving another worker into
+        # a row that already contains some information.
+        # ----------------------------------------------------------
+
+        occupied = {
+          band: False
+          for band in family_bands
+        }
+
+        for field_id in populated_ids:
+          band = field_to_band.get(field_id)
+
+          if band in occupied:
+            occupied[band] = True
+
+        # ----------------------------------------------------------
+        # Walk top-to-bottom.
+        #
+        # Whenever we find an occupied row after one or more empty rows,
+        # move it to the earliest available empty row.
+        # ----------------------------------------------------------
+
+        empty_bands = []
+
+        for source_band in family_bands:
+
+          if not occupied[source_band]:
+            empty_bands.append(source_band)
+            continue
+
+          if not empty_bands:
+            continue
+
+          target_band = empty_bands.pop(0)
+
+          logger.info(
+            "Compacting PDF repeating row: "
+            "filename=%s source_band=%s -> target_band=%s",
+            filename,
+            source_band,
+            target_band,
+          )
+
+          source_field_ids = {
+            field_id
+            for field_id, field in bands[source_band]
+          }
+
+          # --------------------------------------------------------
+          # Rewrite each cell edit belonging to source_band so that
+          # it targets the equivalent field in target_band.
+          # --------------------------------------------------------
+
+          for index, edit in enumerate(result):
+
+            if not isinstance(edit, dict):
+              continue
+
+            edit_filename = edit.get("filename")
+
+            if edit_filename not in (None, filename):
+              continue
+
+            cell_id = str(
+              edit.get("cell", "")
+            ).strip()
+
+            if cell_id not in source_field_ids:
+              continue
+
+            source_field = catalog[cell_id]
+
+            key = field_layout_key(source_field)
+
+            target_id = field_lookup.get(
+              (target_band, key)
+            )
+
+            if not target_id:
+              logger.warning(
+                "Could not compact PDF field %s: "
+                "no equivalent target field found in band %s",
+                cell_id,
+                target_band,
+              )
+              continue
+
+            new_edit = dict(edit)
+            new_edit["cell"] = target_id
+
+            result[index] = new_edit
+
+          # The source row is now effectively free to receive a later
+          # populated row, so add it to the available-empty queue.
+          empty_bands.append(source_band)
+
+    return result
+
+
+  def _resolve_cell_edits(
+    self,
+    agent_output: dict,
+    input_files,
+  ) -> None:
+    """
+    Turn agent_output["cell_edits"] into exact coordinate pdf_edits.
+
+    For repeating PDF rows, populated rows are first compacted upward
+    when an earlier structurally identical row is completely empty.
+
+    IMPORTANT:
+    Every detected field that is not populated still receives an empty
+    editable field via _blank_field_edits().
+    """
+
+    catalogs = getattr(
+      self,
+      "_pdf_field_catalogs",
+      {},
+    )
 
     if not catalogs:
       return
 
-    cell_edits = agent_output.get("cell_edits") or []
-    pdf_edits = agent_output.setdefault("pdf_edits", [])
-    filled = {name: set() for name in catalogs}
+    cell_edits = agent_output.get(
+      "cell_edits"
+    ) or []
+
+    # --------------------------------------------------------------
+    # Compact populated repeating rows BEFORE converting cell edits
+    # into coordinate edits.
+    # --------------------------------------------------------------
+
+    cell_edits = self._compact_repeating_cell_edits(
+      cell_edits=cell_edits,
+      catalogs=catalogs,
+    )
+
+    # Keep the normalized version in agent_output for logging/debugging.
+    agent_output["cell_edits"] = cell_edits
+
+    pdf_edits = agent_output.setdefault(
+      "pdf_edits",
+      [],
+    )
+
+    filled = {
+      name: set()
+      for name in catalogs
+    }
+
+    populated_count = 0
+
+    # --------------------------------------------------------------
+    # Convert populated cell edits into exact coordinate edits.
+    # --------------------------------------------------------------
 
     for ce in cell_edits:
+
       if not isinstance(ce, dict):
         continue
 
-      cell_id = str(ce.get("cell", "")).strip()
-      filename = ce.get("filename")
+      cell_id = str(
+        ce.get("cell", "")
+      ).strip()
+
+      filename = ce.get(
+        "filename"
+      )
 
       if filename not in catalogs:
         filename = next(
-          (n for n in catalogs if cell_id in catalogs[n]), None
+          (
+            n
+            for n in catalogs
+            if cell_id in catalogs[n]
+          ),
+          None,
         )
 
-      if filename is None or cell_id not in catalogs[filename]:
-        logger.warning("Unknown field id from agent: %r", cell_id)
+      if (
+        filename is None
+        or cell_id not in catalogs[filename]
+      ):
+        logger.warning(
+          "Unknown field id from agent: %r",
+          cell_id,
+        )
         continue
 
       edits = self._expand_field_edit(
@@ -4933,22 +5253,53 @@ missing_data, recommendations. Human-readable text in Japanese.
       )
 
       if edits:
-        filled[filename].add(cell_id)
-        pdf_edits.extend(edits)
+        filled[filename].add(
+          cell_id
+        )
+
+        pdf_edits.extend(
+          edits
+        )
+
+        populated_count += 1
+
+    # --------------------------------------------------------------
+    # IMPORTANT:
+    #
+    # Do NOT limit this to one blank row.
+    #
+    # Every catalog field not populated above gets an editable blank
+    # field.
+    # --------------------------------------------------------------
 
     blank_count = 0
 
     for filename, catalog in catalogs.items():
+
       for cell_id, field in catalog.items():
+
         if cell_id in filled[filename]:
           continue
-        pdf_edits.extend(self._blank_field_edits(field, filename))
-        blank_count += 1
+
+        blank_edits = self._blank_field_edits(
+          field,
+          filename,
+        )
+
+        pdf_edits.extend(
+          blank_edits
+        )
+
+        if blank_edits:
+          blank_count += len(
+            blank_edits
+          )
 
     logger.info(
-      "Resolved %d cell edit(s); added %d empty editable field(s); "
+      "Resolved %d populated cell edit(s); "
+      "added %d empty editable field(s); "
       "total pdf edits=%d",
-      len(cell_edits),
+      populated_count,
       blank_count,
       len(pdf_edits),
     )
