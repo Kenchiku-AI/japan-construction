@@ -17,6 +17,8 @@ from sqlalchemy.orm import selectinload
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageDraw, ImageFont
 import base64
 import os
+import fitz
+import io
 
 from app.core.config import settings
 from app.db.models.form_job import (
@@ -2764,9 +2766,6 @@ NEVER transpose rows and columns.
     output_dir: Path,
     input_files: list[Path],
   ) -> None:
-
-    import re
-
     output_dir.mkdir(
       parents=True,
       exist_ok=True,
@@ -3490,9 +3489,6 @@ NEVER transpose rows and columns.
     units (0-1000 on each axis). Normalized coordinates are immune
     to any internal resizing the vision model applies.
     """
-    import io
-
-    import fitz
 
     renders: list[dict] = []
 
@@ -3644,8 +3640,6 @@ NEVER transpose rows and columns.
     self,
     input_file: Path,
   ) -> tuple[list[dict], list[dict]]:
-    import fitz
-
     renders = self._render_pdf_pages_for_model(input_file)
 
     content: list[dict] = []
@@ -3952,7 +3946,6 @@ NEVER transpose rows and columns.
     Only runs for unrotated pages (get_drawings coordinates are not
     guaranteed to be in visual space on rotated pages).
     """
-    import fitz
 
     if page.rotation != 0:
       return rect
@@ -4060,8 +4053,6 @@ NEVER transpose rows and columns.
     by ~2 pt, so the widget is widened by `pad_x` on each side to keep
     the full text visible without changing the text's size or position.
     """
-
-    import fitz
 
     widget_rect = fitz.Rect(rect)
 
@@ -4173,7 +4164,6 @@ NEVER transpose rows and columns.
 
   def _detect_cells(self, page, solid_h, solid_v, dot_h, dot_v):
     """Enclosed rectangular regions (table cells) via raster flood fill."""
-    import fitz
 
     s = 3.0
     ox, oy = page.rect.x0, page.rect.y0
@@ -4220,8 +4210,6 @@ NEVER transpose rows and columns.
   # ------------------------------------------------------------------
   @staticmethod
   def _page_chars(page):
-    import fitz
-
     chars = []
     raw = page.get_text("rawdict")
     for b in raw.get("blocks", []):
@@ -4309,8 +4297,6 @@ NEVER transpose rows and columns.
   # field extraction
   # ------------------------------------------------------------------
   def _extract_pdf_fields(self, page, page_number=1):
-    import fitz
-
     if page.rotation != 0:
       return []
 
@@ -4614,10 +4600,6 @@ NEVER transpose rows and columns.
     return "\n".join(lines)
 
   def _render_field_overlay(self, page, fields, long_edge_px=2600):
-    import io
-
-    import fitz
-
     zoom = long_edge_px / max(page.rect.width, page.rect.height)
     pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
     img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
@@ -4664,7 +4646,6 @@ NEVER transpose rows and columns.
 
   def _fit_font(self, text, width, height):
     """Returns (font_size, needs_multiline)."""
-    import fitz
 
     font_file = Path(
       "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf"
@@ -4697,8 +4678,6 @@ NEVER transpose rows and columns.
     return size, True
 
   def _expand_field_edit(self, field, text, filename):
-    import fitz
-
     text = str(text).strip()
     if not text:
       return []
@@ -4792,7 +4771,6 @@ NEVER transpose rows and columns.
     mode "cells":  vector PDF without AcroForm fields -> field catalog.
     mode "coords": anything else -> the gridded-image coordinate path.
     """
-    import fitz
 
     if not hasattr(self, "_pdf_field_catalogs"):
       self._pdf_field_catalogs = {}
@@ -4916,15 +4894,21 @@ Final JSON keys: summary, completed, files (empty), cell_edits,
 missing_data, recommendations. Human-readable text in Japanese.
 """
 
-  def _resolve_cell_edits(self, agent_output: dict, input_files) -> None:
-    """Turn agent_output["cell_edits"] into exact coordinate pdf_edits."""
-    catalogs = getattr(self, "_pdf_field_catalogs", {})
-    cell_edits = agent_output.get("cell_edits") or []
 
-    if not catalogs or not cell_edits:
+  def _resolve_cell_edits(self, agent_output: dict, input_files) -> None:
+    """
+    Turn agent_output["cell_edits"] into exact coordinate pdf_edits, then
+    add an EMPTY editable field for every detected field that was not
+    populated, so users can fill those in by hand.
+    """
+    catalogs = getattr(self, "_pdf_field_catalogs", {})
+
+    if not catalogs:
       return
 
+    cell_edits = agent_output.get("cell_edits") or []
     pdf_edits = agent_output.setdefault("pdf_edits", [])
+    filled = {name: set() for name in catalogs}
 
     for ce in cell_edits:
       if not isinstance(ce, dict):
@@ -4942,17 +4926,30 @@ missing_data, recommendations. Human-readable text in Japanese.
         logger.warning("Unknown field id from agent: %r", cell_id)
         continue
 
-      pdf_edits.extend(
-        self._expand_field_edit(
-          catalogs[filename][cell_id],
-          ce.get("text", ""),
-          filename,
-        )
+      edits = self._expand_field_edit(
+        catalogs[filename][cell_id],
+        ce.get("text", ""),
+        filename,
       )
 
+      if edits:
+        filled[filename].add(cell_id)
+        pdf_edits.extend(edits)
+
+    blank_count = 0
+
+    for filename, catalog in catalogs.items():
+      for cell_id, field in catalog.items():
+        if cell_id in filled[filename]:
+          continue
+        pdf_edits.extend(self._blank_field_edits(field, filename))
+        blank_count += 1
+
     logger.info(
-      "Resolved %d cell edit(s) into %d pdf edit(s)",
+      "Resolved %d cell edit(s); added %d empty editable field(s); "
+      "total pdf edits=%d",
       len(cell_edits),
+      blank_count,
       len(pdf_edits),
     )
 
@@ -4963,8 +4960,6 @@ missing_data, recommendations. Human-readable text in Japanese.
     image_edits: list[dict],
     output_dir: Path,
   ) -> Path:
-    import fitz
-
     output_dir.mkdir(
       parents=True,
       exist_ok=True,
@@ -5355,10 +5350,6 @@ missing_data, recommendations. Human-readable text in Japanese.
     pdf_edits: list[dict],
     output_dir: Path,
   ) -> Path:
-    import json
-    import re
-    import fitz
-
     output_dir.mkdir(
       parents=True,
       exist_ok=True,
@@ -6421,6 +6412,41 @@ missing_data, recommendations. Human-readable text in Japanese.
     )
 
     return output_path
+
+
+  def _blank_field_edits(self, field, filename):
+    """Empty editable field(s) for a detected field (same geometry rules)."""
+
+    anchors = field["anchors"]
+    chars = {a["c"] for a in anchors}
+
+    if all(k in chars for k in "年月日"):
+      sample = "2000/01/01"
+    elif len(anchors) == 1 and field["kind"] == "cell":
+      sample = "0"
+    else:
+      sample = "x"
+
+    rect = field["rect"]
+
+    if (
+      field["kind"] == "cell"
+      and sample == "x"
+      and not field.get("bracket")
+      and not field.get("printed_chars")
+      and rect.height >= 30
+    ):
+      return [dict(
+        filename=filename, page=field["page"], field_name=field["id"],
+        x0=rect.x0 + 1, y0=rect.y0 + 1, x1=rect.x1 - 1, y1=rect.y1 - 1,
+        text="", coordinate_space="pdf_points", exact=True,
+        font_size=6.5, multiline=True,
+      )]
+
+    edits = self._expand_field_edit(field, sample, filename)
+    for e in edits:
+      e["text"] = ""
+    return edits
 
 
   def _pdf_prompt_instructions(
