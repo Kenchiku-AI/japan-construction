@@ -5590,6 +5590,7 @@ missing_data, recommendations. Human-readable text in Japanese.
 
         widget.border_color = None
         widget.fill_color = None
+        widget.text_alignment = 1
 
         page.add_widget(
           widget
