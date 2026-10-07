@@ -2349,6 +2349,8 @@ If you cannot confidently determine the boundary, return:
       )
 
       for input_file in input_files:
+        if input_file.suffix.lower() == ".pdf":
+          continue
 
         logger.info(
           "Uploading form file to OpenAI: %s",
@@ -2592,13 +2594,24 @@ NEVER transpose rows and columns.
           }
         )
 
+            pdf_renders: list[dict] = []
+
       if has_pdf:
-        pdf_instruction = self._pdf_prompt_instructions()
+        for pdf_file in input_files:
+          if pdf_file.suffix.lower() != ".pdf":
+            continue
+
+          pdf_content, renders = self._build_pdf_agent_content(
+            pdf_file,
+          )
+
+          content.extend(pdf_content)
+          pdf_renders.extend(renders)
 
         content.append(
           {
             "type": "input_text",
-            "text": pdf_instruction,
+            "text": self._pdf_prompt_instructions(),
           }
         )
 
@@ -2693,8 +2706,13 @@ NEVER transpose rows and columns.
         raw_output,
       )
 
-      if not has_image and not has_pdf:
+      if pdf_renders:
+        self._convert_pdf_edit_pixels_to_points(
+          agent_output,
+          pdf_renders,
+        )
 
+      if not has_image and not has_pdf:
         self._extract_output_files_from_response(
           response=response,
           agent_output=agent_output,
@@ -3443,6 +3461,552 @@ NEVER transpose rows and columns.
     return output_path
 
 
+  def _render_pdf_pages_for_model(
+    self,
+    input_file: Path,
+    long_edge_px: int = 2400,
+    grid_step_px: int = 100,
+  ) -> list[dict]:
+    """
+    Render every page of a PDF to a PNG with a labelled pixel grid.
+
+    The model returns coordinates in THIS image's pixel space. The
+    returned metadata lets us convert pixels -> PDF points exactly.
+    """
+    import io
+
+    import fitz
+
+    renders: list[dict] = []
+
+    font_path = Path(
+      "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf"
+    )
+
+    try:
+      if font_path.exists():
+        font = ImageFont.truetype(str(font_path), 22)
+      else:
+        font = ImageFont.load_default(size=22)
+    except Exception:
+      font = ImageFont.load_default()
+
+    document = fitz.open(input_file)
+
+    try:
+      for page_index in range(document.page_count):
+        page = document[page_index]
+
+        # page.rect is the VISUAL (rotation-applied) rectangle, and
+        # get_pixmap renders the page the same way.
+        page_rect = page.rect
+
+        zoom = long_edge_px / max(
+          page_rect.width,
+          page_rect.height,
+        )
+
+        pixmap = page.get_pixmap(
+          matrix=fitz.Matrix(zoom, zoom),
+          alpha=False,
+        )
+
+        width_px = pixmap.width
+        height_px = pixmap.height
+
+        image = Image.frombytes(
+          "RGB",
+          (width_px, height_px),
+          pixmap.samples,
+        ).convert("RGBA")
+
+        overlay = Image.new(
+          "RGBA",
+          image.size,
+          (255, 255, 255, 0),
+        )
+
+        draw = ImageDraw.Draw(overlay)
+
+        major_every = grid_step_px * 5
+
+        # Grid lines.
+        for x in range(0, width_px, grid_step_px):
+          major = x % major_every == 0
+          draw.line(
+            [(x, 0), (x, height_px)],
+            fill=(255, 0, 0, 110 if major else 45),
+            width=2 if major else 1,
+          )
+
+        for y in range(0, height_px, grid_step_px):
+          major = y % major_every == 0
+          draw.line(
+            [(0, y), (width_px, y)],
+            fill=(255, 0, 0, 110 if major else 45),
+            width=2 if major else 1,
+          )
+
+        label_fill = (255, 0, 0, 255)
+
+        # Edge labels (all four edges).
+        for x in range(0, width_px, grid_step_px):
+          draw.text((x + 3, 2), str(x), fill=label_fill, font=font)
+          draw.text(
+            (x + 3, height_px - 28),
+            str(x),
+            fill=label_fill,
+            font=font,
+          )
+
+        for y in range(0, height_px, grid_step_px):
+          draw.text((3, y + 2), str(y), fill=label_fill, font=font)
+          draw.text(
+            (width_px - 64, y + 2),
+            str(y),
+            fill=label_fill,
+            font=font,
+          )
+
+        # Interior "x,y" labels at every major intersection.
+        for x in range(0, width_px, major_every):
+          for y in range(0, height_px, major_every):
+            draw.text(
+              (x + 4, y + 4),
+              f"{x},{y}",
+              fill=(0, 0, 255, 255),
+              font=font,
+            )
+
+        image = Image.alpha_composite(
+          image,
+          overlay,
+        ).convert("RGB")
+
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+
+        renders.append(
+          {
+            "filename": input_file.name,
+            "page": page_index + 1,
+            "page_count": document.page_count,
+            "width_px": width_px,
+            "height_px": height_px,
+            "scale_x": width_px / page_rect.width,
+            "scale_y": height_px / page_rect.height,
+            "origin_x": float(page_rect.x0),
+            "origin_y": float(page_rect.y0),
+            "png_bytes": buffer.getvalue(),
+          }
+        )
+
+        logger.info(
+          "Rendered PDF page for model: file=%s page=%d "
+          "px=%dx%d pt=%.2fx%.2f rotation=%d",
+          input_file.name,
+          page_index + 1,
+          width_px,
+          height_px,
+          page_rect.width,
+          page_rect.height,
+          page.rotation,
+        )
+
+    finally:
+      document.close()
+
+    return renders
+
+
+  def _build_pdf_agent_content(
+    self,
+    input_file: Path,
+  ) -> tuple[list[dict], list[dict]]:
+    """
+    Build the OpenAI input content for one PDF: gridded page images,
+    plus a list of real AcroForm fields expressed in the same pixel
+    space. Returns (content_items, render_metadata).
+    """
+    import fitz
+
+    renders = self._render_pdf_pages_for_model(input_file)
+
+    content: list[dict] = []
+
+    document = fitz.open(input_file)
+
+    try:
+      field_lines: list[str] = []
+
+      for render in renders:
+        page = document[render["page"] - 1]
+
+        for widget in (page.widgets() or []):
+          if not widget.field_name:
+            continue
+
+          visual = fitz.Rect(widget.rect) * page.rotation_matrix
+          visual.normalize()
+
+          x0 = round(
+            (visual.x0 - render["origin_x"]) * render["scale_x"]
+          )
+          y0 = round(
+            (visual.y0 - render["origin_y"]) * render["scale_y"]
+          )
+          x1 = round(
+            (visual.x1 - render["origin_x"]) * render["scale_x"]
+          )
+          y1 = round(
+            (visual.y1 - render["origin_y"]) * render["scale_y"]
+          )
+
+          field_lines.append(
+            f"- page={render['page']} "
+            f"field_name={widget.field_name!r} "
+            f"type={widget.field_type_string} "
+            f"current_value={widget.field_value!r} "
+            f"approx_pixel_rect=[{x0},{y0},{x1},{y1}]"
+          )
+
+      for render in renders:
+        content.append(
+          {
+            "type": "input_text",
+            "text": (
+              f"PDF file: {render['filename']} — page "
+              f"{render['page']} of {render['page_count']}.\n"
+              f"The next image is a rendering of this page with a "
+              f"red coordinate grid.\n"
+              f"IMAGE SIZE: width={render['width_px']}px "
+              f"height={render['height_px']}px.\n"
+              f"Grid lines are every 100px. Red numbers on the "
+              f"edges are pixel coordinates (x along the top/bottom "
+              f"edges, y along the left/right edges). Blue labels "
+              f"show x,y at major intersections.\n"
+              f"ALL coordinates you return for this page MUST be "
+              f"pixel coordinates of THIS image "
+              f"(origin top-left, x right, y down)."
+            ),
+          }
+        )
+
+        data_url = (
+          "data:image/png;base64,"
+          + base64.b64encode(render["png_bytes"]).decode("utf-8")
+        )
+
+        content.append(
+          {
+            "type": "input_image",
+            "image_url": data_url,
+            "detail": "high",
+          }
+        )
+
+        # Don't keep the PNG bytes around.
+        render.pop("png_bytes", None)
+
+      if field_lines:
+        content.append(
+          {
+            "type": "input_text",
+            "text": (
+              f"Existing AcroForm fields in {input_file.name} "
+              f"(use these EXACT field_name values; pixel rects are "
+              f"approximate and in the same pixel space as the "
+              f"images):\n" + "\n".join(field_lines)
+            ),
+          }
+        )
+      else:
+        content.append(
+          {
+            "type": "input_text",
+            "text": (
+              f"{input_file.name} contains NO AcroForm fields. "
+              f"Use coordinate-based edits."
+            ),
+          }
+        )
+
+    finally:
+      document.close()
+
+    return content, renders
+
+
+  def _convert_pdf_edit_pixels_to_points(
+    self,
+    agent_output: dict,
+    renders: list[dict],
+  ) -> None:
+    """
+    Convert coordinate edits in agent_output["pdf_edits"] from the
+    model's image pixels to PDF points (visual page coordinates).
+    Mutates the edits in place. AcroForm edits (no coordinates) are
+    left alone.
+    """
+    pdf_edits = agent_output.get("pdf_edits") or []
+
+    renders_by_key = {
+      (render["filename"], render["page"]): render
+      for render in renders
+    }
+
+    filenames = {render["filename"] for render in renders}
+
+    for edit in pdf_edits:
+      if not isinstance(edit, dict):
+        continue
+
+      if edit.get("coordinate_space") == "pdf_points":
+        continue
+
+      if not all(k in edit for k in ("x0", "y0", "x1", "y1")):
+        continue
+
+      filename = edit.get("filename")
+
+      if filename not in filenames:
+        if len(filenames) == 1:
+          filename = next(iter(filenames))
+          edit["filename"] = filename
+        else:
+          logger.warning(
+            "Cannot resolve filename for coordinate edit: %s",
+            edit,
+          )
+          continue
+
+      try:
+        page_number = int(edit.get("page") or 1)
+      except (TypeError, ValueError):
+        page_number = 1
+
+      render = renders_by_key.get((filename, page_number))
+
+      if render is None:
+        logger.warning(
+          "No render metadata for edit (file=%s page=%s): %s",
+          filename,
+          page_number,
+          edit,
+        )
+        continue
+
+      try:
+        px0 = float(edit["x0"])
+        py0 = float(edit["y0"])
+        px1 = float(edit["x1"])
+        py1 = float(edit["y1"])
+      except (TypeError, ValueError):
+        logger.warning(
+          "Invalid pixel coordinates in edit: %s",
+          edit,
+        )
+        continue
+
+      left, right = sorted((px0, px1))
+      top, bottom = sorted((py0, py1))
+
+      left = max(0.0, min(left, render["width_px"]))
+      right = max(0.0, min(right, render["width_px"]))
+      top = max(0.0, min(top, render["height_px"]))
+      bottom = max(0.0, min(bottom, render["height_px"]))
+
+      edit["page"] = page_number
+      edit["pixel_rect"] = [left, top, right, bottom]
+      edit["x0"] = render["origin_x"] + left / render["scale_x"]
+      edit["x1"] = render["origin_x"] + right / render["scale_x"]
+      edit["y0"] = render["origin_y"] + top / render["scale_y"]
+      edit["y1"] = render["origin_y"] + bottom / render["scale_y"]
+      edit["coordinate_space"] = "pdf_points"
+
+      logger.info(
+        "Converted edit %r pixels=[%.0f,%.0f,%.0f,%.0f] -> "
+        "points=[%.1f,%.1f,%.1f,%.1f]",
+        edit.get("field_name"),
+        left,
+        top,
+        right,
+        bottom,
+        edit["x0"],
+        edit["y0"],
+        edit["x1"],
+        edit["y1"],
+      )
+
+
+  @staticmethod
+  def _collect_ruling_lines(
+    page,
+  ) -> tuple[list[tuple], list[tuple]]:
+    """
+    Collect printed horizontal/vertical ruling lines from the page's
+    vector drawings.
+
+    Returns:
+      horizontals: [(y, x_min, x_max), ...]
+      verticals:   [(x, y_min, y_max), ...]
+    """
+    horizontals: list[tuple] = []
+    verticals: list[tuple] = []
+
+    try:
+      drawings = page.get_drawings()
+    except Exception:
+      logger.exception("get_drawings() failed")
+      return horizontals, verticals
+
+    def add_segment(x_a, y_a, x_b, y_b) -> None:
+      if abs(y_a - y_b) <= 0.75 and abs(x_a - x_b) >= 6:
+        horizontals.append(
+          ((y_a + y_b) / 2.0, min(x_a, x_b), max(x_a, x_b))
+        )
+      elif abs(x_a - x_b) <= 0.75 and abs(y_a - y_b) >= 6:
+        verticals.append(
+          ((x_a + x_b) / 2.0, min(y_a, y_b), max(y_a, y_b))
+        )
+
+    def add_rect(r) -> None:
+      if r.height <= 1.5 and r.width >= 6:
+        y = (r.y0 + r.y1) / 2.0
+        horizontals.append((y, r.x0, r.x1))
+      elif r.width <= 1.5 and r.height >= 6:
+        x = (r.x0 + r.x1) / 2.0
+        verticals.append((x, r.y0, r.y1))
+      elif r.width > 6 and r.height > 6:
+        horizontals.append((r.y0, r.x0, r.x1))
+        horizontals.append((r.y1, r.x0, r.x1))
+        verticals.append((r.x0, r.y0, r.y1))
+        verticals.append((r.x1, r.y0, r.y1))
+
+    for drawing in drawings:
+      for item in drawing.get("items", []):
+        op = item[0]
+
+        try:
+          if op == "l":
+            p1, p2 = item[1], item[2]
+            add_segment(p1.x, p1.y, p2.x, p2.y)
+          elif op == "re":
+            add_rect(item[1])
+          elif op == "qu":
+            add_rect(item[1].rect)
+        except Exception:
+          continue
+
+    return horizontals, verticals
+
+
+  def _snap_pdf_rect_to_ruling_lines(
+    self,
+    page,
+    rect,
+    line_cache: dict,
+    tolerance: float = 10.0,
+    inset: float = 1.0,
+  ):
+    """
+    Nudge each edge of `rect` onto a nearby printed ruling line
+    (within `tolerance` points) so small model errors land inside
+    the real cell. Edges with no nearby line are left alone. If the
+    snapped rect looks implausible, the original is returned.
+
+    Only runs for unrotated pages (get_drawings coordinates are not
+    guaranteed to be in visual space on rotated pages).
+    """
+    import fitz
+
+    if page.rotation != 0:
+      return rect
+
+    cache_key = page.number
+
+    if cache_key not in line_cache:
+      line_cache[cache_key] = self._collect_ruling_lines(page)
+
+    horizontals, verticals = line_cache[cache_key]
+
+    def nearest_horizontal(target_y: float) -> float | None:
+      best = None
+      for y, lx0, lx1 in horizontals:
+        overlap = min(rect.x1, lx1) - max(rect.x0, lx0)
+        if overlap < 0.5 * rect.width:
+          continue
+        distance = abs(y - target_y)
+        if distance <= tolerance and (
+          best is None or distance < best[0]
+        ):
+          best = (distance, y)
+      return best[1] if best else None
+
+    def nearest_vertical(target_x: float) -> float | None:
+      best = None
+      for x, ly0, ly1 in verticals:
+        overlap = min(rect.y1, ly1) - max(rect.y0, ly0)
+        if overlap < 0.5 * rect.height:
+          continue
+        distance = abs(x - target_x)
+        if distance <= tolerance and (
+          best is None or distance < best[0]
+        ):
+          best = (distance, x)
+      return best[1] if best else None
+
+    new_x0, new_y0, new_x1, new_y1 = (
+      rect.x0,
+      rect.y0,
+      rect.x1,
+      rect.y1,
+    )
+
+    top = nearest_horizontal(rect.y0)
+    bottom = nearest_horizontal(rect.y1)
+    left = nearest_vertical(rect.x0)
+    right = nearest_vertical(rect.x1)
+
+    if top is not None:
+      new_y0 = top + inset
+    if bottom is not None:
+      new_y1 = bottom - inset
+    if left is not None:
+      new_x0 = left + inset
+    if right is not None:
+      new_x1 = right - inset
+
+    snapped = fitz.Rect(new_x0, new_y0, new_x1, new_y1)
+
+    original_area = max(rect.width * rect.height, 1e-6)
+    snapped_area = snapped.width * snapped.height
+
+    if (
+      snapped.width < 4
+      or snapped.height < 4
+      or not (0.5 <= snapped_area / original_area <= 2.0)
+    ):
+      logger.info(
+        "Snap rejected (implausible): original=%s snapped=%s",
+        rect,
+        snapped,
+      )
+      return rect
+
+    logger.info(
+      "Snapped rect: %s -> %s (top=%s bottom=%s left=%s right=%s)",
+      rect,
+      snapped,
+      top,
+      bottom,
+      left,
+      right,
+    )
+
+    return snapped
+
+
   def _add_editable_pdf_text_field(
     self,
     page,
@@ -3455,16 +4019,24 @@ NEVER transpose rows and columns.
     """
     Add a real editable AcroForm text field to an existing PDF.
 
-    The original PDF content remains unchanged underneath the field.
+    `rect` is given in VISUAL page coordinates (what you see on
+    screen). For rotated pages it is converted to the unrotated
+    coordinate system that widgets require.
     """
 
     import fitz
+
+    widget_rect = fitz.Rect(rect)
+
+    if page.rotation:
+      widget_rect = widget_rect * page.derotation_matrix
+      widget_rect.normalize()
 
     widget = fitz.Widget()
 
     widget.field_name = field_name
     widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
-    widget.rect = rect
+    widget.rect = widget_rect
     widget.field_value = str(value)
 
     widget.text_font = font_name
@@ -3473,7 +4045,6 @@ NEVER transpose rows and columns.
       float(font_size),
     )
 
-    # Make the field visually blend into the existing form.
     widget.border_color = None
     widget.fill_color = None
     widget.text_color = (0, 0, 0)
@@ -3482,19 +4053,19 @@ NEVER transpose rows and columns.
       widget,
     )
 
-    # Force the widget appearance to be generated.
     widget.update()
 
     logger.info(
       "Created editable PDF field: "
-      "field_name=%r rect=%s value=%r "
+      "field_name=%r rect=%s widget_rect=%s value=%r "
       "font=%r fontsize=%.2f",
       field_name,
       rect,
+      widget_rect,
       value,
       font_name,
       font_size,
-    )
+    )  
 
 
   def _build_editable_pdf_from_image(
@@ -3897,7 +4468,6 @@ NEVER transpose rows and columns.
   ) -> Path:
     import json
     import re
-
     import fitz
 
     output_dir.mkdir(
@@ -4389,6 +4959,7 @@ NEVER transpose rows and columns.
 
         return False
 
+    ruling_line_cache: dict = {}
     applied_count = 0
     skipped_count = 0
 
@@ -4714,6 +5285,12 @@ NEVER transpose rows and columns.
         skipped_count += 1
         continue
 
+      rect = self._snap_pdf_rect_to_ruling_lines(
+        page=page,
+        rect=rect,
+        line_cache=ruling_line_cache,
+      )
+
       text_value = str(
         text
       )
@@ -4953,329 +5530,144 @@ NEVER transpose rows and columns.
     self,
   ) -> str:
     return """
-  ============================================================
-  PDF EDITING — CRITICAL
-  ============================================================
-
-  One or more uploaded files are PDF forms.
-
-  The application, NOT the agent, creates the completed PDF.
-
-  You MUST inspect the actual PDF carefully, including its visual layout,
-  text, tables, rows, columns, labels, blank fields, and existing AcroForm
-  fields.
-
-  Your job is to return explicit machine-readable PDF edits.
-
-  Every value that the application writes into a PDF MUST remain editable
-  in the resulting PDF.
-
-  There are TWO kinds of PDF edits:
-
-  1. Existing AcroForm fields
-  2. New editable AcroForm fields created from coordinates
-
-  ============================================================
-  EXISTING ACROFORM FIELDS — HIGHEST PRIORITY
-  ============================================================
-
-  If the PDF already contains an AcroForm field corresponding to the
-  information you need to enter, you MUST use that existing field.
-
-  Use its EXACT field_name.
-
-  Example:
-
-  {
-    "filename": "sample-form.pdf",
-    "field_name": "applicant.name",
-    "value": "佐藤 健一"
-  }
-
-  Do NOT use coordinates when an appropriate AcroForm field already exists.
-
-  Do NOT rename or reinterpret the existing field name.
-
-  The actual PDF field name is authoritative.
-
-  For checkboxes:
-
-  {
-    "filename": "sample-form.pdf",
-    "field_name": "applicant.subscribe",
-    "value": true
-  }
-
-  For dropdowns and radio buttons, use the actual logical option value
-  represented by the PDF field.
-
-  ============================================================
-  NEW EDITABLE PDF FIELDS
-  ============================================================
-
-  If the PDF does NOT contain an AcroForm field for the information,
-  return a coordinate-based edit.
-
-  IMPORTANT:
-
-  The application will convert this coordinate edit into a REAL
-  EDITABLE PDF ACROFORM TEXT FIELD.
-
-  The value will NOT simply be permanently drawn onto the PDF.
-
-  Use this structure:
-
-  {
-    "filename": "example.pdf",
-    "page": 1,
-    "field_name": "worker_1_name",
-    "x0": 100,
-    "y0": 200,
-    "x1": 300,
-    "y1": 230,
-    "text": "佐藤 健一"
-  }
-
-  The field_name is REQUIRED for every new coordinate-based field.
-
-  field_name rules:
-
-  - unique within the PDF
-  - descriptive
-  - machine-readable
-  - stable
-  - based on the semantic meaning of the field
-
-  Examples:
-
-  worker_1_name
-  worker_1_furigana
-  worker_1_job_type
-  worker_1_birth_date
-  worker_1_phone
-  worker_1_address
-  worker_1_insurance
-  worker_1_qualification_1
-  company_name
-  company_address
-  project_name
-  project_number
-
-  Do NOT use the displayed value itself as field_name.
-
-  Do NOT create duplicate field names for unrelated fields.
-
-  ============================================================
-  COORDINATE SYSTEM
-  ============================================================
-
-  Coordinates MUST use the PDF's native coordinate system.
-
-  - origin = top-left
-  - x increases to the right
-  - y increases downward
-  - units = PDF points
-
-  Do NOT use image pixels.
-
-  Do NOT use normalized coordinates from 0.0 to 1.0.
-
-  Do NOT convert coordinates from another coordinate system.
-
-  x0/y0 is the upper-left corner of the editable field.
-
-  x1/y1 is the lower-right corner of the editable field.
-
-  ============================================================
-  THE RECTANGLE MUST BE THE ACTUAL FIELD
-  ============================================================
-
-  This is extremely important.
-
-  The coordinate rectangle must represent the actual BLANK FIELD
-  where the new value should be written.
-
-  Do NOT return the bounding box of the printed label.
-
-  For example:
-
-  氏名: __________________________
-
-  If the value is:
-
-  佐藤 健一
-
-  the rectangle must cover the blank area after 氏名.
-
-  It must NOT cover the printed word:
-
-  氏名
-
-  Similarly, if a form contains:
-
-  会社名: _______________________
-
-  the rectangle must cover the blank writable area, not the label
-  会社名.
-
-  The resulting AcroForm widget will occupy exactly the rectangle you
-  provide.
-
-  ============================================================
-  TABLE ROW/COLUMN INTEGRITY — CRITICAL
-  ============================================================
-
-  When the PDF contains a table, FIRST determine the table's complete
-  row and column structure.
-
-  For worker rosters, employee lists, personnel lists, or similar tables:
-
-  - Each worker/person normally occupies ONE HORIZONTAL ROW.
-  - Each attribute occupies the appropriate COLUMN within that row.
-  - Never transpose rows and columns.
-  - Never arrange workers vertically by attribute unless the printed
-    form is actually structured that way.
-  - Never place a worker's value in another worker's row.
-
-  For example:
-
-  No. | 氏名 | ふりがな | 職種 | 生年月日 | 電話番号
-
-  Worker 1 belongs to one horizontal row.
-
-  Worker 2 belongs to the next horizontal row.
-
-  Worker 3 belongs to the next horizontal row.
-
-  For every coordinate edit, verify:
-
-  1. Which worker/person does this value belong to?
-  2. Which horizontal row belongs to that worker?
-  3. Which column contains this field?
-  4. Is the rectangle inside that column?
-  5. Is the rectangle inside that worker's row?
-  6. Would a human filling out the paper form write the value there?
-
-  If one worker has multiple fields, those fields MUST align with that
-  worker's same horizontal row.
-
-  ============================================================
-  HEADER VS. TABLE — CRITICAL
-  ============================================================
-
-  Do NOT place worker/person information in the document header.
-
-  Before assigning coordinates to worker information:
-
-  1. Identify the worker table.
-  2. Identify the table's first data row.
-  3. Identify the correct worker row.
-  4. Identify the correct column.
-  5. Place the coordinate rectangle inside that cell.
-
-  Do NOT infer a worker's location from nearby text alone.
-
-  Do NOT use the bounding box of an existing worker name as the target
-  location unless that bounding box actually corresponds to the blank
-  field where the new worker name belongs.
-
-  ============================================================
-  SCANNED / IMAGE-BASED PDF
-  ============================================================
-
-  A PDF does NOT need to contain existing AcroForm fields in order to
-  contain editable fields in the completed result.
-
-  If the PDF is a scanned or image-based form and has no AcroForm fields:
-
-  - inspect the visual page
-  - identify the printed form structure
-  - identify the correct blank field
-  - return a coordinate-based edit
-  - provide a unique field_name
-
-  The application will preserve the scanned PDF as the background and
-  create a real editable AcroForm field over the appropriate area.
-
-  Therefore:
-
-  NO PDF FIELD SHOULD BE OMITTED MERELY BECAUSE THE PDF IS SCANNED.
-
-  ============================================================
-  FIELD COMPLETENESS
-  ============================================================
-
-  Every value that should be entered into the PDF must produce an edit.
-
-  For each requested value:
-
-  1. If a matching AcroForm field exists:
-    return field_name + value.
-
-  2. If no matching AcroForm field exists:
-    return page + field_name + coordinates + text.
-
-  3. If the value cannot be reliably determined:
-    do not guess.
-    Put the issue in missing_data.
-
-  Every field written into the completed PDF must therefore be editable.
-
-  ============================================================
-  EXISTING VALUES
-  ============================================================
-
-  Preserve existing values.
-
-  Do not overwrite an existing value unless the task clearly requires
-  replacement.
-
-  Do not delete:
-
-  - labels
-  - headers
-  - instructions
-  - tables
-  - footers
-  - static explanatory text
-
-  ============================================================
-  VISUAL VERIFICATION
-  ============================================================
-
-  Before returning PDF edits, visually verify every coordinate.
-
-  For each coordinate edit ask:
-
-  1. Is this the correct page?
-  2. Is this the correct field?
-  3. Is this the correct worker/person?
-  4. Is this the correct table row?
-  5. Is this the correct column?
-  6. Is the rectangle inside the actual blank field?
-  7. Is the rectangle large enough for the value?
-  8. Is the value being placed in a location where a human would
-    actually write it?
-
-  Do NOT apply a global x/y offset mentally or assume that all fields
-  need the same translation.
-
-  Each field must be positioned independently according to the actual
-  printed form.
-
-  ============================================================
-  PDF OUTPUT
-  ============================================================
-
-  For PDF jobs, the "pdf_edits" array is the primary machine-readable
-  output.
-
-  Do NOT claim that you created or modified the completed PDF.
-
-  The application will apply the edits after the agent finishes.
-
-  Return explicit edits, not a prose description of what should be filled.
-  """
+============================================================
+PDF EDITING — CRITICAL
+============================================================
+
+One or more uploaded files are PDF forms. For each PDF you are given:
+
+- one gridded IMAGE per page (with the exact pixel width/height stated
+  in the text just before the image), and
+- a list of the PDF's real AcroForm fields, if any.
+
+The application, NOT you, creates the completed PDF. You return
+machine-readable edits in "pdf_edits". Every value written into the PDF
+becomes an EDITABLE AcroForm field.
+
+------------------------------------------------------------
+1. EXISTING ACROFORM FIELDS — HIGHEST PRIORITY
+------------------------------------------------------------
+
+If a listed AcroForm field corresponds to the value, use its EXACT
+field_name. Never use coordinates for a value that has a matching
+AcroForm field.
+
+{
+  "filename": "sample-form.pdf",
+  "field_name": "applicant.name",
+  "value": "佐藤 健一"
+}
+
+Checkboxes use true/false. Radio buttons and dropdowns use the logical
+option value.
+
+------------------------------------------------------------
+2. NEW EDITABLE FIELDS (coordinates)
+------------------------------------------------------------
+
+If no AcroForm field exists for the value, return:
+
+{
+  "filename": "example.pdf",
+  "page": 1,
+  "field_name": "worker_1_name",
+  "x0": 412,
+  "y0": 530,
+  "x1": 640,
+  "y1": 566,
+  "text": "佐藤 健一"
+}
+
+field_name is REQUIRED, unique within the PDF, descriptive,
+machine-readable and stable (e.g. worker_1_name, worker_1_birth_date,
+company_name, form_created_date). Never use the displayed value as the
+field_name.
+
+------------------------------------------------------------
+3. COORDINATE SYSTEM — IMAGE PIXELS (OVERRIDES ANY OTHER INSTRUCTION)
+------------------------------------------------------------
+
+x0, y0, x1, y1 are PIXEL coordinates of the page image you were shown:
+
+- origin = top-left of the image
+- x increases to the right, y increases downward
+- use the stated image width/height; do NOT rescale
+- do NOT use PDF points, do NOT use normalized 0..1 values
+
+Any other instruction in this prompt that mentions x0/y0/x1/y1 refers to
+these same image pixels.
+
+HOW TO MEASURE:
+1. Find the target cell/blank on the image.
+2. Read the red grid numbers on the nearest grid lines to find where the
+   cell's LEFT, RIGHT, TOP and BOTTOM borders are, to within ~5 px.
+3. Return a rectangle that sits just INSIDE those borders
+   (about 2–4 px margin). The application will snap edges to nearby
+   printed lines, so be accurate rather than generous.
+4. Re-check: the rectangle's four edges must lie on the borders of ONE
+   cell. A rectangle spanning two rows or two columns is wrong.
+
+------------------------------------------------------------
+4. THE RECTANGLE MUST BE THE BLANK AREA
+------------------------------------------------------------
+
+The rectangle must cover the writable blank, never the printed label.
+For "氏名: ________" the rectangle covers the blank after 氏名, not the
+word 氏名.
+
+Never place a value on top of large printed title text (for example the
+form title). A "（　年　月　日 作成）" creation-date field is a small blank
+line below the title, not the title itself.
+
+Many cells contain pre-printed "年　月　日" or "年　歳" slots. Treat the
+whole slot (the full printed "年 月 日" span) as the blank area and
+write the full date into it.
+
+------------------------------------------------------------
+5. TABLES — ROW/COLUMN INTEGRITY
+------------------------------------------------------------
+
+BEFORE choosing any coordinates, work out the table structure:
+
+- Identify the header rows and the data rows.
+- Identify how many printed LINES each record (worker) occupies. In
+  worker rosters each worker is often a BLOCK of 2 printed lines
+  separated by a dotted line (e.g. the upper line holds 雇入年月日 /
+  生年月日 / 電話 / 健康診断日, and the lower line holds 経験年数 /
+  年齢 / 家族連絡先 / 血圧). Each printed line is a separate target.
+- Each worker occupies ONE horizontal block; each attribute belongs to
+  its COLUMN within that block.
+- Never transpose rows and columns, and never put one worker's value
+  in another worker's block.
+- Never place worker data in the document header or in the column
+  header cells. Data starts BELOW the header rows.
+
+For every edit verify: which worker block? which printed line inside
+the block? which column? Are the rectangle's y-values inside that
+line's borders and the x-values inside that column's borders?
+
+All values for the same worker and same printed line must share
+approximately the same y0/y1.
+
+------------------------------------------------------------
+6. COMPLETENESS, EXISTING VALUES, MISSING DATA
+------------------------------------------------------------
+
+- Every value that should be entered must produce an edit.
+- If a value cannot be reliably determined or located, do NOT guess:
+  report it in "missing_data".
+- Preserve existing values, labels, headers, instructions, tables and
+  footers. Do not overwrite existing values unless clearly required.
+- Do NOT claim you created or modified the PDF. Return edits only.
+
+------------------------------------------------------------
+7. PDF OUTPUT
+------------------------------------------------------------
+
+Return the edits in the "pdf_edits" array of the final JSON (alongside
+summary / completed / files / missing_data / recommendations). "files"
+stays an empty array for PDF jobs.
+"""
 
 
   def _parse_agent_output(
