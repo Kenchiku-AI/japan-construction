@@ -2593,117 +2593,7 @@ NEVER transpose rows and columns.
         )
 
       if has_pdf:
-
-        pdf_instruction = """
-IMPORTANT: One or more uploaded files are PDF forms.
-
-The application, NOT Code Interpreter, will create the completed
-PDF.
-
-Your job is to inspect each PDF carefully and determine where each
-requested value belongs.
-
-You may use both the PDF's extracted text and its visual page
-layout.
-
-For every value that should be inserted into a PDF, return a
-"pdf_edits" entry.
-
-Each PDF edit MUST contain:
-
-- "filename": the original PDF filename
-- "page": the 1-based page number
-- "text": the exact text to insert
-- "x0": left coordinate of the field
-- "y0": top coordinate of the field
-- "x1": right coordinate of the field
-- "y1": bottom coordinate of the field
-
-IMPORTANT COORDINATE RULES:
-
-Coordinates must be expressed in PDF points.
-
-The coordinate system must use the TOP-LEFT corner of the page as
-the origin.
-
-x0/y0 is the upper-left corner of the field.
-
-x1/y1 is the lower-right corner of the field.
-
-Do NOT use pixel coordinates.
-
-Do NOT use normalized coordinates such as 0.0 to 1.0.
-
-Use the actual dimensions and coordinate system of the uploaded PDF.
-
-Identify the actual blank field where the value belongs.
-
-Do not simply place the text near the label.
-
-For example, if the PDF contains:
-
-氏名: ____________________
-
-and the requested value is:
-
-Joe Smith
-
-the bounding box should cover the blank area after 氏名:, not the
-label itself.
-
-Pay particular attention to:
-
-- Japanese labels
-- tables
-- checkboxes
-- signatures
-- dates
-- addresses
-- company names
-- employee names
-- numeric fields
-- multi-line fields
-
-Do not fabricate fields.
-
-Only return a pdf_edit when you can confidently identify the
-corresponding field.
-
-If requested information cannot be located confidently, put that
-information in "missing_data".
-
-The application will use PyMuPDF to insert the text into the
-returned bounding boxes.
-
-Do not create a completed PDF yourself.
-
-Do not use Code Interpreter to create the PDF.
-
-Your response MUST be valid JSON with this structure:
-
-{
-  "summary": "...",
-  "completed": true,
-  "files": [],
-  "pdf_edits": [
-    {
-      "filename": "form.pdf",
-      "page": 1,
-      "text": "Joe Smith",
-      "x0": 125,
-      "y0": 210,
-      "x1": 305,
-      "y1": 240
-    }
-  ],
-  "missing_data": [],
-  "recommendations": []
-}
-
-For a PDF job, "files" MUST remain an empty array because the
-application, rather than Code Interpreter, creates the completed
-PDF.
-"""
+        pdf_instruction = self._pdf_prompt_instructions()
 
         content.append(
           {
@@ -3552,13 +3442,67 @@ PDF.
 
     return output_path
 
+
+  def _add_editable_pdf_text_field(
+    self,
+    page,
+    rect,
+    field_name: str,
+    value: str,
+    font_name: str,
+    font_size: float,
+  ) -> None:
+    """
+    Add a real editable AcroForm text field to an existing PDF.
+
+    The original PDF content remains unchanged underneath the field.
+    """
+
+    import fitz
+
+    widget = fitz.Widget()
+
+    widget.field_name = field_name
+    widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+    widget.rect = rect
+    widget.field_value = str(value)
+
+    widget.text_font = font_name
+    widget.text_fontsize = max(
+      4,
+      float(font_size),
+    )
+
+    # Make the field visually blend into the existing form.
+    widget.border_color = None
+    widget.fill_color = None
+    widget.text_color = (0, 0, 0)
+
+    page.add_widget(
+      widget,
+    )
+
+    # Force the widget appearance to be generated.
+    widget.update()
+
+    logger.info(
+      "Created editable PDF field: "
+      "field_name=%r rect=%s value=%r "
+      "font=%r fontsize=%.2f",
+      field_name,
+      rect,
+      value,
+      font_name,
+      font_size,
+    )
+
+
   def _build_editable_pdf_from_image(
     self,
     input_file: Path,
     image_edits: list[dict],
     output_dir: Path,
   ) -> Path:
-
     import fitz
 
     output_dir.mkdir(
@@ -3566,9 +3510,29 @@ PDF.
       exist_ok=True,
     )
 
-    with Image.open(input_file) as pil_image:
+    logger.info(
+      "========== IMAGE TO EDITABLE PDF START =========="
+    )
+
+    logger.info(
+      "Input image: %s",
+      input_file,
+    )
+
+    with Image.open(
+      input_file
+    ) as pil_image:
       pil_image.load()
-      image_width, image_height = pil_image.size
+
+      image_width, image_height = (
+        pil_image.size
+      )
+
+    logger.info(
+      "Image dimensions: width=%d height=%d",
+      image_width,
+      image_height,
+    )
 
     document = fitz.open()
 
@@ -3577,10 +3541,25 @@ PDF.
       height=image_height,
     )
 
+    # ------------------------------------------------------------
+    # Preserve the original image as the PDF background.
+    # ------------------------------------------------------------
+
     page.insert_image(
-      fitz.Rect(0, 0, image_width, image_height),
-      filename=str(input_file),
+      fitz.Rect(
+        0,
+        0,
+        image_width,
+        image_height,
+      ),
+      filename=str(
+        input_file
+      ),
     )
+
+    # ------------------------------------------------------------
+    # Japanese font.
+    # ------------------------------------------------------------
 
     font_path = Path(
       "/usr/share/fonts/truetype/noto/NotoSansJP-Regular.ttf"
@@ -3589,48 +3568,125 @@ PDF.
     font_name = "NotoSansJP"
 
     if font_path.exists():
-      page.insert_font(
-        fontfile=str(font_path),
-        fontname=font_name,
-      )
+      try:
+        page.insert_font(
+          fontfile=str(
+            font_path
+          ),
+          fontname=font_name,
+        )
+      except Exception:
+        logger.debug(
+          "Font %r may already be registered.",
+          font_name,
+        )
+
     else:
       logger.warning(
         "Japanese font not found for editable PDF widgets: %s",
         font_path,
       )
+
       font_name = "helv"
 
     applied_count = 0
+    skipped_count = 0
 
-    for index, edit in enumerate(image_edits):
+    used_field_names = set()
 
-      filename = edit.get("filename")
+    # ------------------------------------------------------------
+    # Add editable fields.
+    # ------------------------------------------------------------
 
-      if filename and filename != input_file.name:
+    for index, edit in enumerate(
+      image_edits
+    ):
+      logger.info(
+        "PROCESSING IMAGE EDIT #%d: %s",
+        index + 1,
+        edit,
+      )
+
+      filename = edit.get(
+        "filename"
+      )
+
+      if (
+        filename
+        and filename != input_file.name
+      ):
+        logger.warning(
+          "Skipping image edit because filename does not match: "
+          "edit_filename=%r input_filename=%r",
+          filename,
+          input_file.name,
+        )
+
+        skipped_count += 1
         continue
 
-      text = edit.get("text")
-      x = edit.get("x")
-      y = edit.get("y")
-      width = edit.get("width")
-      height = edit.get("height")
+      text = edit.get(
+        "text"
+      )
 
-      if not text:
+      if text is None:
+        text = edit.get(
+          "value"
+        )
+
+      if text is None:
+        logger.warning(
+          "Skipping image edit with no text/value: %s",
+          edit,
+        )
+
+        skipped_count += 1
         continue
+
+      x = edit.get(
+        "x"
+      )
+
+      y = edit.get(
+        "y"
+      )
+
+      width = edit.get(
+        "width"
+      )
+
+      height = edit.get(
+        "height"
+      )
 
       try:
         x = float(x)
         y = float(y)
         width = float(width)
         height = float(height)
-      except (TypeError, ValueError):
+
+      except (
+        TypeError,
+        ValueError,
+      ):
         logger.warning(
           "Skipping editable PDF field with invalid coordinates: %s",
           edit,
         )
+
+        skipped_count += 1
         continue
 
-      if width <= 0 or height <= 0:
+      if (
+        width <= 0
+        or height <= 0
+      ):
+        logger.warning(
+          "Skipping editable PDF field with invalid dimensions: %s",
+          edit,
+        )
+
+        skipped_count += 1
         continue
 
       rect = fitz.Rect(
@@ -3640,23 +3696,126 @@ PDF.
         y + height,
       )
 
-      widget = fitz.Widget()
-      widget.field_name = f"field_{index}"
-      widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
-      widget.rect = rect
-      widget.field_value = str(text)
-      widget.text_font = font_name
-      widget.text_fontsize = max(8, int(height * 0.6))
-      widget.border_color = None
-      widget.fill_color = None
+      # ----------------------------------------------------------
+      # Generate a unique field name.
+      # ----------------------------------------------------------
 
-      page.add_widget(widget)
+      requested_field_name = (
+        str(
+          edit.get(
+            "field_name"
+          )
+          or ""
+        ).strip()
+      )
 
-      applied_count += 1
+      if not requested_field_name:
+        requested_field_name = (
+          f"kenchiku_image_field_{index + 1}"
+        )
 
-    output_path = output_dir / f"{input_file.stem}.pdf"
+      field_name = (
+        requested_field_name
+      )
 
-    document.save(output_path)
+      suffix = 2
+
+      while field_name in used_field_names:
+        field_name = (
+          f"{requested_field_name}_{suffix}"
+        )
+        suffix += 1
+
+      used_field_names.add(
+        field_name
+      )
+
+      # ----------------------------------------------------------
+      # Determine font size.
+      # ----------------------------------------------------------
+
+      font_size = max(
+        4,
+        min(
+          12,
+          height * 0.60,
+        ),
+      )
+
+      logger.info(
+        "Creating editable image PDF field: "
+        "field_name=%r text=%r rect=%s font_size=%.2f",
+        field_name,
+        text,
+        rect,
+        font_size,
+      )
+
+      try:
+        widget = fitz.Widget()
+
+        widget.field_name = (
+          field_name
+        )
+
+        widget.field_type = (
+          fitz.PDF_WIDGET_TYPE_TEXT
+        )
+
+        widget.rect = rect
+
+        widget.field_value = str(
+          text
+        )
+
+        widget.text_font = (
+          font_name
+        )
+
+        widget.text_fontsize = (
+          float(font_size)
+        )
+
+        widget.text_color = (
+          0,
+          0,
+          0,
+        )
+
+        widget.border_color = None
+        widget.fill_color = None
+
+        page.add_widget(
+          widget
+        )
+
+        widget.update()
+
+        applied_count += 1
+
+      except Exception:
+        logger.exception(
+          "Failed to create editable image PDF field: %s",
+          edit,
+        )
+
+        skipped_count += 1
+
+    # ------------------------------------------------------------
+    # Save.
+    # ------------------------------------------------------------
+
+    output_path = (
+      output_dir
+      / f"{input_file.stem}.pdf"
+    )
+
+    document.save(
+      output_path,
+      garbage=4,
+      deflate=True,
+    )
+
     document.close()
 
     logger.info(
@@ -3665,7 +3824,70 @@ PDF.
       output_path,
     )
 
+    logger.info(
+      "IMAGE PDF SUMMARY: "
+      "requested=%d applied=%d skipped=%d",
+      len(image_edits),
+      applied_count,
+      skipped_count,
+    )
+
+    # ------------------------------------------------------------
+    # Verify widgets after saving.
+    # ------------------------------------------------------------
+
+    try:
+      verify_document = fitz.open(
+        output_path
+      )
+
+      widget_count = 0
+
+      for page_index in range(
+        verify_document.page_count
+      ):
+        page = verify_document[
+          page_index
+        ]
+
+        widgets = page.widgets()
+
+        if not widgets:
+          continue
+
+        for widget in widgets:
+          widget_count += 1
+
+          logger.info(
+            "IMAGE OUTPUT PDF WIDGET: "
+            "page=%d field=%r rect=%s value=%r",
+            page_index + 1,
+            widget.field_name,
+            widget.rect,
+            widget.field_value,
+          )
+
+      logger.info(
+        "IMAGE OUTPUT PDF VERIFIED: "
+        "widgets=%d size=%d",
+        widget_count,
+        output_path.stat().st_size,
+      )
+
+      verify_document.close()
+
+    except Exception:
+      logger.exception(
+        "Failed to verify editable image PDF: %s",
+        output_path,
+      )
+
+    logger.info(
+      "========== IMAGE TO EDITABLE PDF END =========="
+    )
+
     return output_path
+
 
   def _apply_pdf_edits(
     self,
@@ -3681,6 +3903,10 @@ PDF.
     output_dir.mkdir(
       parents=True,
       exist_ok=True,
+    )
+
+    logger.info(
+      "========== PDF EDIT START =========="
     )
 
     logger.info(
@@ -3705,7 +3931,7 @@ PDF.
     )
 
     # ------------------------------------------------------------
-    # Log page geometry
+    # Log page geometry.
     # ------------------------------------------------------------
 
     for page_index in range(
@@ -3726,7 +3952,7 @@ PDF.
       )
 
     # ------------------------------------------------------------
-    # Japanese font
+    # Japanese font.
     # ------------------------------------------------------------
 
     font_path = Path(
@@ -3734,43 +3960,50 @@ PDF.
     )
 
     if font_path.exists():
+      font_name = "NotoSansJP"
+
       logger.info(
         "Using PDF form font: %s",
         font_path,
       )
+
     else:
       logger.warning(
         "Japanese font not found for PDF editing: %s",
         font_path,
       )
+
       font_path = None
+      font_name = "helv"
 
     # ------------------------------------------------------------
-    # Create a font object for measuring text.
+    # Register the font on every page where we may create widgets.
     # ------------------------------------------------------------
 
     if font_path:
-      try:
-        measure_font = fitz.Font(
-          fontfile=str(font_path),
-        )
-      except Exception:
-        logger.exception(
-          "Failed to load Japanese font for text measurement."
-        )
-        measure_font = fitz.Font(
-          "helv",
-        )
-    else:
-      measure_font = fitz.Font(
-        "helv",
-      )
+      for page_index in range(
+        document.page_count
+      ):
+        page = document[
+          page_index
+        ]
 
-    applied_count = 0
-    skipped_count = 0
+        try:
+          page.insert_font(
+            fontfile=str(
+              font_path
+            ),
+            fontname=font_name,
+          )
+        except Exception:
+          logger.debug(
+            "PDF font %r may already be registered on page %d.",
+            font_name,
+            page_index + 1,
+          )
 
     # ------------------------------------------------------------
-    # Inspect AcroForm widgets
+    # Inspect existing AcroForm widgets.
     # ------------------------------------------------------------
 
     widgets_by_name = {}
@@ -3812,33 +4045,356 @@ PDF.
           widget.field_value,
         )
 
-    has_acroform = bool(
-      widgets_by_name
-    )
-
-    if has_acroform:
-      logger.info(
-        "PDF contains %d AcroForm field name(s).",
-        len(widgets_by_name),
-      )
-    else:
-      logger.info(
-        "PDF contains no AcroForm widgets. "
-        "Coordinate-based PDF edits will be used.",
-      )
-
-    # ------------------------------------------------------------
-    # Apply edits
-    # ------------------------------------------------------------
-
     logger.info(
-      "PDF EDITS RAW: %s",
-      json.dumps(
-        pdf_edits,
-        ensure_ascii=False,
-        indent=2,
-      ),
+      "Existing AcroForm field count: %d",
+      len(widgets_by_name),
     )
+
+    # ------------------------------------------------------------
+    # Helper for generating a unique field name.
+    # ------------------------------------------------------------
+
+    def make_unique_field_name(
+      requested_name: str,
+    ) -> str:
+      base_name = (
+        requested_name.strip()
+        if requested_name
+        else "kenchiku_pdf_field"
+      )
+
+      if base_name not in widgets_by_name:
+        return base_name
+
+      suffix = 2
+
+      while (
+        f"{base_name}_{suffix}"
+        in widgets_by_name
+      ):
+        suffix += 1
+
+      return f"{base_name}_{suffix}"
+
+    # ------------------------------------------------------------
+    # Helper for determining the radio button on-state.
+    # ------------------------------------------------------------
+
+    def get_radio_on_state(
+      widget,
+    ) -> str | None:
+      try:
+        button_states = (
+          widget.button_states()
+        )
+
+        normal_states = (
+          button_states.get(
+            "normal",
+            [],
+          )
+        )
+
+        for state in normal_states:
+          if str(
+            state
+          ) != "Off":
+            return str(
+              state
+            )
+
+      except Exception:
+        logger.exception(
+          "Could not inspect radio button states."
+        )
+
+      return None
+
+    # ------------------------------------------------------------
+    # Helper for selecting an existing radio button.
+    # ------------------------------------------------------------
+
+    def apply_radio_edit(
+      field_name: str,
+      value,
+      widgets: list[tuple[int, object]],
+    ) -> bool:
+      requested_value = str(
+        value
+      ).strip()
+
+      logger.info(
+        "Applying radio-button group: "
+        "field=%r requested_value=%r widgets=%d",
+        field_name,
+        requested_value,
+        len(widgets),
+      )
+
+      selected_widget = None
+      selected_on_state = None
+
+      # ----------------------------------------------------------
+      # First look for a direct appearance-state match.
+      # ----------------------------------------------------------
+
+      for (
+        page_index,
+        widget,
+      ) in widgets:
+        on_state = get_radio_on_state(
+          widget
+        )
+
+        logger.info(
+          "Radio widget inspection: "
+          "field=%r page=%d field_value=%r on_state=%r",
+          field_name,
+          page_index + 1,
+          widget.field_value,
+          on_state,
+        )
+
+        if (
+          on_state is not None
+          and on_state == requested_value
+        ):
+          selected_widget = widget
+          selected_on_state = on_state
+          break
+
+      # ----------------------------------------------------------
+      # Try the current field value.
+      # ----------------------------------------------------------
+
+      if selected_widget is None:
+        for (
+          page_index,
+          widget,
+        ) in widgets:
+          current_value = widget.field_value
+
+          if (
+            current_value is not None
+            and str(
+              current_value
+            ).strip()
+            == requested_value
+          ):
+            selected_widget = widget
+            selected_on_state = (
+              get_radio_on_state(
+                widget
+              )
+            )
+
+            break
+
+      # ----------------------------------------------------------
+      # Inspect /Opt if necessary.
+      # ----------------------------------------------------------
+
+      if selected_widget is None:
+        try:
+          first_widget = widgets[
+            0
+          ][1]
+
+          widget_source = (
+            document.xref_object(
+              first_widget.xref,
+              compressed=False,
+            )
+          )
+
+          parent_match = re.search(
+            r"/Parent\s+(\d+)\s+0\s+R",
+            widget_source,
+          )
+
+          if parent_match:
+            parent_xref = int(
+              parent_match.group(
+                1
+              )
+            )
+
+            parent_source = (
+              document.xref_object(
+                parent_xref,
+                compressed=False,
+              )
+            )
+
+            opt_match = re.search(
+              r"/Opt\s*\[(.*?)\]",
+              parent_source,
+              re.DOTALL,
+            )
+
+            if opt_match:
+              opt_contents = (
+                opt_match.group(
+                  1
+                )
+              )
+
+              # Handle UTF-16BE hexadecimal PDF strings.
+              opt_values = re.findall(
+                r"<FEFF([0-9A-Fa-f]+)>",
+                opt_contents,
+              )
+
+              decoded_options = []
+
+              for hex_value in opt_values:
+                try:
+                  decoded_options.append(
+                    bytes.fromhex(
+                      hex_value
+                    ).decode(
+                      "utf-16-be"
+                    )
+                  )
+                except Exception:
+                  decoded_options.append(
+                    None
+                  )
+
+              logger.info(
+                "Radio group options: "
+                "field=%r options=%r",
+                field_name,
+                decoded_options,
+              )
+
+              for (
+                option_index,
+                option,
+              ) in enumerate(
+                decoded_options
+              ):
+                if (
+                  option is None
+                  or option.strip()
+                  != requested_value
+                ):
+                  continue
+
+                if (
+                  option_index
+                  >= len(widgets)
+                ):
+                  break
+
+                selected_page_index, selected_widget = (
+                  widgets[
+                    option_index
+                  ]
+                )
+
+                selected_on_state = (
+                  get_radio_on_state(
+                    selected_widget
+                  )
+                )
+
+                logger.info(
+                  "Matched radio option by /Opt ordering: "
+                  "field=%r requested=%r "
+                  "option_index=%d on_state=%r",
+                  field_name,
+                  requested_value,
+                  option_index,
+                  selected_on_state,
+                )
+
+                break
+
+        except Exception:
+          logger.exception(
+            "Failed to inspect radio /Opt values: "
+            "field=%r",
+            field_name,
+          )
+
+      if selected_widget is None:
+        logger.warning(
+          "Could not map radio-button value %r "
+          "to field %r",
+          requested_value,
+          field_name,
+        )
+
+        return False
+
+      if selected_on_state is None:
+        logger.warning(
+          "Could not determine radio-button on-state: "
+          "field=%r requested=%r",
+          field_name,
+          requested_value,
+        )
+
+        return False
+
+      # ----------------------------------------------------------
+      # Turn all options off.
+      # ----------------------------------------------------------
+
+      for (
+        page_index,
+        widget,
+      ) in widgets:
+        try:
+          widget.field_value = "Off"
+          widget.update()
+
+        except Exception:
+          logger.exception(
+            "Failed to turn radio option off: "
+            "field=%r page=%d",
+            field_name,
+            page_index + 1,
+          )
+
+      # ----------------------------------------------------------
+      # Turn requested option on.
+      # ----------------------------------------------------------
+
+      try:
+        selected_widget.field_value = (
+          selected_on_state
+        )
+
+        selected_widget.update()
+
+        logger.info(
+          "Selected radio option: "
+          "field=%r requested=%r on_state=%r",
+          field_name,
+          requested_value,
+          selected_on_state,
+        )
+
+        return True
+
+      except Exception:
+        logger.exception(
+          "Failed to select radio option: "
+          "field=%r requested=%r",
+          field_name,
+          requested_value,
+        )
+
+        return False
+
+    applied_count = 0
+    skipped_count = 0
+
+    # ------------------------------------------------------------
+    # Apply every agent edit.
+    # ------------------------------------------------------------
 
     for edit_index, edit in enumerate(
       pdf_edits
@@ -3853,7 +4409,7 @@ PDF.
       )
 
       filename = edit.get(
-        "filename",
+        "filename"
       )
 
       if (
@@ -3861,7 +4417,7 @@ PDF.
         and filename != input_file.name
       ):
         logger.warning(
-          "SKIPPING PDF EDIT DUE TO FILENAME MISMATCH: "
+          "Skipping PDF edit because filename does not match: "
           "edit_filename=%r input_filename=%r",
           filename,
           input_file.name,
@@ -3870,32 +4426,25 @@ PDF.
         skipped_count += 1
         continue
 
-      # ========================================================
-      # AcroForm edit
-      # ========================================================
+      # ==========================================================
+      # Existing AcroForm field
+      # ==========================================================
 
       field_name = edit.get(
-        "field_name",
+        "field_name"
       )
 
-      if field_name:
-        if field_name not in widgets_by_name:
-          logger.warning(
-            "AcroForm field %r was not found in %s",
-            field_name,
-            input_file.name,
-          )
-
-          skipped_count += 1
-          continue
-
+      if (
+        field_name
+        and field_name in widgets_by_name
+      ):
         value = edit.get(
-          "value",
+          "value"
         )
 
         if value is None:
           value = edit.get(
-            "text",
+            "text"
           )
 
         if value is None:
@@ -3915,420 +4464,49 @@ PDF.
           0
         ][1].field_type
 
-        # ====================================================
+        logger.info(
+          "Applying existing AcroForm field: "
+          "field=%r type=%s value=%r",
+          field_name,
+          field_type,
+          value,
+        )
+
+        # --------------------------------------------------------
         # Radio button
-        # ====================================================
+        # --------------------------------------------------------
 
         if field_type == (
           fitz.PDF_WIDGET_TYPE_RADIOBUTTON
         ):
-          requested_value = str(
-            value
-          ).strip()
-
-          logger.info(
-            "Applying radio-button group: "
-            "field=%r requested_value=%r widgets=%d",
+          if apply_radio_edit(
             field_name,
-            requested_value,
-            len(widgets),
-          )
-
-          selected_widget = None
-          selected_on_state = None
-
-          # ------------------------------------------------
-          # First try actual appearance states.
-          # ------------------------------------------------
-
-          for (
-            widget_index,
-            (
-              page_index,
-              widget,
-            ),
-          ) in enumerate(
-            widgets
+            value,
+            widgets,
           ):
-            try:
-              button_states = (
-                widget.button_states()
-              )
-
-              normal_states = (
-                button_states.get(
-                  "normal",
-                  [],
-                )
-              )
-
-              for state in normal_states:
-                if str(
-                  state
-                ) != "Off":
-                  option_value = str(
-                    state
-                  )
-
-                  if (
-                    option_value
-                    == requested_value
-                  ):
-                    selected_widget = widget
-                    selected_on_state = option_value
-
-                    logger.info(
-                      "Matched radio value directly: "
-                      "field=%r value=%r on_state=%r",
-                      field_name,
-                      requested_value,
-                      option_value,
-                    )
-
-                    break
-
-              if selected_widget:
-                break
-
-            except Exception:
-              logger.exception(
-                "Could not inspect radio button states: "
-                "field=%r page=%d widget_index=%d",
-                field_name,
-                page_index + 1,
-                widget_index,
-              )
-
-          # ------------------------------------------------
-          # Try current widget values.
-          # ------------------------------------------------
-
-          if selected_widget is None:
-            for (
-              page_index,
-              widget,
-            ) in widgets:
-              current_value = (
-                widget.field_value
-              )
-
-              if (
-                current_value is not None
-                and str(
-                  current_value
-                ).strip()
-                == requested_value
-              ):
-                selected_widget = widget
-
-                try:
-                  button_states = (
-                    widget.button_states()
-                  )
-
-                  normal_states = (
-                    button_states.get(
-                      "normal",
-                      [],
-                    )
-                  )
-
-                  for state in normal_states:
-                    if str(
-                      state
-                    ) != "Off":
-                      selected_on_state = str(
-                        state
-                      )
-                      break
-
-                except Exception:
-                  pass
-
-                logger.info(
-                  "Matched radio value against "
-                  "current widget value: "
-                  "field=%r value=%r",
-                  field_name,
-                  requested_value,
-                )
-
-                break
-
-          # ------------------------------------------------
-          # Inspect underlying /Opt values.
-          # ------------------------------------------------
-
-          if selected_widget is None:
-            try:
-              widget_xref = widgets[
-                0
-              ][1].xref
-
-              widget_source = (
-                document.xref_object(
-                  widget_xref,
-                  compressed=False,
-                )
-              )
-
-              parent_match = re.search(
-                r"/Parent\s+(\d+)\s+0\s+R",
-                widget_source,
-              )
-
-              if parent_match:
-                parent_xref = int(
-                  parent_match.group(
-                    1
-                  )
-                )
-
-                parent_source = (
-                  document.xref_object(
-                    parent_xref,
-                    compressed=False,
-                  )
-                )
-
-                opt_match = re.search(
-                  r"/Opt\s*\[(.*?)\]",
-                  parent_source,
-                  re.DOTALL,
-                )
-
-                if opt_match:
-                  opt_contents = (
-                    opt_match.group(
-                      1
-                    )
-                  )
-
-                  opt_values = re.findall(
-                    r"<FEFF([0-9A-Fa-f]+)>",
-                    opt_contents,
-                  )
-
-                  decoded_options = []
-
-                  for hex_value in opt_values:
-                    try:
-                      decoded_options.append(
-                        bytes.fromhex(
-                          hex_value
-                        ).decode(
-                          "utf-16-be"
-                        )
-                      )
-                    except Exception:
-                      decoded_options.append(
-                        None
-                      )
-
-                  logger.info(
-                    "Radio group options: "
-                    "field=%r options=%r",
-                    field_name,
-                    decoded_options,
-                  )
-
-                  for (
-                    option_index,
-                    option,
-                  ) in enumerate(
-                    decoded_options
-                  ):
-                    if (
-                      option is None
-                      or option.strip()
-                      != requested_value
-                    ):
-                      continue
-
-                    if (
-                      option_index
-                      >= len(widgets)
-                    ):
-                      break
-
-                    (
-                      selected_page_index,
-                      selected_widget_candidate,
-                    ) = widgets[
-                      option_index
-                    ]
-
-                    selected_widget = (
-                      selected_widget_candidate
-                    )
-
-                    try:
-                      button_states = (
-                        selected_widget.button_states()
-                      )
-
-                      normal_states = (
-                        button_states.get(
-                          "normal",
-                          [],
-                        )
-                      )
-
-                      for state in normal_states:
-                        if str(
-                          state
-                        ) != "Off":
-                          selected_on_state = str(
-                            state
-                          )
-                          break
-
-                    except Exception:
-                      selected_on_state = None
-
-                    logger.info(
-                      "Matched radio option by /Opt ordering: "
-                      "field=%r requested=%r "
-                      "option_index=%d on_state=%r",
-                      field_name,
-                      requested_value,
-                      option_index,
-                      selected_on_state,
-                    )
-
-                    break
-
-            except Exception:
-              logger.exception(
-                "Failed to inspect underlying PDF "
-                "radio-button options: field=%r",
-                field_name,
-              )
-
-          # ------------------------------------------------
-          # Apply radio selection.
-          # ------------------------------------------------
-
-          if selected_widget is None:
-            logger.warning(
-              "Could not map radio-button value %r "
-              "to a widget in field %r",
-              requested_value,
-              field_name,
-            )
-
-            skipped_count += 1
-            continue
-
-          if selected_on_state is None:
-            logger.warning(
-              "Could not determine the on-state for "
-              "radio-button field %r value %r",
-              field_name,
-              requested_value,
-            )
-
-            skipped_count += 1
-            continue
-
-          try:
-            # Turn every widget in the group off first.
-            for (
-              page_index,
-              widget,
-            ) in widgets:
-              try:
-                widget.field_value = "Off"
-                widget.update()
-
-                logger.info(
-                  "Turned radio widget off: "
-                  "field=%r page=%d",
-                  field_name,
-                  page_index + 1,
-                )
-
-              except Exception:
-                logger.exception(
-                  "Failed to turn radio widget off: "
-                  "field=%r page=%d",
-                  field_name,
-                  page_index + 1,
-                )
-
-            selected_widget.field_value = (
-              selected_on_state
-            )
-
-            selected_widget.update()
-
-            logger.info(
-              "Selected radio option: "
-              "field=%r requested=%r actual_on_state=%r",
-              field_name,
-              requested_value,
-              selected_on_state,
-            )
-
             applied_count += 1
-
-          except Exception:
-            logger.exception(
-              "Failed to apply radio-button edit: %s",
-              edit,
-            )
-
+          else:
             skipped_count += 1
 
           continue
 
-        # ====================================================
-        # Non-radio AcroForm fields
-        # ====================================================
-
         applied_this_edit = False
+
+        # --------------------------------------------------------
+        # Text / checkbox / combo / list.
+        # --------------------------------------------------------
 
         for (
           page_index,
           widget,
         ) in widgets:
-          field_type = widget.field_type
-
-          logger.info(
-            "Applying AcroForm edit: "
-            "page=%d field=%r type=%s value=%r",
-            page_index + 1,
-            field_name,
-            field_type,
-            value,
-          )
-
           try:
-            # ------------------------------------------------
-            # Text
-            # ------------------------------------------------
-
             if field_type == (
               fitz.PDF_WIDGET_TYPE_TEXT
             ):
               widget.field_value = str(
                 value
               )
-
-              widget.update()
-
-              logger.info(
-                "Updated AcroForm text field: "
-                "field=%r value=%r",
-                field_name,
-                widget.field_value,
-              )
-
-              applied_this_edit = True
-
-            # ------------------------------------------------
-            # Checkbox
-            # ------------------------------------------------
 
             elif field_type == (
               fitz.PDF_WIDGET_TYPE_CHECKBOX
@@ -4362,35 +4540,12 @@ PDF.
                 checked
               )
 
-              widget.update()
-
-              logger.info(
-                "Updated checkbox: "
-                "field=%r checked=%r",
-                field_name,
-                checked,
-              )
-
-              applied_this_edit = True
-
-            # ------------------------------------------------
-            # Combo box / dropdown
-            # ------------------------------------------------
-
             elif field_type == (
               fitz.PDF_WIDGET_TYPE_COMBOBOX
             ):
               widget.field_value = str(
                 value
               )
-
-              widget.update()
-
-              applied_this_edit = True
-
-            # ------------------------------------------------
-            # List box
-            # ------------------------------------------------
 
             elif field_type == (
               fitz.PDF_WIDGET_TYPE_LISTBOX
@@ -4399,22 +4554,34 @@ PDF.
                 value
               )
 
-              widget.update()
-
-              applied_this_edit = True
-
             else:
               logger.warning(
-                "Unsupported AcroForm field type %s "
-                "for field %r",
-                field_type,
+                "Unsupported AcroForm field type: "
+                "field=%r type=%s",
                 field_name,
+                field_type,
               )
+
+              continue
+
+            widget.update()
+
+            applied_this_edit = True
+
+            logger.info(
+              "Updated existing AcroForm field: "
+              "page=%d field=%r value=%r",
+              page_index + 1,
+              field_name,
+              value,
+            )
 
           except Exception:
             logger.exception(
-              "Failed to apply AcroForm edit: %s",
-              edit,
+              "Failed to update existing AcroForm field: "
+              "field=%r page=%d",
+              field_name,
+              page_index + 1,
             )
 
         if applied_this_edit:
@@ -4424,37 +4591,61 @@ PDF.
 
         continue
 
-      # ========================================================
-      # Coordinate-based overlay
-      # ========================================================
+      # ==========================================================
+      # Agent specified a field_name, but the PDF does not contain
+      # that field.
+      #
+      # If coordinates are also present, create the field at those
+      # coordinates.
+      # ==========================================================
+
+      if (
+        field_name
+        and field_name not in widgets_by_name
+      ):
+        logger.info(
+          "Agent supplied field_name=%r but no existing "
+          "AcroForm field was found. "
+          "Will create a new editable field if coordinates exist.",
+          field_name,
+        )
+
+      # ==========================================================
+      # New coordinate-based editable field
+      # ==========================================================
 
       page_number = edit.get(
-        "page",
+        "page"
       )
 
       text = edit.get(
-        "text",
+        "text"
       )
+
+      if text is None:
+        text = edit.get(
+          "value"
+        )
 
       try:
         page_number = int(
-          page_number,
+          page_number
         )
 
         x0 = float(
-          edit.get("x0"),
+          edit.get("x0")
         )
 
         y0 = float(
-          edit.get("y0"),
+          edit.get("y0")
         )
 
         x1 = float(
-          edit.get("x1"),
+          edit.get("x1")
         )
 
         y1 = float(
-          edit.get("y1"),
+          edit.get("y1")
         )
 
       except (
@@ -4462,16 +4653,17 @@ PDF.
         ValueError,
       ):
         logger.warning(
-          "Skipping PDF edit with invalid values: %s",
+          "Skipping coordinate PDF edit with invalid "
+          "coordinates: %s",
           edit,
         )
 
         skipped_count += 1
         continue
 
-      if not text:
+      if text is None:
         logger.warning(
-          "Skipping coordinate PDF edit with empty text: %s",
+          "Skipping coordinate PDF edit with no text/value: %s",
           edit,
         )
 
@@ -4487,7 +4679,9 @@ PDF.
         or page_index >= document.page_count
       ):
         logger.warning(
-          "Skipping PDF edit with invalid page: %s",
+          "Skipping coordinate PDF edit with invalid page: "
+          "page=%r edit=%s",
+          page_number,
           edit,
         )
 
@@ -4497,10 +4691,6 @@ PDF.
       page = document[
         page_index
       ]
-
-      # --------------------------------------------------------
-      # Normalize the rectangle.
-      # --------------------------------------------------------
 
       rect = fitz.Rect(
         min(x0, x1),
@@ -4514,7 +4704,7 @@ PDF.
         or rect.height <= 0
       ):
         logger.warning(
-          "Skipping PDF edit with invalid rectangle: "
+          "Skipping coordinate PDF edit with invalid rectangle: "
           "page=%d rect=%s text=%r",
           page_number,
           rect,
@@ -4528,191 +4718,139 @@ PDF.
         text
       )
 
-      # --------------------------------------------------------
-      # Choose a font size based on both height and width.
-      #
-      # The old implementation used insert_textbox(), which
-      # requires the font's complete line metrics to fit inside
-      # the rectangle. The model-generated rectangles are often
-      # only 8-10 points high, causing insert_textbox() to return
-      # a negative value.
-      #
-      # insert_text() is much more appropriate here.
-      # --------------------------------------------------------
+      # ----------------------------------------------------------
+      # Calculate an appropriate font size.
+      # ----------------------------------------------------------
 
       font_size = min(
         12.0,
         max(
           4.0,
-          rect.height * 0.75,
+          rect.height * 0.65,
         ),
       )
 
-      # --------------------------------------------------------
-      # Shrink the font until the text fits horizontally.
-      # --------------------------------------------------------
-
-      while font_size > 3.0:
-        try:
-          text_width = (
-            measure_font.text_length(
-              text_value,
-              fontsize=font_size,
-            )
-          )
-        except Exception:
-          logger.exception(
-            "Failed to measure PDF text: %r",
-            text_value,
-          )
-
-          text_width = (
-            len(text_value)
-            * font_size
-          )
-
-        if text_width <= rect.width:
-          break
-
-        font_size -= 0.25
-
-      # --------------------------------------------------------
-      # Recalculate final text width.
-      # --------------------------------------------------------
+      # ----------------------------------------------------------
+      # Measure text and shrink until it fits horizontally.
+      # ----------------------------------------------------------
 
       try:
+        if font_path:
+          measure_font = fitz.Font(
+            fontfile=str(
+              font_path
+            ),
+          )
+        else:
+          measure_font = fitz.Font(
+            "helv"
+          )
+
         text_width = (
           measure_font.text_length(
             text_value,
             fontsize=font_size,
           )
         )
+
+        while (
+          text_width > rect.width
+          and font_size > 3.0
+        ):
+          font_size -= 0.25
+
+          text_width = (
+            measure_font.text_length(
+              text_value,
+              fontsize=font_size,
+            )
+          )
+
       except Exception:
+        logger.exception(
+          "Failed to measure PDF text: %r",
+          text_value,
+        )
+
         text_width = (
           len(text_value)
           * font_size
         )
 
-      # --------------------------------------------------------
-      # Horizontal centering.
-      # --------------------------------------------------------
+      # ----------------------------------------------------------
+      # Use agent-provided field_name when available.
+      # Otherwise create a stable unique field name.
+      # ----------------------------------------------------------
 
-      text_x = (
-        rect.x0
-        + (
-          rect.width
-          - text_width
-        )
-        / 2.0
+      requested_field_name = (
+        str(field_name).strip()
+        if field_name
+        else ""
       )
 
-      # --------------------------------------------------------
-      # Vertical centering.
-      #
-      # A PDF text insertion point is the baseline, not the
-      # top-left corner. Use the font's ascent/descent metrics
-      # to approximate a vertically centered baseline.
-      # --------------------------------------------------------
-
-      try:
-        ascender = (
-          measure_font.ascender
+      if not requested_field_name:
+        requested_field_name = (
+          f"kenchiku_pdf_field_{edit_index + 1}"
         )
 
-        descender = (
-          measure_font.descender
+      actual_field_name = (
+        make_unique_field_name(
+          requested_field_name
         )
-
-        text_y = (
-          rect.y0
-          + (
-            rect.height
-            - (
-              ascender
-              + descender
-            )
-            * font_size
-          )
-          / 2.0
-          + ascender
-          * font_size
-        )
-
-      except Exception:
-        text_y = (
-          rect.y0
-          + rect.height
-          + font_size
-        ) / 2.0
+      )
 
       logger.info(
-        "Applying coordinate PDF edit: "
-        "page=%d text=%r rect=%s "
-        "font_size=%.2f text_width=%.2f "
-        "position=(%.2f, %.2f)",
+        "CREATING NEW EDITABLE PDF FIELD: "
+        "edit_index=%d page=%d "
+        "field_name=%r text=%r "
+        "rect=%s width=%.2f height=%.2f "
+        "font_size=%.2f text_width=%.2f",
+        edit_index,
         page_number,
+        actual_field_name,
         text_value,
         rect,
+        rect.width,
+        rect.height,
         font_size,
         text_width,
-        text_x,
-        text_y,
       )
 
-      # --------------------------------------------------------
-      # Insert text directly instead of using insert_textbox().
-      # --------------------------------------------------------
-
       try:
-        if font_path:
-          insert_result = page.insert_text(
-            (
-              text_x,
-              text_y,
-            ),
-            text_value,
-            fontname="NotoSansJP",
-            fontfile=str(
-              font_path
-            ),
-            fontsize=font_size,
-            color=(0, 0, 0),
-            overlay=True,
-          )
-        else:
-          insert_result = page.insert_text(
-            (
-              text_x,
-              text_y,
-            ),
-            text_value,
-            fontname="helv",
-            fontsize=font_size,
-            color=(0, 0, 0),
-            overlay=True,
-          )
+        self._add_editable_pdf_text_field(
+          page=page,
+          rect=rect,
+          field_name=actual_field_name,
+          value=text_value,
+          font_name=font_name,
+          font_size=font_size,
+        )
 
-        logger.info(
-          "PDF INSERT RESULT: "
-          "page=%d text=%r result=%r",
-          page_number,
-          text_value,
-          insert_result,
+        # Keep our in-memory registry current so another edit cannot
+        # accidentally reuse the same field name.
+        widgets_by_name.setdefault(
+          actual_field_name,
+          [],
+        ).append(
+          (
+            page_index,
+            None,
+          )
         )
 
         applied_count += 1
 
       except Exception:
         logger.exception(
-          "Failed to insert coordinate PDF text: %s",
+          "Failed to create editable PDF field: %s",
           edit,
         )
 
         skipped_count += 1
 
-    # ============================================================
-    # Save completed PDF
-    # ============================================================
+    # ------------------------------------------------------------
+    # Save completed PDF.
+    # ------------------------------------------------------------
 
     output_path = (
       output_dir
@@ -4740,22 +4878,16 @@ PDF.
       skipped_count,
     )
 
-    # ============================================================
-    # Verify the output PDF can be reopened.
-    # ============================================================
+    # ------------------------------------------------------------
+    # Reopen the output and verify that widgets actually exist.
+    # ------------------------------------------------------------
 
     try:
       verify_document = fitz.open(
-        output_path,
+        output_path
       )
 
-      logger.info(
-        "OUTPUT PDF VERIFIED: "
-        "path=%s pages=%d size=%d",
-        output_path,
-        verify_document.page_count,
-        output_path.stat().st_size,
-      )
+      output_widget_count = 0
 
       for page_index in range(
         verify_document.page_count
@@ -4764,22 +4896,37 @@ PDF.
           page_index
         ]
 
-        extracted_text = (
-          page.get_text()
-        )
+        widgets = page.widgets()
 
-        logger.info(
-          "OUTPUT PDF TEXT: "
-          "page=%d chars=%d",
-          page_index + 1,
-          len(extracted_text),
-        )
+        if not widgets:
+          continue
+
+        for widget in widgets:
+          output_widget_count += 1
+
+          logger.info(
+            "OUTPUT PDF WIDGET: "
+            "page=%d field=%r type=%s rect=%s value=%r",
+            page_index + 1,
+            widget.field_name,
+            widget.field_type,
+            widget.rect,
+            widget.field_value,
+          )
+
+      logger.info(
+        "OUTPUT PDF VERIFIED: "
+        "pages=%d widgets=%d size=%d",
+        verify_document.page_count,
+        output_widget_count,
+        output_path.stat().st_size,
+      )
 
       verify_document.close()
 
     except Exception:
       logger.exception(
-        "Failed to verify saved output PDF: %s",
+        "Failed to verify output PDF: %s",
         output_path,
       )
 
@@ -4795,7 +4942,340 @@ PDF.
         output_path,
       )
 
+    logger.info(
+      "========== PDF EDIT END =========="
+    )
+
     return output_path
+
+
+  def _pdf_prompt_instructions(
+    self,
+  ) -> str:
+    return """
+  ============================================================
+  PDF EDITING — CRITICAL
+  ============================================================
+
+  One or more uploaded files are PDF forms.
+
+  The application, NOT the agent, creates the completed PDF.
+
+  You MUST inspect the actual PDF carefully, including its visual layout,
+  text, tables, rows, columns, labels, blank fields, and existing AcroForm
+  fields.
+
+  Your job is to return explicit machine-readable PDF edits.
+
+  Every value that the application writes into a PDF MUST remain editable
+  in the resulting PDF.
+
+  There are TWO kinds of PDF edits:
+
+  1. Existing AcroForm fields
+  2. New editable AcroForm fields created from coordinates
+
+  ============================================================
+  EXISTING ACROFORM FIELDS — HIGHEST PRIORITY
+  ============================================================
+
+  If the PDF already contains an AcroForm field corresponding to the
+  information you need to enter, you MUST use that existing field.
+
+  Use its EXACT field_name.
+
+  Example:
+
+  {
+    "filename": "sample-form.pdf",
+    "field_name": "applicant.name",
+    "value": "佐藤 健一"
+  }
+
+  Do NOT use coordinates when an appropriate AcroForm field already exists.
+
+  Do NOT rename or reinterpret the existing field name.
+
+  The actual PDF field name is authoritative.
+
+  For checkboxes:
+
+  {
+    "filename": "sample-form.pdf",
+    "field_name": "applicant.subscribe",
+    "value": true
+  }
+
+  For dropdowns and radio buttons, use the actual logical option value
+  represented by the PDF field.
+
+  ============================================================
+  NEW EDITABLE PDF FIELDS
+  ============================================================
+
+  If the PDF does NOT contain an AcroForm field for the information,
+  return a coordinate-based edit.
+
+  IMPORTANT:
+
+  The application will convert this coordinate edit into a REAL
+  EDITABLE PDF ACROFORM TEXT FIELD.
+
+  The value will NOT simply be permanently drawn onto the PDF.
+
+  Use this structure:
+
+  {
+    "filename": "example.pdf",
+    "page": 1,
+    "field_name": "worker_1_name",
+    "x0": 100,
+    "y0": 200,
+    "x1": 300,
+    "y1": 230,
+    "text": "佐藤 健一"
+  }
+
+  The field_name is REQUIRED for every new coordinate-based field.
+
+  field_name rules:
+
+  - unique within the PDF
+  - descriptive
+  - machine-readable
+  - stable
+  - based on the semantic meaning of the field
+
+  Examples:
+
+  worker_1_name
+  worker_1_furigana
+  worker_1_job_type
+  worker_1_birth_date
+  worker_1_phone
+  worker_1_address
+  worker_1_insurance
+  worker_1_qualification_1
+  company_name
+  company_address
+  project_name
+  project_number
+
+  Do NOT use the displayed value itself as field_name.
+
+  Do NOT create duplicate field names for unrelated fields.
+
+  ============================================================
+  COORDINATE SYSTEM
+  ============================================================
+
+  Coordinates MUST use the PDF's native coordinate system.
+
+  - origin = top-left
+  - x increases to the right
+  - y increases downward
+  - units = PDF points
+
+  Do NOT use image pixels.
+
+  Do NOT use normalized coordinates from 0.0 to 1.0.
+
+  Do NOT convert coordinates from another coordinate system.
+
+  x0/y0 is the upper-left corner of the editable field.
+
+  x1/y1 is the lower-right corner of the editable field.
+
+  ============================================================
+  THE RECTANGLE MUST BE THE ACTUAL FIELD
+  ============================================================
+
+  This is extremely important.
+
+  The coordinate rectangle must represent the actual BLANK FIELD
+  where the new value should be written.
+
+  Do NOT return the bounding box of the printed label.
+
+  For example:
+
+  氏名: __________________________
+
+  If the value is:
+
+  佐藤 健一
+
+  the rectangle must cover the blank area after 氏名.
+
+  It must NOT cover the printed word:
+
+  氏名
+
+  Similarly, if a form contains:
+
+  会社名: _______________________
+
+  the rectangle must cover the blank writable area, not the label
+  会社名.
+
+  The resulting AcroForm widget will occupy exactly the rectangle you
+  provide.
+
+  ============================================================
+  TABLE ROW/COLUMN INTEGRITY — CRITICAL
+  ============================================================
+
+  When the PDF contains a table, FIRST determine the table's complete
+  row and column structure.
+
+  For worker rosters, employee lists, personnel lists, or similar tables:
+
+  - Each worker/person normally occupies ONE HORIZONTAL ROW.
+  - Each attribute occupies the appropriate COLUMN within that row.
+  - Never transpose rows and columns.
+  - Never arrange workers vertically by attribute unless the printed
+    form is actually structured that way.
+  - Never place a worker's value in another worker's row.
+
+  For example:
+
+  No. | 氏名 | ふりがな | 職種 | 生年月日 | 電話番号
+
+  Worker 1 belongs to one horizontal row.
+
+  Worker 2 belongs to the next horizontal row.
+
+  Worker 3 belongs to the next horizontal row.
+
+  For every coordinate edit, verify:
+
+  1. Which worker/person does this value belong to?
+  2. Which horizontal row belongs to that worker?
+  3. Which column contains this field?
+  4. Is the rectangle inside that column?
+  5. Is the rectangle inside that worker's row?
+  6. Would a human filling out the paper form write the value there?
+
+  If one worker has multiple fields, those fields MUST align with that
+  worker's same horizontal row.
+
+  ============================================================
+  HEADER VS. TABLE — CRITICAL
+  ============================================================
+
+  Do NOT place worker/person information in the document header.
+
+  Before assigning coordinates to worker information:
+
+  1. Identify the worker table.
+  2. Identify the table's first data row.
+  3. Identify the correct worker row.
+  4. Identify the correct column.
+  5. Place the coordinate rectangle inside that cell.
+
+  Do NOT infer a worker's location from nearby text alone.
+
+  Do NOT use the bounding box of an existing worker name as the target
+  location unless that bounding box actually corresponds to the blank
+  field where the new worker name belongs.
+
+  ============================================================
+  SCANNED / IMAGE-BASED PDF
+  ============================================================
+
+  A PDF does NOT need to contain existing AcroForm fields in order to
+  contain editable fields in the completed result.
+
+  If the PDF is a scanned or image-based form and has no AcroForm fields:
+
+  - inspect the visual page
+  - identify the printed form structure
+  - identify the correct blank field
+  - return a coordinate-based edit
+  - provide a unique field_name
+
+  The application will preserve the scanned PDF as the background and
+  create a real editable AcroForm field over the appropriate area.
+
+  Therefore:
+
+  NO PDF FIELD SHOULD BE OMITTED MERELY BECAUSE THE PDF IS SCANNED.
+
+  ============================================================
+  FIELD COMPLETENESS
+  ============================================================
+
+  Every value that should be entered into the PDF must produce an edit.
+
+  For each requested value:
+
+  1. If a matching AcroForm field exists:
+    return field_name + value.
+
+  2. If no matching AcroForm field exists:
+    return page + field_name + coordinates + text.
+
+  3. If the value cannot be reliably determined:
+    do not guess.
+    Put the issue in missing_data.
+
+  Every field written into the completed PDF must therefore be editable.
+
+  ============================================================
+  EXISTING VALUES
+  ============================================================
+
+  Preserve existing values.
+
+  Do not overwrite an existing value unless the task clearly requires
+  replacement.
+
+  Do not delete:
+
+  - labels
+  - headers
+  - instructions
+  - tables
+  - footers
+  - static explanatory text
+
+  ============================================================
+  VISUAL VERIFICATION
+  ============================================================
+
+  Before returning PDF edits, visually verify every coordinate.
+
+  For each coordinate edit ask:
+
+  1. Is this the correct page?
+  2. Is this the correct field?
+  3. Is this the correct worker/person?
+  4. Is this the correct table row?
+  5. Is this the correct column?
+  6. Is the rectangle inside the actual blank field?
+  7. Is the rectangle large enough for the value?
+  8. Is the value being placed in a location where a human would
+    actually write it?
+
+  Do NOT apply a global x/y offset mentally or assume that all fields
+  need the same translation.
+
+  Each field must be positioned independently according to the actual
+  printed form.
+
+  ============================================================
+  PDF OUTPUT
+  ============================================================
+
+  For PDF jobs, the "pdf_edits" array is the primary machine-readable
+  output.
+
+  Do NOT claim that you created or modified the completed PDF.
+
+  The application will apply the edits after the agent finishes.
+
+  Return explicit edits, not a prose description of what should be filled.
+  """
 
 
   def _parse_agent_output(
