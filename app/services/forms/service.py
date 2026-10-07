@@ -4518,7 +4518,7 @@ PDF.
 
       if font_path:
 
-        page.insert_textbox(
+        result = page.insert_textbox(
           rect,
           str(text),
           fontname="NotoSansJP",
@@ -4528,6 +4528,28 @@ PDF.
           align=fitz.TEXT_ALIGN_CENTER,
           overlay=True,
         )
+
+        logger.info(
+          "PDF INSERT RESULT: page=%d text=%r rect=%s fontsize=%.2f result=%r",
+          page_number,
+          text,
+          rect,
+          font_size,
+          result,
+        )
+
+        if result < 0:
+          logger.error(
+            "PDF TEXT DID NOT FIT: page=%d text=%r rect=%s "
+            "fontsize=%.2f result=%r",
+            page_number,
+            text,
+            rect,
+            font_size,
+            result,
+          )
+        else:
+          applied_count += 1
 
       else:
 
@@ -4540,7 +4562,28 @@ PDF.
           overlay=True,
         )
 
-      applied_count += 1
+        logger.info(
+          "PDF INSERT RESULT: page=%d text=%r rect=%s fontsize=%.2f result=%r",
+          page_number,
+          text,
+          rect,
+          font_size,
+          result,
+        )
+
+        if result < 0:
+          logger.error(
+            "PDF TEXT DID NOT FIT: page=%d text=%r rect=%s "
+            "fontsize=%.2f result=%r",
+            page_number,
+            text,
+            rect,
+            font_size,
+            result,
+          )
+        else:
+          applied_count += 1
+      
 
     # ------------------------------------------------------------
     # Save completed PDF
