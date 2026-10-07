@@ -4050,17 +4050,23 @@ NEVER transpose rows and columns.
     font_name: str,
     font_size: float,
     multiline: bool = False,
+    pad_x: float = 2.5,
   ) -> None:
     """
     Add a real editable AcroForm text field to an existing PDF.
 
-    `rect` is in VISUAL page coordinates. For rotated pages it is
-    converted to the unrotated coordinates widgets require.
+    `rect` is the VISIBLE text area in visual page coordinates. Viewers
+    such as macOS Preview clip text to the widget rectangle and inset it
+    by ~2 pt, so the widget is widened by `pad_x` on each side to keep
+    the full text visible without changing the text's size or position.
     """
 
     import fitz
 
     widget_rect = fitz.Rect(rect)
+
+    widget_rect.x0 -= pad_x
+    widget_rect.x1 += pad_x
 
     if page.rotation:
       widget_rect = widget_rect * page.derotation_matrix
@@ -4080,6 +4086,7 @@ NEVER transpose rows and columns.
     widget.text_fontsize = max(3, float(font_size))
 
     widget.border_color = None
+    widget.border_width = 0
     widget.fill_color = None
     widget.text_color = (0, 0, 0)
 
@@ -6219,7 +6226,7 @@ missing_data, recommendations. Human-readable text in Japanese.
         )
 
         while (
-          text_width > rect.width
+          text_width > rect.width - 0.5
           and font_size > 3.0
           and not multiline
         ):
