@@ -229,11 +229,22 @@ class FormJobService:
 
           for input_file in image_input_files:
 
-            self._build_editable_pdf_from_image(
-              input_file=input_file,
-              image_edits=image_edits,
-              output_dir=output_dir,
+            pdf_path = getattr(self, "_image_pdf_paths", {}).get(
+              input_file.name,
             )
+
+            if pdf_path is not None:
+              self._apply_pdf_edits(
+                input_file=pdf_path,
+                pdf_edits=agent_output.get("pdf_edits", []),
+                output_dir=output_dir,
+              )
+            else:
+              self._build_editable_pdf_from_image(
+                input_file=input_file,
+                image_edits=image_edits,
+                output_dir=output_dir,
+              )
 
         pdf_input_files = [
           input_file
@@ -696,697 +707,6 @@ class FormJobService:
 
     return inset_corners
 
-  @staticmethod
-  def _line_from_points(
-    p1: np.ndarray,
-    p2: np.ndarray,
-  ) -> tuple[float, float, float] | None:
-    """
-    Return the infinite line through p1 and p2 as:
-
-      ax + by + c = 0
-
-    Returns None for coincident points.
-    """
-    x1, y1 = float(p1[0]), float(p1[1])
-    x2, y2 = float(p2[0]), float(p2[1])
-
-    a = y1 - y2
-    b = x2 - x1
-    c = x1 * y2 - x2 * y1
-
-    norm = math.hypot(a, b)
-
-    if norm < 1e-8:
-      return None
-
-    return (
-      a / norm,
-      b / norm,
-      c / norm,
-    )
-
-  @staticmethod
-  def _intersect_lines(
-    line1: tuple[float, float, float],
-    line2: tuple[float, float, float],
-  ) -> np.ndarray | None:
-    """
-    Intersect two infinite lines represented as:
-
-      ax + by + c = 0
-    """
-    a1, b1, c1 = line1
-    a2, b2, c2 = line2
-
-    denominator = a1 * b2 - a2 * b1
-
-    if abs(denominator) < 1e-8:
-      return None
-
-    x = (
-      b1 * c2 - b2 * c1
-    ) / denominator
-
-    y = (
-      c1 * a2 - c2 * a1
-    ) / denominator
-
-    return np.array(
-      [x, y],
-      dtype=np.float32,
-    )
-
-  @staticmethod
-  def _line_angle(
-    p1: np.ndarray,
-    p2: np.ndarray,
-  ) -> float:
-    """
-    Return the line angle in degrees.
-    """
-    dx = float(p2[0] - p1[0])
-    dy = float(p2[1] - p1[1])
-
-    return math.degrees(
-      math.atan2(dy, dx)
-    )
-
-  @staticmethod
-  def _angle_difference(
-    angle1: float,
-    angle2: float,
-  ) -> float:
-    """
-    Return the smallest difference between two
-    line angles, treating lines 180 degrees apart
-    as equivalent.
-    """
-    difference = abs(
-      ((angle1 - angle2 + 90.0) % 180.0)
-      - 90.0
-    )
-
-    return difference
-
-  def _detect_form_boundary_with_lines(
-    self,
-    image: np.ndarray,
-  ) -> tuple[np.ndarray | None, float]:
-    """
-    Detect the outer printed form/table boundary using
-    horizontal and vertical printed lines.
-
-    This intentionally does NOT require the physical paper
-    corners to be visible. For photographed construction
-    forms, the printed form/table boundary is often a much
-    more reliable target.
-
-    Returns:
-
-      (corners, confidence)
-
-    where corners are ordered:
-
-      top-left
-      top-right
-      bottom-right
-      bottom-left
-    """
-    if image is None or image.size == 0:
-      return None, 0.0
-
-    original_height, original_width = image.shape[:2]
-
-    if original_width < 100 or original_height < 100:
-      return None, 0.0
-
-    # Work on a smaller copy for faster and more stable line detection.
-    max_dimension = 1600.0
-    scale = min(
-      1.0,
-      max_dimension / max(
-        original_width,
-        original_height,
-      ),
-    )
-
-    if scale < 1.0:
-      small = cv2.resize(
-        image,
-        None,
-        fx=scale,
-        fy=scale,
-        interpolation=cv2.INTER_AREA,
-      )
-    else:
-      small = image.copy()
-
-    gray = cv2.cvtColor(
-      small,
-      cv2.COLOR_BGR2GRAY,
-    )
-
-    # Normalize uneven lighting from a photograph.
-    background = cv2.GaussianBlur(
-      gray,
-      (0, 0),
-      21,
-    )
-
-    normalized = cv2.divide(
-      gray,
-      background,
-      scale=255,
-    )
-
-    # Two complementary edge sources.
-    edges = cv2.Canny(
-      normalized,
-      50,
-      150,
-      apertureSize=3,
-    )
-
-    adaptive = cv2.adaptiveThreshold(
-      normalized,
-      255,
-      cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-      cv2.THRESH_BINARY_INV,
-      31,
-      9,
-    )
-
-    combined = cv2.bitwise_or(
-      edges,
-      adaptive,
-    )
-
-    # Keep long horizontal and vertical form lines.
-    horizontal_kernel_length = max(
-      25,
-      int(small.shape[1] * 0.10),
-    )
-
-    vertical_kernel_length = max(
-      25,
-      int(small.shape[0] * 0.10),
-    )
-
-    horizontal_kernel = cv2.getStructuringElement(
-      cv2.MORPH_RECT,
-      (
-        horizontal_kernel_length,
-        1,
-      ),
-    )
-
-    vertical_kernel = cv2.getStructuringElement(
-      cv2.MORPH_RECT,
-      (
-        1,
-        vertical_kernel_length,
-      ),
-    )
-
-    horizontal = cv2.morphologyEx(
-      combined,
-      cv2.MORPH_OPEN,
-      horizontal_kernel,
-    )
-
-    vertical = cv2.morphologyEx(
-      combined,
-      cv2.MORPH_OPEN,
-      vertical_kernel,
-    )
-
-    line_image = cv2.bitwise_or(
-      horizontal,
-      vertical,
-    )
-
-    # Close small gaps in photographed lines.
-    line_image = cv2.morphologyEx(
-      line_image,
-      cv2.MORPH_CLOSE,
-      np.ones(
-        (3, 3),
-        dtype=np.uint8,
-      ),
-    )
-
-    hough_threshold = max(
-      40,
-      int(min(
-        small.shape[:2]
-      ) * 0.10),
-    )
-
-    min_line_length = max(
-      50,
-      int(min(
-        small.shape[:2]
-      ) * 0.15),
-    )
-
-    max_line_gap = max(
-      10,
-      int(min(
-        small.shape[:2]
-      ) * 0.03),
-    )
-
-    lines = cv2.HoughLinesP(
-      line_image,
-      rho=1,
-      theta=np.pi / 180,
-      threshold=hough_threshold,
-      minLineLength=min_line_length,
-      maxLineGap=max_line_gap,
-    )
-
-    if lines is None:
-      logger.info(
-        "Form boundary detection: no Hough lines found"
-      )
-      return None, 0.0
-
-    horizontal_candidates: list[
-      tuple[np.ndarray, np.ndarray, float, float]
-    ] = []
-
-    vertical_candidates: list[
-      tuple[np.ndarray, np.ndarray, float, float]
-    ] = []
-
-    for raw_line in lines.reshape(-1, 4):
-      x1, y1, x2, y2 = (
-        float(value)
-        for value in raw_line
-      )
-
-      p1 = np.array(
-        [x1, y1],
-        dtype=np.float32,
-      )
-
-      p2 = np.array(
-        [x2, y2],
-        dtype=np.float32,
-      )
-
-      length = float(
-        np.linalg.norm(p2 - p1)
-      )
-
-      if length < min_line_length:
-        continue
-
-      angle = self._line_angle(
-        p1,
-        p2,
-      )
-
-      # Normalize line angle to [-90, 90).
-      while angle >= 90.0:
-        angle -= 180.0
-
-      while angle < -90.0:
-        angle += 180.0
-
-      horizontal_difference = min(
-        abs(angle),
-        abs(abs(angle) - 180.0),
-      )
-
-      vertical_difference = abs(
-        abs(angle) - 90.0
-      )
-
-      if horizontal_difference <= 15.0:
-        horizontal_candidates.append(
-          (
-            p1,
-            p2,
-            length,
-            angle,
-          )
-        )
-
-      elif vertical_difference <= 15.0:
-        vertical_candidates.append(
-          (
-            p1,
-            p2,
-            length,
-            angle,
-          )
-        )
-
-    if (
-      len(horizontal_candidates) < 2
-      or len(vertical_candidates) < 2
-    ):
-      logger.info(
-        "Form boundary detection: insufficient line families "
-        "horizontal=%d vertical=%d",
-        len(horizontal_candidates),
-        len(vertical_candidates),
-      )
-      return None, 0.0
-
-    def select_outer_pair(
-      candidates: list[
-        tuple[np.ndarray, np.ndarray, float, float]
-      ],
-      horizontal_axis: bool,
-    ) -> tuple[
-      tuple[
-        tuple[np.ndarray, np.ndarray, float, float],
-        tuple[np.ndarray, np.ndarray, float, float],
-      ] | None,
-      float,
-    ]:
-      best_pair = None
-      best_score = -1.0
-
-      # Compare the strongest reasonably separated lines.
-      candidates = sorted(
-        candidates,
-        key=lambda item: item[2],
-        reverse=True,
-      )[:80]
-
-      for index, first in enumerate(candidates):
-        for second in candidates[index + 1:]:
-          p1a, p1b, length1, angle1 = first
-          p2a, p2b, length2, angle2 = second
-
-          if self._angle_difference(
-            angle1,
-            angle2,
-          ) > 8.0:
-            continue
-
-          if horizontal_axis:
-            position1 = (
-              float(p1a[1] + p1b[1])
-              / 2.0
-            )
-            position2 = (
-              float(p2a[1] + p2b[1])
-              / 2.0
-            )
-          else:
-            position1 = (
-              float(p1a[0] + p1b[0])
-              / 2.0
-            )
-            position2 = (
-              float(p2a[0] + p2b[0])
-              / 2.0
-            )
-
-          separation = abs(
-            position1 - position2
-          )
-
-          minimum_separation = (
-            min(small.shape[:2]) * 0.20
-          )
-
-          if separation < minimum_separation:
-            continue
-
-          score = (
-            min(length1, length2)
-            * separation
-          )
-
-          if score > best_score:
-            best_score = score
-            best_pair = (
-              first,
-              second,
-            )
-
-      return best_pair, best_score
-
-    horizontal_pair, horizontal_score = (
-      select_outer_pair(
-        horizontal_candidates,
-        horizontal_axis=True,
-      )
-    )
-
-    vertical_pair, vertical_score = (
-      select_outer_pair(
-        vertical_candidates,
-        horizontal_axis=False,
-      )
-    )
-
-    if (
-      horizontal_pair is None
-      or vertical_pair is None
-    ):
-      logger.info(
-        "Form boundary detection: could not find "
-        "two separated horizontal/vertical boundaries"
-      )
-      return None, 0.0
-
-    top_line, bottom_line = horizontal_pair
-    left_line, right_line = vertical_pair
-
-    top = self._line_from_points(
-      top_line[0],
-      top_line[1],
-    )
-
-    bottom = self._line_from_points(
-      bottom_line[0],
-      bottom_line[1],
-    )
-
-    left = self._line_from_points(
-      left_line[0],
-      left_line[1],
-    )
-
-    right = self._line_from_points(
-      right_line[0],
-      right_line[1],
-    )
-
-    if any(
-      line is None
-      for line in (
-        top,
-        bottom,
-        left,
-        right,
-      )
-    ):
-      return None, 0.0
-
-    top_left = self._intersect_lines(
-      top,
-      left,
-    )
-
-    top_right = self._intersect_lines(
-      top,
-      right,
-    )
-
-    bottom_right = self._intersect_lines(
-      bottom,
-      right,
-    )
-
-    bottom_left = self._intersect_lines(
-      bottom,
-      left,
-    )
-
-    if any(
-      point is None
-      for point in (
-        top_left,
-        top_right,
-        bottom_right,
-        bottom_left,
-      )
-    ):
-      return None, 0.0
-
-    corners = np.array(
-      [
-        top_left,
-        top_right,
-        bottom_right,
-        bottom_left,
-      ],
-      dtype=np.float32,
-    )
-
-    # Convert from working-image coordinates back to original image.
-    if scale != 1.0:
-      corners /= scale
-
-    corners = self._order_quad_points(
-      corners
-    )
-
-    # Validate that the quadrilateral is inside the image.
-    margin_x = original_width * 0.10
-    margin_y = original_height * 0.10
-
-    if np.any(
-      corners[:, 0] < -margin_x
-    ) or np.any(
-      corners[:, 0] > original_width + margin_x
-    ):
-      logger.info(
-        "Form boundary detection: invalid X coordinates: %s",
-        corners.tolist(),
-      )
-      return None, 0.0
-
-    if np.any(
-      corners[:, 1] < -margin_y
-    ) or np.any(
-      corners[:, 1] > original_height + margin_y
-    ):
-      logger.info(
-        "Form boundary detection: invalid Y coordinates: %s",
-        corners.tolist(),
-      )
-      return None, 0.0
-
-    area = abs(
-      cv2.contourArea(
-        corners.reshape((-1, 1, 2))
-      )
-    )
-
-    image_area = (
-      original_width
-      * original_height
-    )
-
-    area_ratio = area / image_area
-
-    if area_ratio < 0.20:
-      logger.info(
-        "Form boundary detection: detected area too small: %.3f",
-        area_ratio,
-      )
-      return None, 0.0
-
-    top_width = np.linalg.norm(
-      corners[1] - corners[0]
-    )
-
-    bottom_width = np.linalg.norm(
-      corners[2] - corners[3]
-    )
-
-    left_height = np.linalg.norm(
-      corners[3] - corners[0]
-    )
-
-    right_height = np.linalg.norm(
-      corners[2] - corners[1]
-    )
-
-    widths = [
-      top_width,
-      bottom_width,
-    ]
-
-    heights = [
-      left_height,
-      right_height,
-    ]
-
-    if min(widths) < 100 or min(heights) < 100:
-      return None, 0.0
-
-    width_ratio = (
-      max(widths) / min(widths)
-    )
-
-    height_ratio = (
-      max(heights) / min(heights)
-    )
-
-    if width_ratio > 3.0 or height_ratio > 3.0:
-      logger.info(
-        "Form boundary detection: implausible quadrilateral "
-        "width_ratio=%.2f height_ratio=%.2f",
-        width_ratio,
-        height_ratio,
-      )
-      return None, 0.0
-
-    # Confidence combines how large the detected boundary is
-    # and how strong/separated the source lines were.
-    normalized_horizontal_score = min(
-      1.0,
-      horizontal_score
-      / (
-        original_width
-        * original_height
-        * 0.10
-      ),
-    )
-
-    normalized_vertical_score = min(
-      1.0,
-      vertical_score
-      / (
-        original_width
-        * original_height
-        * 0.10
-      ),
-    )
-
-    area_confidence = min(
-      1.0,
-      area_ratio / 0.50,
-    )
-
-    shape_confidence = 1.0 / max(
-      1.0,
-      (width_ratio - 1.0) * 2.0 + 1.0,
-    )
-
-    confidence = (
-      0.35 * normalized_horizontal_score
-      + 0.35 * normalized_vertical_score
-      + 0.20 * area_confidence
-      + 0.10 * shape_confidence
-    )
-
-    confidence = float(
-      max(
-        0.0,
-        min(1.0, confidence),
-      )
-    )
-
-    logger.info(
-      "Form boundary detected: corners=%s "
-      "area_ratio=%.3f confidence=%.3f",
-      corners.tolist(),
-      area_ratio,
-      confidence,
-    )
-
-    return corners, confidence
 
   def _perspective_crop(
     self,
@@ -1490,208 +810,160 @@ class FormJobService:
 
     return warped
 
-  def _detect_document_with_vision(
-    self,
-    image: np.ndarray,
-    original_width: int,
-    original_height: int,
-  ) -> tuple[str, list[list[float]] | None]:
+
+  @staticmethod
+  def _quad_edge_contrast(gray, quad, band=6, samples=60):
+    """Mean |inside - outside| brightness along the quad's edges."""
+    h, w = gray.shape[:2]
+    centroid = quad.mean(axis=0)
+    diffs = []
+    total = 0
+
+    for i in range(4):
+      p, q = quad[i], quad[(i + 1) % 4]
+      edge = q - p
+      length = float(np.linalg.norm(edge))
+      if length < 1:
+        continue
+      normal = np.array([-edge[1], edge[0]]) / length
+      mid = (p + q) / 2
+      if np.dot(normal, centroid - mid) < 0:
+        normal = -normal
+      for t in np.linspace(0.05, 0.95, samples):
+        total += 1
+        pt = p + edge * t
+        a = pt + normal * band
+        b = pt - normal * band
+        ax, ay = int(round(a[0])), int(round(a[1]))
+        bx, by = int(round(b[0])), int(round(b[1]))
+        if not (0 <= ax < w and 0 <= ay < h and 0 <= bx < w and 0 <= by < h):
+          continue
+        diffs.append(abs(int(gray[ay, ax]) - int(gray[by, bx])))
+
+    if total == 0 or len(diffs) < 0.4 * total:
+      return 0.0
+    return float(np.mean(diffs))
+
+  def _detect_paper_corners(self, image):
     """
-    Vision fallback for cases where OpenCV cannot confidently
-    find the printed form boundary.
-
-    The requested corners are the visible printed form/table
-    boundary, NOT necessarily the physical paper corners.
+    Find the 4 corners of the sheet of paper in a photo.
+    Returns float32 (4,2) ordered TL,TR,BR,BL in original coordinates,
+    or None when no confident sheet is found (or it fills the frame).
     """
-    try:
-      success, encoded = cv2.imencode(
-        ".jpg",
-        image,
-        [
-          cv2.IMWRITE_JPEG_QUALITY,
-          90,
-        ],
-      )
+    h, w = image.shape[:2]
+    scale = min(1.0, 1000.0 / max(h, w))
+    small = (
+      cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+      if scale < 1.0 else image.copy()
+    )
+    sh, sw = small.shape[:2]
+    img_area = float(sh * sw)
 
-      if not success:
-        logger.warning(
-          "Vision document detection: JPEG encoding failed"
-        )
-        return "camera_document", None
+    blur = cv2.GaussianBlur(small, (7, 7), 0)
+    gray = cv2.cvtColor(blur, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
 
-      image_base64 = base64.b64encode(
-        encoded.tobytes()
-      ).decode("utf-8")
+    masks = []
 
-      client = OpenAI()
+    _, m1 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    masks.append(m1)
 
-      response = client.responses.create(
-        model="gpt-5.6-luna",
-        input=[
-          {
-            "role": "user",
-            "content": [
-              {
-                "type": "input_text",
-                "text": f"""
-Analyze this construction form photograph.
+    v, s_ = hsv[:, :, 2], hsv[:, :, 1]
+    _, vm = cv2.threshold(v, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    if (vm > 0).any():
+      sat_thr = min(110, int(np.percentile(s_[vm > 0], 80)) + 15)
+    else:
+      sat_thr = 80
+    masks.append((((vm > 0) & (s_ <= sat_thr)) * 255).astype(np.uint8))
 
-Determine whether this is:
+    local = cv2.adaptiveThreshold(
+      gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY,
+      max(51, (min(sh, sw) // 4) | 1), -8,
+    )
+    masks.append(local)
 
-1. a photographed physical document/form
-2. a screenshot or digital image
-3. something else
+    edges = cv2.Canny(gray, 30, 100)
+    edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+    masks.append(cv2.morphologyEx(
+      edges, cv2.MORPH_CLOSE, np.ones((21, 21), np.uint8)))
 
-If it is a photographed physical form, identify the four
-corners of the VISIBLE PRINTED FORM/TABLE BOUNDARY.
+    k = max(9, int(0.02 * max(sh, sw)) | 1)
+    best, best_score = None, 0.0
 
-IMPORTANT:
-- Do NOT assume the physical paper corners are visible.
-- The paper may extend outside the photograph.
-- If the paper edges are clipped, use the outermost clear
-  printed form/table boundary.
-- The four corners must describe one coherent quadrilateral.
-- Do not transpose x and y.
-- x increases from left to right.
-- y increases from top to bottom.
-- Coordinates are based on the image dimensions below.
+    for mask in masks:
+      m = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
+      m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((k, k), np.uint8))
+      contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+      contours = sorted(contours, key=cv2.contourArea, reverse=True)[:4]
 
-Image dimensions:
-width = {original_width}
-height = {original_height}
+      for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < 0.15 * img_area:
+          continue
 
-Return ONLY valid JSON in this exact format:
+        hull = cv2.convexHull(cnt)
+        hull_area = cv2.contourArea(hull)
+        peri = cv2.arcLength(hull, True)
+        approx = cv2.approxPolyDP(hull, 0.02 * peri, True)
 
-{{
-  "image_type": "camera_document",
-  "corners": [
-    [x1, y1],
-    [x2, y2],
-    [x3, y3],
-    [x4, y4]
-  ]
-}}
+        if len(approx) == 4:
+          quad = approx.reshape(4, 2).astype(np.float32)
+          rectangularity = 1.0
+        else:
+          rect = cv2.minAreaRect(hull)
+          quad = cv2.boxPoints(rect).astype(np.float32)
+          rect_area = rect[1][0] * rect[1][1]
+          if rect_area <= 0:
+            continue
+          rectangularity = hull_area / rect_area
+          if rectangularity < 0.88:
+            continue
 
-The corners must be ordered:
-top-left,
-top-right,
-bottom-right,
-bottom-left.
+        quad = self._order_quad_points(quad)
+        if not cv2.isContourConvex(quad.reshape(-1, 1, 2)):
+          continue
 
-For a screenshot/digital image where perspective correction
-is unnecessary, return:
+        sides = [np.linalg.norm(quad[(i + 1) % 4] - quad[i]) for i in range(4)]
+        if min(sides) < 0.2 * min(sh, sw):
+          continue
+        if max(sides[0], sides[2]) / max(1.0, min(sides[0], sides[2])) > 1.8:
+          continue
+        if max(sides[1], sides[3]) / max(1.0, min(sides[1], sides[3])) > 1.8:
+          continue
 
-{{
-  "image_type": "screenshot",
-  "corners": null
-}}
+        quad_area = cv2.contourArea(quad.reshape(-1, 1, 2))
+        ratio = quad_area / img_area
+        if ratio < 0.2 or ratio > 0.97:
+          continue
 
-If you cannot confidently determine the boundary, return:
+        contrast = self._quad_edge_contrast(gray, quad)
+        if contrast < 8.0:
+          continue
 
-{{
-  "image_type": "unknown",
-  "corners": null
-}}
-""",
-              },
-              {
-                "type": "input_image",
-                "image_url": (
-                  "data:image/jpeg;base64,"
-                  + image_base64
-                ),
-              },
-            ],
-          }
-        ],
-      )
+        # The surroundings must look different from the paper itself;
+        # otherwise this is just printed content on a full-frame page.
+        qmask = np.zeros((sh, sw), np.uint8)
+        cv2.fillConvexPoly(qmask, quad.astype(np.int32), 255)
+        ring_px = max(15, int(0.04 * max(sh, sw)))
+        ring = cv2.dilate(qmask, np.ones((ring_px, ring_px), np.uint8)) & ~qmask
+        if int((ring > 0).sum()) >= 0.02 * img_area:
+          lab = cv2.cvtColor(blur, cv2.COLOR_BGR2LAB).astype(np.float32)
+          inside = np.median(lab[qmask > 0], axis=0)
+          outside = np.median(lab[ring > 0], axis=0)
+          if float(np.linalg.norm(inside - outside)) < 14.0:
+            continue
 
-      output_text = getattr(
-        response,
-        "output_text",
-        "",
-      )
+        score = ratio * rectangularity * min(1.0, contrast / 30.0)
+        if score > best_score:
+          best, best_score = quad, score
 
-      if not output_text:
-        logger.warning(
-          "Vision document detection: empty response"
-        )
-        return "camera_document", None
+    if best is None:
+      return None
 
-      # Remove accidental markdown fences.
-      cleaned_text = output_text.strip()
-
-      if cleaned_text.startswith("```"):
-        cleaned_text = re.sub(
-          r"^```(?:json)?\s*",
-          "",
-          cleaned_text,
-          flags=re.IGNORECASE,
-        )
-
-        cleaned_text = re.sub(
-          r"\s*```$",
-          "",
-          cleaned_text,
-        )
-
-      result = json.loads(
-        cleaned_text
-      )
-
-      image_type = str(
-        result.get(
-          "image_type",
-          "camera_document",
-        )
-      ).lower()
-
-      corners = result.get(
-        "corners"
-      )
-
-      if not corners:
-        return image_type, None
-
-      if (
-        not isinstance(corners, list)
-        or len(corners) != 4
-      ):
-        logger.warning(
-          "Vision document detection: invalid corner count"
-        )
-        return image_type, None
-
-      parsed_corners = []
-
-      for point in corners:
-        if (
-          not isinstance(point, list)
-          or len(point) != 2
-        ):
-          logger.warning(
-            "Vision document detection: invalid point: %s",
-            point,
-          )
-          return image_type, None
-
-        x = float(point[0])
-        y = float(point[1])
-
-        parsed_corners.append(
-          [x, y]
-        )
-
-      return (
-        image_type,
-        parsed_corners,
-      )
-
-    except Exception:
-      logger.exception(
-        "Vision document boundary detection failed"
-      )
-      return "camera_document", None
+    logger.info(
+      "Paper corners detected: score=%.3f quad=%s", best_score, best.tolist()
+    )
+    return (best / scale).astype(np.float32)
 
   def _clean_form_image(
     self,
@@ -1699,565 +971,247 @@ If you cannot confidently determine the boundary, return:
     output_file: Path,
   ) -> None:
     """
-    Clean and perspective-correct a photographed construction form.
-
-    IMPORTANT:
-    Perspective correction happens at most once.
-    """
-    logger.info(
-      "========== FORM IMAGE CLEAN START =========="
-    )
-
-    logger.info(
-      "Input: %s",
-      input_file,
-    )
-
-    logger.info(
-      "Output: %s",
-      output_file,
-    )
-
-    image = cv2.imread(
-      str(input_file)
-    )
-
-    if image is None:
-      raise ValueError(
-        f"Could not read image: {input_file}"
-      )
-
-    original_height, original_width = (
-      image.shape[:2]
-    )
-
-    logger.info(
-      "Original image dimensions: %dx%d",
-      original_width,
-      original_height,
-    )
-
-    image_type = "camera_document"
-
-    # ---------------------------------------------------------
-    # 1. Try OpenCV first.
-    # ---------------------------------------------------------
-    document_corners, document_score = (
-      self._detect_form_boundary_with_lines(
-        image
-      )
-    )
-
-    logger.info(
-      "OpenCV form-boundary result: "
-      "corners=%s score=%.3f",
-      (
-        document_corners.tolist()
-        if document_corners is not None
-        else None
-      ),
-      document_score,
-    )
-
-    # ---------------------------------------------------------
-    # 2. Fall back to Vision if OpenCV failed.
-    # ---------------------------------------------------------
-    if document_corners is None:
-      image_type, vision_corners = (
-        self._detect_document_with_vision(
-          image,
-          original_width,
-          original_height,
-        )
-      )
-
-      logger.info(
-        "Vision form-boundary result: "
-        "image_type=%s corners=%s",
-        image_type,
-        vision_corners,
-      )
-
-      if vision_corners is not None:
-        try:
-          document_corners = (
-            np.array(
-              vision_corners,
-              dtype=np.float32,
-            )
-          )
-
-          if document_corners.shape != (4, 2):
-            logger.warning(
-              "Vision returned invalid corner shape: %s",
-              document_corners.shape,
-            )
-            document_corners = None
-          else:
-            document_corners = (
-              self._order_quad_points(
-                document_corners
-              )
-            )
-
-        except Exception:
-          logger.exception(
-            "Failed to parse Vision document corners"
-          )
-          document_corners = None
-
-    # ---------------------------------------------------------
-    # 3. Perspective correction.
-    #
-    # This is the ONLY place in this function where the
-    # perspective transform happens.
-    # ---------------------------------------------------------
-    if (
-      document_corners is not None
-      and image_type != "screenshot"
-    ):
-      document_corners = self._inset_quad_corners(
-        document_corners,
-        inset_ratio=0.02,
-      )
-
-      logger.info(
-        "Applying perspective correction exactly once "
-        "(corners inset to exclude the outer edge/border)"
-      )
-
-      image = self._perspective_crop(
-        image,
-        document_corners,
-      )
-    else:
-      logger.info(
-        "Skipping perspective correction"
-      )
-
-    # ---------------------------------------------------------
-    # 4. Small residual deskew.
-    #
-    # This is NOT another perspective transformation.
-    # It only corrects a small remaining rotation.
-    # ---------------------------------------------------------
-    gray = cv2.cvtColor(
-      image,
-      cv2.COLOR_BGR2GRAY,
-    )
-
-    edges = cv2.Canny(
-      gray,
-      50,
-      150,
-      apertureSize=3,
-    )
-
-    lines = cv2.HoughLinesP(
-      edges,
-      rho=1,
-      theta=np.pi / 180,
-      threshold=max(
-        50,
-        int(min(image.shape[:2]) * 0.10),
-      ),
-      minLineLength=max(
-        50,
-        int(min(image.shape[:2]) * 0.20),
-      ),
-      maxLineGap=max(
-        10,
-        int(min(image.shape[:2]) * 0.03),
-      ),
-    )
-
-    if lines is not None:
-      near_horizontal_angles = []
-
-      for raw_line in lines.reshape(-1, 4):
-        x1, y1, x2, y2 = (
-          float(value)
-          for value in raw_line
-        )
-
-        dx = x2 - x1
-        dy = y2 - y1
-
-        if abs(dx) < 1e-6:
-          continue
-
-        angle = math.degrees(
-          math.atan2(dy, dx)
-        )
-
-        while angle >= 90:
-          angle -= 180
-
-        while angle < -90:
-          angle += 180
-
-        if abs(angle) <= 10.0:
-          near_horizontal_angles.append(
-            angle
-          )
-
-      if near_horizontal_angles:
-        median_angle = float(
-          np.median(
-            near_horizontal_angles
-          )
-        )
-
-        if (
-          abs(median_angle) >= 0.25
-          and abs(median_angle) <= 10.0
-        ):
-          logger.info(
-            "Applying residual deskew: %.3f degrees",
-            median_angle,
-          )
-
-          height, width = image.shape[:2]
-
-          center = (
-            width / 2.0,
-            height / 2.0,
-          )
-
-          rotation_matrix = (
-            cv2.getRotationMatrix2D(
-              center,
-              median_angle,
-              1.0,
-            )
-          )
-
-          image = cv2.warpAffine(
-            image,
-            rotation_matrix,
-            (width, height),
-            flags=cv2.INTER_CUBIC,
-            borderMode=cv2.BORDER_REPLICATE,
-          )
-        else:
-          logger.info(
-            "Residual deskew not needed: %.3f degrees",
-            median_angle,
-          )
-
-    # ---------------------------------------------------------
-    # 5. Limit excessively large output images.
-    # ---------------------------------------------------------
-    height, width = image.shape[:2]
-
-    max_dimension = 3000
-
-    if max(
-      width,
-      height,
-    ) > max_dimension:
-      resize_scale = (
-        max_dimension
-        / max(width, height)
-      )
-
-      new_width = max(
-        1,
-        int(width * resize_scale),
-      )
-
-      new_height = max(
-        1,
-        int(height * resize_scale),
-      )
-
-      logger.info(
-        "Resizing cleaned image: %dx%d -> %dx%d",
-        width,
-        height,
-        new_width,
-        new_height,
-      )
-
-      image = cv2.resize(
-        image,
-        (
-          new_width,
-          new_height,
-        ),
-        interpolation=cv2.INTER_AREA,
-      )
-
-    # ---------------------------------------------------------
-    # 6. Aggressive whitening / contrast enhancement.
-    # ---------------------------------------------------------
-
-    # 6a. Denoise first so contrast enhancement doesn't amplify
-    # sensor/paper-texture noise.
-    image = cv2.fastNlMeansDenoisingColored(
-      image,
-      None,
-      h=7,
-      hColor=7,
-      templateWindowSize=7,
-      searchWindowSize=21,
-    )
-
-    lab = cv2.cvtColor(
-      image,
-      cv2.COLOR_BGR2LAB,
-    )
-
-    l_channel, a_channel, b_channel = (
-      cv2.split(lab)
-    )
-
-    # 6b. Flatten uneven paper illumination by dividing out a
-    # heavily blurred version of the L channel, pushing the
-    # background toward white while preserving dark text.
-    background = cv2.GaussianBlur(
-      l_channel,
-      (0, 0),
-      31,
-    )
-
-    l_channel = cv2.divide(
-      l_channel,
-      background,
-      scale=255,
-    )
-
-    # 6c. Stronger local contrast enhancement.
-    clahe = cv2.createCLAHE(
-      clipLimit=3.0,
-      tileGridSize=(8, 8),
-    )
-
-    l_channel = clahe.apply(
-      l_channel
-    )
-
-    enhanced_lab = cv2.merge(
-      (
-        l_channel,
-        a_channel,
-        b_channel,
-      )
-    )
-
-    image = cv2.cvtColor(
-      enhanced_lab,
-      cv2.COLOR_LAB2BGR,
-    )
-
-    # 6d. Desaturate slightly and push near-white background pixels
-    # closer to pure white, without clipping darker text/lines.
-    hsv = cv2.cvtColor(
-      image,
-      cv2.COLOR_BGR2HSV,
-    )
-
-    h_channel, s_channel, v_channel = cv2.split(hsv)
-
-    s_channel = cv2.multiply(
-      s_channel,
-      0.6,
-    ).astype(np.uint8)
-
-    white_threshold = 200
-
-    whiten_mask = v_channel > white_threshold
-
-    v_channel[whiten_mask] = np.clip(
-      v_channel[whiten_mask].astype(np.int32) + 25,
-      0,
-      255,
-    ).astype(np.uint8)
-
-    hsv = cv2.merge(
-      (
-        h_channel,
-        s_channel,
-        v_channel,
-      )
-    )
-
-    image = cv2.cvtColor(
-      hsv,
-      cv2.COLOR_HSV2BGR,
-    )
-
-    # ---------------------------------------------------------
-    # 7. Save.
-    # ---------------------------------------------------------
-    output_file.parent.mkdir(
-      parents=True,
-      exist_ok=True,
-    )
-
-    success = cv2.imwrite(
-      str(output_file),
-      image,
-      [
-        cv2.IMWRITE_JPEG_QUALITY,
-        95,
-      ],
-    )
-
-    if not success:
-      raise ValueError(
-        f"Could not write cleaned image: {output_file}"
-      )
-
-    logger.info(
-      "Cleaned image dimensions: %dx%d",
-      image.shape[1],
-      image.shape[0],
-    )
-
-    logger.info(
-      "========== FORM IMAGE CLEAN END =========="
-    )
-
-  def _detect_image_orientation(
-    self,
-    input_file: Path,
-  ) -> int:
-    """
-    Determine the clockwise rotation (0/90/180/270) needed to make
-    the form content in `input_file` naturally readable.
-
-    This runs BEFORE the main form-filling agent call and BEFORE any
-    coordinates are generated, so the agent only ever reasons about
-    an image already in its final orientation.
+    Crop a photographed form to the four corners of the sheet of paper
+    (when one is clearly visible), straighten it, and whiten it.
     """
     image = cv2.imread(str(input_file))
 
     if image is None:
-      logger.warning(
-        "Could not read image for orientation detection: %s",
-        input_file,
-      )
-      return 0
+      raise ValueError(f"Could not read image: {input_file}")
 
-    success, encoded = cv2.imencode(
-      ".jpg",
-      image,
-      [cv2.IMWRITE_JPEG_QUALITY, 90],
+    # 1. Crop to the paper's four corners (skipped when the paper fills
+    #    the frame or no confident sheet is found).
+    corners = self._detect_paper_corners(image)
+
+    if corners is not None:
+      corners = self._inset_quad_corners(corners, inset_ratio=0.004)
+      logger.info("Cropping to paper corners: %s", corners.tolist())
+      image = self._perspective_crop(image, corners)
+    else:
+      logger.info("No paper corners found; keeping the full frame")
+
+    # 2. Small residual deskew (not a second perspective transform).
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+    lines = cv2.HoughLinesP(
+      edges, rho=1, theta=np.pi / 180,
+      threshold=max(50, int(min(image.shape[:2]) * 0.10)),
+      minLineLength=max(50, int(min(image.shape[:2]) * 0.20)),
+      maxLineGap=max(10, int(min(image.shape[:2]) * 0.03)),
     )
 
-    if not success:
-      logger.warning(
-        "Orientation detection: JPEG encoding failed for %s",
-        input_file,
+    if lines is not None:
+      angles = []
+      for x1, y1, x2, y2 in lines.reshape(-1, 4):
+        dx, dy = float(x2 - x1), float(y2 - y1)
+        if abs(dx) < 1e-6:
+          continue
+        angle = math.degrees(math.atan2(dy, dx))
+        while angle >= 90:
+          angle -= 180
+        while angle < -90:
+          angle += 180
+        if abs(angle) <= 10.0:
+          angles.append(angle)
+
+      if angles:
+        median_angle = float(np.median(angles))
+        if 0.25 <= abs(median_angle) <= 10.0:
+          height, width = image.shape[:2]
+          matrix = cv2.getRotationMatrix2D(
+            (width / 2.0, height / 2.0), median_angle, 1.0
+          )
+          image = cv2.warpAffine(
+            image, matrix, (width, height), flags=cv2.INTER_CUBIC,
+            borderMode=cv2.BORDER_REPLICATE,
+          )
+
+    # 3. Limit very large images.
+    height, width = image.shape[:2]
+    if max(width, height) > 3000:
+      f = 3000 / max(width, height)
+      image = cv2.resize(
+        image, (max(1, int(width * f)), max(1, int(height * f))),
+        interpolation=cv2.INTER_AREA,
       )
+
+    # 4. Whitening / contrast enhancement.
+    image = cv2.fastNlMeansDenoisingColored(
+      image, None, h=7, hColor=7, templateWindowSize=7, searchWindowSize=21
+    )
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+    background = cv2.GaussianBlur(l_channel, (0, 0), 31)
+    l_channel = cv2.divide(l_channel, background, scale=255)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    l_channel = clahe.apply(l_channel)
+    image = cv2.cvtColor(
+      cv2.merge((l_channel, a_channel, b_channel)), cv2.COLOR_LAB2BGR
+    )
+
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    h_ch, s_ch, v_ch = cv2.split(hsv)
+    s_ch = cv2.multiply(s_ch, 0.6).astype(np.uint8)
+    mask = v_ch > 200
+    v_ch[mask] = np.clip(
+      v_ch[mask].astype(np.int32) + 25, 0, 255
+    ).astype(np.uint8)
+    image = cv2.cvtColor(cv2.merge((h_ch, s_ch, v_ch)), cv2.COLOR_HSV2BGR)
+
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    if not cv2.imwrite(
+      str(output_file), image, [cv2.IMWRITE_JPEG_QUALITY, 95]
+    ):
+      raise ValueError(f"Could not write cleaned image: {output_file}")
+
+
+  def _text_axis_prior(self, image):
+    """0 if text lines run horizontally, 90 if vertically, None if unsure."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    s = 1200.0 / max(gray.shape)
+    if s < 1.0:
+      gray = cv2.resize(gray, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+    h, w = gray.shape
+    ink = cv2.adaptiveThreshold(
+      gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 31, 12)
+    hl = cv2.morphologyEx(
+      ink, cv2.MORPH_OPEN,
+      cv2.getStructuringElement(cv2.MORPH_RECT, (max(15, w // 15), 1)))
+    vl = cv2.morphologyEx(
+      ink, cv2.MORPH_OPEN,
+      cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(15, h // 15))))
+    lines = cv2.dilate(cv2.bitwise_or(hl, vl), np.ones((5, 5), np.uint8))
+    text = cv2.bitwise_and(ink, cv2.bitwise_not(lines)).astype(np.float32) / 255.0
+    rows, cols = text.sum(axis=1), text.sum(axis=0)
+    if rows.mean() < 1e-6 or cols.mean() < 1e-6:
+      return None
+    ratio = (rows.std() / rows.mean()) / max(cols.std() / cols.mean(), 1e-6)
+    if ratio > 1.2:
+      return 0
+    if ratio < 1 / 1.2:
+      return 90
+    return None
+
+  def _orientation_contact_sheet(self, image, order, cell=800):
+    """2x2 sheet of the image rotated clockwise by each angle in `order`."""
+    rot_flags = {
+      0: None,
+      90: cv2.ROTATE_90_CLOCKWISE,
+      180: cv2.ROTATE_180,
+      270: cv2.ROTATE_90_COUNTERCLOCKWISE,
+    }
+    sheet = np.full((cell * 2, cell * 2, 3), 255, np.uint8)
+
+    for i, degrees in enumerate(order):
+      rotated = (
+        image if rot_flags[degrees] is None
+        else cv2.rotate(image, rot_flags[degrees])
+      )
+      h, w = rotated.shape[:2]
+      f = (cell - 20) / max(h, w)
+      thumb = cv2.resize(
+        rotated, (max(1, int(w * f)), max(1, int(h * f))),
+        interpolation=cv2.INTER_AREA)
+      th, tw = thumb.shape[:2]
+      ox = (i % 2) * cell + (cell - tw) // 2
+      oy = (i // 2) * cell + (cell - th) // 2
+      sheet[oy:oy + th, ox:ox + tw] = thumb
+      x0, y0 = (i % 2) * cell, (i // 2) * cell
+      cv2.rectangle(sheet, (x0 + 4, y0 + 4), (x0 + cell - 4, y0 + cell - 4),
+                    (180, 180, 180), 2)
+      cv2.rectangle(sheet, (x0 + 8, y0 + 8), (x0 + 78, y0 + 78),
+                    (255, 255, 255), -1)
+      cv2.putText(sheet, "ABCD"[i], (x0 + 18, y0 + 66),
+                  cv2.FONT_HERSHEY_SIMPLEX, 2.2, (0, 0, 255), 5, cv2.LINE_AA)
+
+    return sheet
+
+  def _detect_image_orientation(self, input_file: Path) -> int:
+    """
+    Clockwise rotation (0/90/180/270) that makes the form upright.
+
+    The model is shown all four rotations side by side (labelled A-D) and
+    picks the upright one. Up to three votes with differently ordered
+    sheets cancel position bias; a deterministic text-axis check breaks
+    ties.
+    """
+    image = cv2.imread(str(input_file))
+
+    if image is None:
+      logger.warning("Orientation: could not read %s", input_file)
       return 0
 
-    image_base64 = base64.b64encode(encoded.tobytes()).decode("utf-8")
+    orders = [
+      [0, 90, 180, 270],
+      [270, 180, 90, 0],
+      [180, 0, 270, 90],
+    ]
 
-    try:
-      response = self.openai.responses.create(
-        model="gpt-5.6-luna",
-        input=[
-          {
+    prompt = (
+      "This sheet shows the SAME photo of a printed Japanese construction "
+      "form rotated four different ways, labelled A, B, C and D. Exactly "
+      "one of them is upright: the printed text reads normally from left "
+      "to right, the form title and header are at the top, and the text "
+      "is neither sideways nor upside down (and not mirrored). Judge by "
+      "the actual printed text. Return ONLY JSON like {\"upright\": \"B\"}."
+    )
+
+    votes = []
+
+    for order in orders:
+      try:
+        sheet = self._orientation_contact_sheet(image, order)
+        ok, encoded = cv2.imencode(
+          ".jpg", sheet, [cv2.IMWRITE_JPEG_QUALITY, 88]
+        )
+        if not ok:
+          continue
+
+        data_url = (
+          "data:image/jpeg;base64,"
+          + base64.b64encode(encoded.tobytes()).decode()
+        )
+
+        response = self.openai.responses.create(
+          model="gpt-5.6-luna",
+          input=[{
             "role": "user",
             "content": [
-              {
-                "type": "input_text",
-                "text": """
-  Look at this photograph of a construction form.
-
-  Determine the clockwise rotation required to make the form's text
-  and table structure naturally readable (text reads left-to-right,
-  top-to-bottom; table rows run horizontally).
-
-  Base this on the actual printed content: Japanese/English text
-  direction, table orientation, headers, field labels — NOT on
-  whether the image itself is portrait or landscape. A portrait
-  photo can contain a landscape form rotated 90 degrees, and vice
-  versa.
-
-  Return ONLY valid JSON in this exact format:
-
-  {
-    "rotation_degrees": 0
-  }
-
-  rotation_degrees must be one of: 0, 90, 180, 270.
-
-  0   = already correctly oriented
-  90  = rotate 90 degrees clockwise to be readable
-  180 = rotate 180 degrees
-  270 = rotate 270 degrees clockwise (i.e. 90 counter-clockwise)
-  """,
-              },
-              {
-                "type": "input_image",
-                "image_url": (
-                  "data:image/jpeg;base64," + image_base64
-                ),
-              },
+              {"type": "input_text", "text": prompt},
+              {"type": "input_image", "image_url": data_url,
+               "detail": "high"},
             ],
-          }
-        ],
-      )
-
-      output_text = getattr(response, "output_text", "")
-
-      if not output_text:
-        logger.warning(
-          "Orientation detection: empty response for %s",
-          input_file,
+          }],
         )
-        return 0
 
-      cleaned_text = output_text.strip()
-
-      if cleaned_text.startswith("```"):
-        cleaned_text = re.sub(
-          r"^```(?:json)?\s*",
-          "",
-          cleaned_text,
-          flags=re.IGNORECASE,
+        text = (getattr(response, "output_text", "") or "").strip()
+        text = re.sub(
+          r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE
         )
-        cleaned_text = re.sub(r"\s*```$", "", cleaned_text)
+        letter = str(json.loads(text).get("upright", "")).strip().upper()[:1]
 
-      result = json.loads(cleaned_text)
+        if letter in ("A", "B", "C", "D"):
+          votes.append(order["ABCD".index(letter)])
 
-      rotation_degrees = result.get("rotation_degrees", 0)
+      except Exception:
+        logger.exception("Orientation vote failed for %s", input_file)
 
-      try:
-        rotation_degrees = int(rotation_degrees)
-      except (TypeError, ValueError):
-        logger.warning(
-          "Orientation detection: invalid rotation_degrees %r for %s",
-          rotation_degrees,
-          input_file,
-        )
-        return 0
+      if len(votes) >= 2 and votes[0] == votes[1]:
+        break
 
-      if rotation_degrees not in {0, 90, 180, 270}:
-        logger.warning(
-          "Orientation detection: unsupported rotation_degrees %r for %s",
-          rotation_degrees,
-          input_file,
-        )
-        return 0
+    logger.info("Orientation votes for %s: %s", input_file.name, votes)
 
-      logger.info(
-        "Orientation detection result for %s: %d degrees",
-        input_file.name,
-        rotation_degrees,
-      )
+    if votes:
+      winner = max(set(votes), key=votes.count)
+      if votes.count(winner) >= 2 or len(votes) == 1:
+        return winner
 
-      return rotation_degrees
+    prior = self._text_axis_prior(image)
+    candidates = [v for v in votes if prior is None or v % 180 == prior]
 
-    except Exception:
-      logger.exception(
-        "Orientation detection failed for %s",
-        input_file,
-      )
-      return 0
+    return candidates[0] if candidates else 0
+
 
   def _rotate_image_for_form_editing(
     self,
@@ -2322,6 +1276,445 @@ If you cannot confidently determine the boundary, return:
       rotation_degrees,
     )
 
+
+  _IMG_PAGE_LONG_EDGE_PT = 1190.0
+
+  def _image_to_pdf(self, image_path: Path, work_dir: Path):
+    """One-page PDF with the image as background. Returns (path, w_pt, h_pt)."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    with Image.open(image_path) as im:
+      w, h = im.size
+
+    scale = self._IMG_PAGE_LONG_EDGE_PT / max(w, h)
+    pw, ph = w * scale, h * scale
+
+    doc = fitz.open()
+    page = doc.new_page(width=pw, height=ph)
+    page.insert_image(fitz.Rect(0, 0, pw, ph), filename=str(image_path))
+
+    pdf_path = work_dir / f"{image_path.stem}.pdf"
+    doc.save(pdf_path, garbage=3, deflate=True)
+    doc.close()
+
+    return pdf_path, pw, ph
+
+  def _image_layout(self, image_path: Path, page_w: float, page_h: float):
+    """
+    Detect printed rules, enclosed cells and loose text regions in an
+    image. Everything is returned in PDF points of the page that will
+    carry the image.
+    """
+    gray = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    if gray is None:
+      return None
+
+    f = min(1.0, 2000.0 / max(gray.shape))
+    if f < 1.0:
+      gray = cv2.resize(gray, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+
+    H, W = gray.shape
+    ppx, ppy = W / page_w, H / page_h
+
+    block = max(15, int(0.02 * max(H, W)) | 1)
+    ink = cv2.adaptiveThreshold(
+      gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,
+      block, 10)
+
+    # drop speckle
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+    keep = np.zeros(n, bool)
+    keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= 4
+    ink = (keep[labels] * 255).astype(np.uint8)
+
+    gap = max(5, int(0.005 * W))
+    Lh = max(30, int(0.03 * W))
+    Lv = max(20, int(0.012 * H))
+
+    def rules(close_k, open_k, horizontal):
+      m = cv2.morphologyEx(
+        ink, cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_RECT, close_k))
+      m = cv2.morphologyEx(
+        m, cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_RECT, open_k))
+      cnt, lab, st, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+      out = []
+      pad = 3
+
+      for i in range(1, cnt):
+        x, y, w, h, _a = st[i]
+        thickness, length = (h, w) if horizontal else (w, h)
+
+        if thickness > 8 or length < (Lh if horizontal else Lv):
+          continue
+
+        band = ink[y:y + h, x:x + w]
+        cov = float((band.max(axis=0 if horizontal else 1) > 0).mean())
+        if cov < 0.8:
+          continue
+
+        # Short rules must be solid; only long ones may be dotted.
+        long_min = (0.03 * W) if horizontal else (0.03 * H)
+        if length < long_min and cov < 0.93:
+          continue
+
+        # A real rule is isolated on both sides; slivers of text are not.
+        if horizontal:
+          a = ink[max(0, y - pad):y, x:x + w]
+          b = ink[y + h:y + h + pad, x:x + w]
+        else:
+          a = ink[y:y + h, max(0, x - pad):x]
+          b = ink[y:y + h, x + w:x + w + pad]
+        side_a = float((a > 0).mean()) if a.size else 0.0
+        side_b = float((b > 0).mean()) if b.size else 0.0
+        if max(side_a, side_b) > 0.14:
+          continue
+
+        # dotted = many separate ink runs along the rule
+        line = (band.max(axis=0 if horizontal else 1) > 0).astype(np.int8)
+        runs = int((np.diff(line) == 1).sum()) + int(line[0])
+        dotted = runs >= 6 * (length / 100.0) and cov < 0.985
+
+        out.append((i, x, y, w, h, dotted))
+
+      return lab, out
+
+    hlab, hrules = rules((gap, 1), (Lh, 1), True)
+    vlab, vrules = rules((1, gap), (1, Lv), False)
+
+    rule_mask = np.zeros_like(ink)
+    solid_h, dot_h, solid_v, dot_v = [], [], [], []
+
+    for i, x, y, w, h, dotted in hrules:
+      rule_mask[hlab == i] = 255
+      seg = ((y + h / 2) / ppy, x / ppx, (x + w) / ppx)
+      (dot_h if dotted else solid_h).append(seg)
+
+    for i, x, y, w, h, dotted in vrules:
+      rule_mask[vlab == i] = 255
+      seg = ((x + w / 2) / ppx, y / ppy, (y + h) / ppy)
+      (dot_v if dotted else solid_v).append(seg)
+
+    text_ink = cv2.bitwise_and(
+      ink,
+      cv2.bitwise_not(
+        cv2.dilate(rule_mask, np.ones((3, 3), np.uint8), iterations=2)
+      ),
+    )
+
+    # cells via the same flood fill used for vector PDFs
+    tmp = fitz.open()
+    page = tmp.new_page(width=page_w, height=page_h)
+    cells = self._detect_cells(page, solid_h, solid_v, dot_h, dot_v)
+    tmp.close()
+
+    def to_px(r, inset=0):
+      return (
+        max(0, int(r.x0 * ppx) + inset), max(0, int(r.y0 * ppy) + inset),
+        min(W, int(r.x1 * ppx) - inset), min(H, int(r.y1 * ppy) - inset),
+      )
+
+    cell_has_ink = []
+    for r in cells:
+      x0, y0, x1, y1 = to_px(r, 2)
+      roi = text_ink[y0:y1, x0:x1]
+      cell_has_ink.append(
+        bool(roi.size and (roi > 0).sum() >= max(25, 0.003 * roi.size))
+      )
+
+    # loose text outside any cell
+    outside = text_ink.copy()
+    for r in cells:
+      x0, y0, x1, y1 = to_px(r, -2)
+      outside[max(0, y0):y1, max(0, x0):x1] = 0
+
+    n, _, st, _ = cv2.connectedComponentsWithStats(outside, connectivity=8)
+    hs = [
+      st[i, cv2.CC_STAT_HEIGHT] for i in range(1, n)
+      if 6 <= st[i, cv2.CC_STAT_HEIGHT] <= 60
+    ]
+    hmed = float(np.median(hs)) if hs else 12.0
+
+    merged = cv2.dilate(
+      outside,
+      cv2.getStructuringElement(
+        cv2.MORPH_RECT,
+        (int(max(10, 2.0 * hmed)), max(3, int(0.3 * hmed)))),
+    )
+    n, lab, st, _ = cv2.connectedComponentsWithStats(merged, connectivity=8)
+
+    clusters = []
+    for i in range(1, n):
+      x, y, w, h, _a = st[i]
+      if h > 6 * hmed or h < 5 or w < 5:
+        continue
+      if int((outside[y:y + h, x:x + w] > 0).sum()) < 20:
+        continue
+      clusters.append(
+        fitz.Rect(x / ppx, y / ppy, (x + w) / ppx, (y + h) / ppy)
+      )
+
+    return {
+      "W": W, "H": H, "ppx": ppx, "ppy": ppy,
+      "solid_h": solid_h, "solid_v": solid_v,
+      "dot_h": dot_h, "dot_v": dot_v,
+      "cells": cells, "cell_has_ink": cell_has_ink,
+      "clusters": clusters, "text_ink": text_ink,
+    }
+
+  def _ocr_overlay(self, image_path: Path, layout, long_edge=2600):
+    img = cv2.imread(str(image_path))
+    h0, w0 = img.shape[:2]
+    f = long_edge / max(h0, w0)
+    img = cv2.resize(img, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+    ph, pw = layout["H"] / layout["ppy"], layout["W"] / layout["ppx"]
+    sx, sy = img.shape[1] / pw, img.shape[0] / ph
+
+    ids = []
+
+    for i, (r, has) in enumerate(zip(layout["cells"], layout["cell_has_ink"])):
+      if not has:
+        continue
+      cid = f"c{i}"
+      ids.append(cid)
+      p0 = (int(r.x0 * sx), int(r.y0 * sy))
+      cv2.rectangle(img, p0, (int(r.x1 * sx), int(r.y1 * sy)), (0, 0, 255), 1)
+      cv2.putText(img, cid, (p0[0] + 2, p0[1] + 12),
+                  cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 255), 1, cv2.LINE_AA)
+
+    for j, r in enumerate(layout["clusters"]):
+      tid = f"t{j}"
+      ids.append(tid)
+      p0 = (int(r.x0 * sx), int(r.y0 * sy))
+      cv2.rectangle(img, p0, (int(r.x1 * sx), int(r.y1 * sy)), (255, 0, 0), 1)
+      cv2.putText(img, tid, (p0[0], max(10, p0[1] - 3)),
+                  cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 0, 0), 1, cv2.LINE_AA)
+
+    ok, enc = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+
+    return (
+      "data:image/jpeg;base64," + base64.b64encode(enc.tobytes()).decode(),
+      ids,
+    )
+
+  def _ocr_layout_items(self, data_url: str, ids: list[str]) -> dict:
+    """Transcribe the printed text inside each labelled box."""
+    texts: dict[str, str] = {}
+
+    for start in range(0, len(ids), 80):
+      chunk = ids[start:start + 80]
+      prompt = (
+        "This is an image of a Japanese form. Red boxes are table cells "
+        "labelled c<number>; blue boxes are free-text regions labelled "
+        "t<number>. For EACH id below, transcribe the PRINTED text inside "
+        "that box exactly. Keep fill-in placeholders such as 年 月 日, "
+        "年, 歳, （　）, ～ exactly as printed. Vertical text is read top "
+        "to bottom. Use an empty string if the box has no printed text "
+        "(for example only handwriting or noise).\n"
+        "Return ONLY JSON: {\"items\": [{\"id\": \"c12\", \"text\": "
+        "\"...\"}]} covering exactly these ids: " + json.dumps(chunk)
+      )
+      try:
+        response = self.openai.responses.create(
+          model="gpt-5.6-luna",
+          input=[{
+            "role": "user",
+            "content": [
+              {"type": "input_text", "text": prompt},
+              {"type": "input_image", "image_url": data_url,
+               "detail": "high"},
+            ],
+          }],
+        )
+        raw = (getattr(response, "output_text", "") or "").strip()
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE)
+        for item in json.loads(raw).get("items", []):
+          texts[str(item.get("id"))] = str(item.get("text", ""))
+      except Exception:
+        logger.exception("Layout OCR chunk failed")
+
+    return texts
+
+  def _glyph_rects(self, layout, rect, text):
+    """Place each character of `text` on the ink blobs inside `rect`."""
+    text = re.sub(r"\s+", "", text)
+    if not text:
+      return []
+
+    ppx, ppy = layout["ppx"], layout["ppy"]
+    ti = layout["text_ink"]
+    x0, y0 = max(0, int(rect.x0 * ppx)), max(0, int(rect.y0 * ppy))
+    x1 = min(layout["W"], int(rect.x1 * ppx))
+    y1 = min(layout["H"], int(rect.y1 * ppy))
+    roi = ti[y0:y1, x0:x1]
+    if roi.size == 0 or not (roi > 0).any():
+      return []
+
+    ys, xs = np.nonzero(roi)
+    bx0, bx1, by0, by1 = xs.min(), xs.max() + 1, ys.min(), ys.max() + 1
+
+    vertical = (y1 - y0) > 1.3 * (x1 - x0) and len(text) >= 2
+
+    n, _, st, _ = cv2.connectedComponentsWithStats(roi, connectivity=8)
+    hs = [
+      st[i, cv2.CC_STAT_HEIGHT] for i in range(1, n)
+      if st[i, cv2.CC_STAT_AREA] >= 6
+    ]
+    hmed = float(np.median(hs)) if hs else 10.0
+    k = max(1, int(0.22 * hmed))
+    merged = cv2.dilate(
+      roi,
+      cv2.getStructuringElement(
+        cv2.MORPH_RECT, (1, k) if vertical else (k, 1)),
+    )
+    n, lab, _, _ = cv2.connectedComponentsWithStats(merged, connectivity=8)
+
+    blobs = []
+    for i in range(1, n):
+      yy, xx = np.nonzero((lab == i) & (roi > 0))
+      if len(xx) < 6:
+        continue
+      blobs.append((xx.min(), yy.min(), xx.max() + 1, yy.max() + 1))
+    blobs.sort(key=lambda b: (b[1] if vertical else b[0]))
+
+    if len(blobs) != len(text):
+      # Fall back to even spacing across the ink's bounding box.
+      blobs = []
+      if vertical:
+        step = (by1 - by0) / len(text)
+        for i in range(len(text)):
+          blobs.append((bx0, by0 + i * step, bx1, by0 + (i + 1) * step))
+      else:
+        step = (bx1 - bx0) / len(text)
+        for i in range(len(text)):
+          blobs.append((bx0 + i * step, by0, bx0 + (i + 1) * step, by1))
+
+    out = []
+    for ch, (a, b, c, d) in zip(text, blobs):
+      out.append((ch, fitz.Rect(
+        (x0 + a) / ppx, (y0 + b) / ppy, (x0 + c) / ppx, (y0 + d) / ppy)))
+    return out
+
+  @staticmethod
+  def _insert_pseudo_char(page, font, ch, r):
+    fs = max(5.0, min(14.0, r.height))
+    adv = font.text_length(ch, fontsize=fs)
+    x = r.x0 + (r.width - adv) / 2.0
+    baseline = (
+      r.y0 + r.height / 2.0 + (font.ascender + font.descender) / 2.0 * fs
+    )
+    page.insert_text(
+      fitz.Point(x, baseline), ch, fontsize=fs, fontname="japan"
+    )
+
+  def _fields_from_image_layout(self, layout, texts, page_w, page_h):
+    """Rebuild a vector 'pseudo page' and run the normal PDF extractor."""
+    doc = fitz.open()
+    page = doc.new_page(width=page_w, height=page_h)
+    font = fitz.Font("japan")
+
+    for y, x0, x1 in layout["solid_h"]:
+      page.draw_line((x0, y), (x1, y), color=(0, 0, 0), width=0.8)
+    for x, y0, y1 in layout["solid_v"]:
+      page.draw_line((x, y0), (x, y1), color=(0, 0, 0), width=0.8)
+    for y, x0, x1 in layout["dot_h"]:
+      page.draw_line((x0, y), (x1, y), color=(0, 0, 0), width=0.8,
+                     dashes="[1.5 1.5] 0")
+    for x, y0, y1 in layout["dot_v"]:
+      page.draw_line((x, y0), (x, y1), color=(0, 0, 0), width=0.8,
+                     dashes="[1.5 1.5] 0")
+
+    for i, r in enumerate(layout["cells"]):
+      text = texts.get(f"c{i}", "")
+      if not text.strip():
+        continue
+      inner = fitz.Rect(r.x0 + 0.7, r.y0 + 0.7, r.x1 - 0.7, r.y1 - 0.7)
+      for ch, cr in self._glyph_rects(layout, inner, text):
+        self._insert_pseudo_char(page, font, ch, cr)
+
+    for j, r in enumerate(layout["clusters"]):
+      text = texts.get(f"t{j}", "")
+      if not text.strip():
+        continue
+      for ch, cr in self._glyph_rects(layout, r, text):
+        self._insert_pseudo_char(page, font, ch, cr)
+
+    fields = self._extract_pdf_fields(page, 1)
+    doc.close()
+
+    return fields
+
+  def _prepare_image_fields(self, input_file: Path, work_dir: Path) -> bool:
+    """
+    Detect fillable fields in an uploaded image and register a catalog
+    for it. Returns True when the field-catalog path can be used.
+    """
+    if not hasattr(self, "_pdf_field_catalogs"):
+      self._pdf_field_catalogs = {}
+    if not hasattr(self, "_image_pdf_paths"):
+      self._image_pdf_paths = {}
+    if not hasattr(self, "_image_overlays"):
+      self._image_overlays = {}
+
+    try:
+      pdf_path, pw, ph = self._image_to_pdf(input_file, work_dir)
+      layout = self._image_layout(input_file, pw, ph)
+
+      if layout is None or len(layout["cells"]) < 3:
+        logger.info(
+          "Image %s: too few cells for field detection", input_file.name
+        )
+        return False
+
+      data_url, ids = self._ocr_overlay(input_file, layout)
+      texts = self._ocr_layout_items(data_url, ids)
+      fields = self._fields_from_image_layout(layout, texts, pw, ph)
+
+      if len(fields) < 3:
+        return False
+
+      with fitz.open(pdf_path) as doc:
+        overlay = self._render_field_overlay(doc[0], fields)
+
+    except Exception:
+      logger.exception("Image field detection failed for %s", input_file)
+      return False
+
+    self._pdf_field_catalogs[pdf_path.name] = {f["id"]: f for f in fields}
+    self._image_pdf_paths[input_file.name] = pdf_path
+    self._image_overlays[pdf_path.name] = (overlay, fields)
+
+    logger.info(
+      "Image %s: detected %d fillable field(s)", input_file.name, len(fields)
+    )
+    return True
+
+  def _build_image_agent_inputs(self, input_file: Path) -> list[dict]:
+    pdf_path = self._image_pdf_paths[input_file.name]
+    overlay, fields = self._image_overlays[pdf_path.name]
+
+    return [
+      {
+        "type": "input_text",
+        "text": (
+          f"Form file: {pdf_path.name} (an uploaded image). The following "
+          f"image shows every detected fillable region outlined in red and "
+          f"tagged with the number part of its id (e.g. '12' means field "
+          f"id 'f1_12')."
+        ),
+      },
+      {"type": "input_image", "image_url": overlay, "detail": "high"},
+      {
+        "type": "input_text",
+        "text": (
+          f"FIELD CATALOG for {pdf_path.name}:\n"
+          + self._format_field_catalog(fields)
+        ),
+      },
+    ]
+
+
   async def _run_openai_form_agent(
     self,
     prompt: str,
@@ -2332,16 +1725,25 @@ If you cannot confidently determine the boundary, return:
     uploaded_files = []
 
     try:
+      image_suffixes = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+      image_work_dir = output_dir.parent / "image_pdfs"
+
+      image_field_files = set()
+
+      for input_file in input_files:
+        if (
+          input_file.suffix.lower() in image_suffixes
+          and self._prepare_image_fields(input_file, image_work_dir)
+        ):
+          image_field_files.add(input_file)
+
+      has_any_image = any(
+        f.suffix.lower() in image_suffixes for f in input_files
+      )
+
       has_image = any(
-        input_file.suffix.lower()
-        in {
-          ".jpg",
-          ".jpeg",
-          ".png",
-          ".webp",
-          ".gif",
-        }
-        for input_file in input_files
+        f.suffix.lower() in image_suffixes and f not in image_field_files
+        for f in input_files
       )
 
       has_pdf = any(
@@ -2351,7 +1753,10 @@ If you cannot confidently determine the boundary, return:
       )
 
       for input_file in input_files:
-        if input_file.suffix.lower() == ".pdf":
+        if (
+          input_file.suffix.lower() == ".pdf"
+          or input_file in image_field_files
+        ):
           continue
 
         logger.info(
@@ -2443,6 +1848,10 @@ If you cannot confidently determine the boundary, return:
             code_interpreter_file_ids.append(
               uploaded.id,
             )
+
+      for input_file in input_files:
+        if input_file in image_field_files:
+          content.extend(self._build_image_agent_inputs(input_file))
 
       if has_image:
 
@@ -2597,10 +2006,12 @@ NEVER transpose rows and columns.
         )
 
       pdf_renders: list[dict] = []
+      modes = set()
+
+      if image_field_files:
+        modes.add("cells")
 
       if has_pdf:
-        modes = set()
-
         for pdf_file in input_files:
           if pdf_file.suffix.lower() != ".pdf":
             continue
@@ -2613,21 +2024,21 @@ NEVER transpose rows and columns.
           pdf_renders.extend(renders)
           modes.add(mode)
 
-        if "cells" in modes:
-          content.append(
-            {
-              "type": "input_text",
-              "text": self._cell_prompt_instructions(),
-            }
-          )
+      if "cells" in modes:
+        content.append(
+          {
+            "type": "input_text",
+            "text": self._cell_prompt_instructions(),
+          }
+        )
 
-        if "coords" in modes:
-          content.append(
-            {
-              "type": "input_text",
-              "text": self._pdf_prompt_instructions(),
-            }
-          )
+      if "coords" in modes:
+        content.append(
+          {
+            "type": "input_text",
+            "text": self._pdf_prompt_instructions(),
+          }
+        )
 
       tools = []
 
@@ -2726,13 +2137,13 @@ NEVER transpose rows and columns.
           pdf_renders,
         )
 
-      if has_pdf:
+      if has_pdf or image_field_files:
         self._resolve_cell_edits(
           agent_output,
           input_files,
         )
 
-      if not has_image and not has_pdf:
+      if not has_any_image and not has_pdf:
         self._extract_output_files_from_response(
           response=response,
           agent_output=agent_output,
