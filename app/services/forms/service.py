@@ -3760,9 +3760,12 @@ NEVER transpose rows and columns.
 
     page.add_widget(widget)
 
-    page.parent.xref_set_key(widget.xref, "Q", "1")
+    doc = page.parent
+    doc.xref_set_key(widget.xref, "Q", "1")
 
     widget.update()
+
+    logger.info("Widget Q=%s", doc.xref_get_key(widget.xref, "Q"))
 
     logger.info(
       "Created editable PDF field: field_name=%r rect=%s "
@@ -4250,6 +4253,11 @@ NEVER transpose rows and columns.
           "printed_chars": [],
         })
 
+    heights = [c["r"].height for c in chars if c["r"].height > 0]
+    char_h = float(np.median(heights)) if heights else 9.0
+    for f in fields:
+      f["char_h"] = char_h
+
     fields.sort(key=lambda f: (round(f["rect"].y0 / 4), f["rect"].x0))
     for i, f in enumerate(fields, 1):
       f["id"] = f"f{page_number}_{i}"
@@ -4323,7 +4331,7 @@ NEVER transpose rows and columns.
       return None
     return m.group(1), str(int(m.group(2))), str(int(m.group(3)))
 
-  def _fit_font(self, text, width, height):
+  def _fit_font(self, text, width, height, max_size=8.0):
     """Returns (font_size, needs_multiline)."""
 
     font_file = Path(
@@ -4334,14 +4342,16 @@ NEVER transpose rows and columns.
     except Exception:
       font = fitz.Font("japan")
 
-    single = min(8.0, max(3.5, height * 0.8))
+    single = min(max_size, max(3.5, height * 0.8))
+
     while single > 5.0 and font.text_length(text, fontsize=single) > width:
       single -= 0.25
 
     if font.text_length(text, fontsize=single) <= width:
       return single, False
 
-    size = min(7.0, max(3.5, height * 0.8))
+    size = min(max_size, max(3.5, height * 0.8))
+
     while size > 3.5:
       lines, cur = 1, 0.0
       for ch in text:
@@ -4360,6 +4370,8 @@ NEVER transpose rows and columns.
     text = str(text).strip()
     if not text:
       return []
+
+    cap = 0.9 * field.get("char_h", 9.0)
 
     base = field["id"]
     rect = field["rect"]
@@ -4398,7 +4410,7 @@ NEVER transpose rows and columns.
         ("d", fitz.Rect(mr.x1 + 0.3, top, dr.x0 - 0.3, bot), ymd[2]),
       ]
       return [
-        edit(f"{base}_{k}", r, v, 7.5)
+        edit(f"{base}_{k}", r, v, cap)
         for k, r, v in parts
         if r.width > 2
       ]
@@ -4411,7 +4423,7 @@ NEVER transpose rows and columns.
         r = fitz.Rect(
           max(rect.x0 + 0.5, a.x0 - 18), a.y0 - 1, a.x0 - 0.5, a.y1 + 1
         )
-        return [edit(base, r, m.group(0), 7.5)]
+        return [edit(base, r, m.group(0), cap)]
 
     # Ordinary text field.
     x0, x1 = rect.x0 + 1.0, rect.x1 - 1.0
@@ -4429,13 +4441,13 @@ NEVER transpose rows and columns.
       y0, y1 = mid - 6, mid + 6
 
     box = fitz.Rect(x0, y0, x1, y1)
-    size, multiline = self._fit_font(text, box.width - 1, box.height)
+    size, multiline = self._fit_font(text, box.width - 1, box.height, max_size=cap)
 
     if multiline:
       box = fitz.Rect(
         rect.x0 + 1, rect.y0 + 1, rect.x1 - 1, rect.y1 - 1
       )
-      size, _ = self._fit_font(text, box.width - 1, box.height)
+      size, _ = self._fit_font(text, box.width - 1, box.height, max_size=cap)
       return [edit(base, box, text, size, True)]
 
     return [edit(base, box, text, size)]
@@ -5269,13 +5281,14 @@ missing_data, recommendations. Human-readable text in Japanese.
         widget.border_color = None
         widget.fill_color = None
 
-        page.add_widget(
-          widget
-        )
+        page.add_widget(widget)
 
-        page.parent.xref_set_key(widget.xref, "Q", "1")
+        doc = page.parent
+        doc.xref_set_key(widget.xref, "Q", "1")
 
         widget.update()
+
+        logger.info("Widget Q=%s", doc.xref_get_key(widget.xref, "Q"))
 
         applied_count += 1
 
@@ -5295,6 +5308,8 @@ missing_data, recommendations. Human-readable text in Japanese.
       output_dir
       / f"{input_file.stem}.pdf"
     )
+
+    document.need_appearances(True)
 
     document.save(
       output_path,
@@ -6352,6 +6367,8 @@ missing_data, recommendations. Human-readable text in Japanese.
       output_dir
       / input_file.name
     )
+
+    document.need_appearances(True)
 
     document.save(
       output_path,
