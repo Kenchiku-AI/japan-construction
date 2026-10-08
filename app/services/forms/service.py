@@ -4080,9 +4080,10 @@ NEVER transpose rows and columns.
     widget.border_width = 0
     widget.fill_color = None
     widget.text_color = (0, 0, 0)
-    widget.text_alignment = 1
 
     page.add_widget(widget)
+
+    page.parent.xref_set_key(widget.xref, "Q", "1")
 
     widget.update()
 
@@ -5590,11 +5591,12 @@ missing_data, recommendations. Human-readable text in Japanese.
 
         widget.border_color = None
         widget.fill_color = None
-        widget.text_alignment = 1
 
         page.add_widget(
           widget
         )
+
+        page.parent.xref_set_key(widget.xref, "Q", "1")
 
         widget.update()
 
