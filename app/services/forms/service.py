@@ -965,14 +965,275 @@ class FormJobService:
     )
     return (best / scale).astype(np.float32)
 
+  def _form_line_clusters(self, gray):
+    """Long, merged straight lines (near-horizontal and near-vertical)."""
+    h, w = gray.shape
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    edges = cv2.Canny(blur, 40, 120)
+    segs = cv2.HoughLinesP(
+      edges, 1, np.pi / 360, threshold=60,
+      minLineLength=int(0.12 * min(h, w)),
+      maxLineGap=int(0.02 * max(h, w)),
+    )
+    if segs is None:
+      return [], []
+
+    fams = {"h": [], "v": []}
+    for x1, y1, x2, y2 in segs.reshape(-1, 4):
+      ang = math.degrees(math.atan2(y2 - y1, x2 - x1))
+      while ang >= 90:
+        ang -= 180
+      while ang < -90:
+        ang += 180
+      if abs(ang) <= 20:
+        fams["h"].append((x1, y1, x2, y2, ang))
+      elif abs(abs(ang) - 90) <= 20:
+        fams["v"].append((x1, y1, x2, y2, ang if ang > 0 else ang + 180))
+
+    def merge(items):
+      n = len(items)
+      parent = list(range(n))
+
+      def find(i):
+        while parent[i] != i:
+          parent[i] = parent[parent[i]]
+          i = parent[i]
+        return i
+
+      def dist_to_line(px, py, it):
+        x1, y1, x2, y2, _ = it
+        dx, dy = x2 - x1, y2 - y1
+        length = math.hypot(dx, dy) or 1.0
+        return abs(dy * (px - x1) - dx * (py - y1)) / length
+
+      for i in range(n):
+        for j in range(i + 1, n):
+          a, b = items[i], items[j]
+          da = abs(a[4] - b[4])
+          if min(da, 180 - da) > 1.2:
+            continue
+          if (
+            dist_to_line((b[0] + b[2]) / 2, (b[1] + b[3]) / 2, a) > 6
+            or dist_to_line((a[0] + a[2]) / 2, (a[1] + a[3]) / 2, b) > 6
+          ):
+            continue
+          parent[find(i)] = find(j)
+
+      groups = {}
+      for i in range(n):
+        groups.setdefault(find(i), []).append(items[i])
+
+      lines = []
+      for grp in groups.values():
+        pts = np.array(
+          [[g[0], g[1]] for g in grp] + [[g[2], g[3]] for g in grp],
+          dtype=np.float32,
+        )
+        vx, vy, x0, y0 = cv2.fitLine(
+          pts, cv2.DIST_L2, 0, 0.01, 0.01
+        ).flatten()
+        d = np.array([vx, vy])
+        t = (pts - np.array([x0, y0])) @ d
+        p0 = np.array([x0, y0]) + d * t.min()
+        p1 = np.array([x0, y0]) + d * t.max()
+        lines.append({
+          "p0": p0,
+          "p1": p1,
+          "length": float(t.max() - t.min()),
+          "mid": (p0 + p1) / 2,
+          "angle": math.degrees(math.atan2(p1[1] - p0[1], p1[0] - p0[0])),
+        })
+      return lines
+
+    return merge(fams["h"]), merge(fams["v"])
+
+  @staticmethod
+  def _line_intersection(a, b):
+    p, r = a["p0"], a["p1"] - a["p0"]
+    q, s = b["p0"], b["p1"] - b["p0"]
+    den = r[0] * s[1] - r[1] * s[0]
+    if abs(den) < 1e-9:
+      return None
+    t = ((q[0] - p[0]) * s[1] - (q[1] - p[1]) * s[0]) / den
+    return p + r * t
+
+  def _detect_rule_quad(self, image):
+    """
+    Four corners formed by the outermost long printed horizontal and
+    vertical rules (original coordinates, TL,TR,BR,BL), or None.
+    """
+    h0, w0 = image.shape[:2]
+    scale = min(1.0, 1600.0 / max(h0, w0))
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    if scale < 1.0:
+      gray = cv2.resize(
+        gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA
+      )
+    h, w = gray.shape
+
+    hl, vl = self._form_line_clusters(gray)
+
+    hl = [
+      l for l in hl
+      if l["length"] >= 0.3 * w and 0.03 * h < l["mid"][1] < 0.97 * h
+    ]
+    vl = [
+      l for l in vl
+      if l["length"] >= 0.3 * h and 0.03 * w < l["mid"][0] < 0.97 * w
+    ]
+    if len(hl) < 2 or len(vl) < 2:
+      return None
+
+    def keep_dominant(lines, tol):
+      ang = np.array([
+        l["angle"] if abs(l["angle"]) < 90 else l["angle"] - 180
+        for l in lines
+      ])
+      wts = np.array([l["length"] for l in lines])
+      order = np.argsort(ang)
+      med = ang[order][np.searchsorted(np.cumsum(wts[order]), wts.sum() / 2)]
+      return [l for l, a in zip(lines, ang) if abs(a - med) <= tol]
+
+    hl = keep_dominant(hl, 4.0)
+    for l in vl:
+      l["angle"] = l["angle"] - 90 if l["angle"] > 0 else l["angle"] + 90
+    vl = keep_dominant(vl, 4.0)
+    if len(hl) < 2 or len(vl) < 2:
+      return None
+
+    top = min(hl, key=lambda l: l["mid"][1])
+    bottom = max(hl, key=lambda l: l["mid"][1])
+    left = min(vl, key=lambda l: l["mid"][0])
+    right = max(vl, key=lambda l: l["mid"][0])
+
+    if bottom["mid"][1] - top["mid"][1] < 0.25 * h:
+      return None
+    if right["mid"][0] - left["mid"][0] < 0.25 * w:
+      return None
+
+    pts = [
+      self._line_intersection(top, left),
+      self._line_intersection(top, right),
+      self._line_intersection(bottom, right),
+      self._line_intersection(bottom, left),
+    ]
+    if any(p is None for p in pts):
+      return None
+
+    quad = np.array(pts, dtype=np.float32)
+    if not cv2.isContourConvex(quad.reshape(-1, 1, 2)):
+      return None
+    if (quad < -0.2 * max(h, w)).any() or (quad > 1.2 * max(h, w)).any():
+      return None
+
+    return (quad / scale).astype(np.float32)
+
+  def _rectify_with_rules(self, image):
+    """
+    Remove tilt/perspective so the printed rules are exactly horizontal
+    and vertical. The whole image is warped (nothing is cut away except
+    blank wedges the warp creates). Returns (image, applied).
+    """
+    quad = self._detect_rule_quad(image)
+    if quad is None:
+      return image, False
+
+    tl, tr, br, bl = quad
+    w_top, w_bot = np.linalg.norm(tr - tl), np.linalg.norm(br - bl)
+    h_left, h_right = np.linalg.norm(bl - tl), np.linalg.norm(br - tr)
+
+    def tilt(p, q, axis):
+      d = q - p
+      a = abs(math.degrees(math.atan2(d[1], d[0])))
+      a = min(a, 180 - a)
+      return a if axis == "h" else abs(90 - a)
+
+    skew = max(
+      tilt(tl, tr, "h"), tilt(bl, br, "h"),
+      tilt(tl, bl, "v"), tilt(tr, br, "v"),
+    )
+    keystone = max(
+      abs(w_top - w_bot) / max(w_top, w_bot),
+      abs(h_left - h_right) / max(h_left, h_right),
+    )
+
+    if skew < 0.35 and keystone < 0.015:
+      return image, False
+
+    ow, oh = max(w_top, w_bot), max(h_left, h_right)
+    c = quad.mean(axis=0)
+    dst = np.array([
+      [c[0] - ow / 2, c[1] - oh / 2], [c[0] + ow / 2, c[1] - oh / 2],
+      [c[0] + ow / 2, c[1] + oh / 2], [c[0] - ow / 2, c[1] + oh / 2],
+    ], dtype=np.float32)
+
+    H = cv2.getPerspectiveTransform(quad, dst)
+    h0, w0 = image.shape[:2]
+    corners = np.array(
+      [[0, 0], [w0, 0], [w0, h0], [0, h0]], dtype=np.float32
+    )
+    wc = cv2.perspectiveTransform(corners.reshape(-1, 1, 2), H).reshape(-1, 2)
+
+    # Largest axis-aligned rectangle fully inside the warped frame.
+    ix0, ix1 = max(wc[0][0], wc[3][0]), min(wc[1][0], wc[2][0])
+    iy0, iy1 = max(wc[0][1], wc[1][1]), min(wc[2][1], wc[3][1])
+
+    margin = 0.01 * max(ow, oh)
+    contains_rules = (
+      ix0 <= dst[0][0] - margin and ix1 >= dst[2][0] + margin
+      and iy0 <= dst[0][1] - margin and iy1 >= dst[2][1] + margin
+    )
+
+    if contains_rules and ix1 > ix0 and iy1 > iy0:
+      x0, y0, x1, y1 = ix0, iy0, ix1, iy1
+    else:
+      x0, y0 = wc[:, 0].min(), wc[:, 1].min()
+      x1, y1 = wc[:, 0].max(), wc[:, 1].max()
+
+    T = np.array([[1, 0, -x0], [0, 1, -y0], [0, 0, 1]], dtype=np.float64)
+    out = cv2.warpPerspective(
+      image, T @ H, (int(round(x1 - x0)), int(round(y1 - y0))),
+      flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT,
+      borderValue=(255, 255, 255),
+    )
+
+    logger.info(
+      "Rectified with printed rules: skew=%.2f deg keystone=%.3f",
+      skew, keystone,
+    )
+    return out, True
+
+  @staticmethod
+  def _trim_dark_borders(image, max_frac=0.10):
+    """Trim dark strips at the image edges (table/background wedges)."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    centre = float(np.median(gray[h // 4: 3 * h // 4, w // 4: 3 * w // 4]))
+    limit = 0.72 * centre
+    step = max(2, int(0.004 * max(h, w)))
+
+    def trim(profile, total):
+      n, cap = 0, int(max_frac * total)
+      while n < cap and profile(n, step) < limit:
+        n += step
+      return n
+
+    top = trim(lambda n, s: gray[n:n + s, :].mean(), h)
+    bottom = trim(lambda n, s: gray[h - n - s:h - n, :].mean(), h)
+    left = trim(lambda n, s: gray[:, n:n + s].mean(), w)
+    right = trim(lambda n, s: gray[:, w - n - s:w - n].mean(), w)
+
+    return image[top:h - bottom, left:w - right]
+
+
   def _clean_form_image(
     self,
     input_file: Path,
     output_file: Path,
   ) -> None:
     """
-    Crop a photographed form to the four corners of the sheet of paper
-    (when one is clearly visible), straighten it, and whiten it.
+    Crop a photographed form to the sheet's four corners (when visible),
+    straighten it using the printed rules, trim dark edges, and whiten.
     """
     image = cv2.imread(str(input_file))
 
@@ -990,41 +1251,46 @@ class FormJobService:
     else:
       logger.info("No paper corners found; keeping the full frame")
 
-    # 2. Small residual deskew (not a second perspective transform).
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-    lines = cv2.HoughLinesP(
-      edges, rho=1, theta=np.pi / 180,
-      threshold=max(50, int(min(image.shape[:2]) * 0.10)),
-      minLineLength=max(50, int(min(image.shape[:2]) * 0.20)),
-      maxLineGap=max(10, int(min(image.shape[:2]) * 0.03)),
-    )
+    # 2. Straighten using the printed rules, then trim dark edge strips.
+    image, rectified = self._rectify_with_rules(image)
+    image = self._trim_dark_borders(image)
 
-    if lines is not None:
-      angles = []
-      for x1, y1, x2, y2 in lines.reshape(-1, 4):
-        dx, dy = float(x2 - x1), float(y2 - y1)
-        if abs(dx) < 1e-6:
-          continue
-        angle = math.degrees(math.atan2(dy, dx))
-        while angle >= 90:
-          angle -= 180
-        while angle < -90:
-          angle += 180
-        if abs(angle) <= 10.0:
-          angles.append(angle)
+    # Fallback: small residual deskew when no rule quad was usable.
+    if not rectified:
+      gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+      edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+      lines = cv2.HoughLinesP(
+        edges, rho=1, theta=np.pi / 180,
+        threshold=max(50, int(min(image.shape[:2]) * 0.10)),
+        minLineLength=max(50, int(min(image.shape[:2]) * 0.20)),
+        maxLineGap=max(10, int(min(image.shape[:2]) * 0.03)),
+      )
 
-      if angles:
-        median_angle = float(np.median(angles))
-        if 0.25 <= abs(median_angle) <= 10.0:
-          height, width = image.shape[:2]
-          matrix = cv2.getRotationMatrix2D(
-            (width / 2.0, height / 2.0), median_angle, 1.0
-          )
-          image = cv2.warpAffine(
-            image, matrix, (width, height), flags=cv2.INTER_CUBIC,
-            borderMode=cv2.BORDER_REPLICATE,
-          )
+      if lines is not None:
+        angles = []
+        for x1, y1, x2, y2 in lines.reshape(-1, 4):
+          dx, dy = float(x2 - x1), float(y2 - y1)
+          if abs(dx) < 1e-6:
+            continue
+          angle = math.degrees(math.atan2(dy, dx))
+          while angle >= 90:
+            angle -= 180
+          while angle < -90:
+            angle += 180
+          if abs(angle) <= 10.0:
+            angles.append(angle)
+
+        if angles:
+          median_angle = float(np.median(angles))
+          if 0.25 <= abs(median_angle) <= 10.0:
+            height, width = image.shape[:2]
+            matrix = cv2.getRotationMatrix2D(
+              (width / 2.0, height / 2.0), median_angle, 1.0
+            )
+            image = cv2.warpAffine(
+              image, matrix, (width, height), flags=cv2.INTER_CUBIC,
+              borderMode=cv2.BORDER_REPLICATE,
+            )
 
     # 3. Limit very large images.
     height, width = image.shape[:2]
