@@ -3758,14 +3758,31 @@ NEVER transpose rows and columns.
     widget.fill_color = None
     widget.text_color = (0, 0, 0)
 
-    page.add_widget(widget)
+    added = page.add_widget(widget)
 
     doc = page.parent
-    doc.xref_set_key(widget.xref, "Q", "1")
+    xref = getattr(added, "xref", 0) or widget.xref
 
-    widget.update()
+    if not xref:
+      # Fallback: find the widget we just created by its field name.
+      for w in page.widgets() or []:
+        if w.field_name == field_name:
+          xref = w.xref
+          widget = w
+          break
 
-    logger.info("Widget Q=%s", doc.xref_get_key(widget.xref, "Q"))
+    try:
+      if xref:
+        doc.xref_set_key(xref, "Q", "1")
+        widget.xref = xref
+        widget.update()
+        logger.info(
+          "Widget %r Q=%s", field_name, doc.xref_get_key(xref, "Q")
+        )
+      else:
+        logger.warning("No xref found for widget %r; not centered", field_name)
+    except Exception:
+      logger.exception("Could not center widget %r", field_name)
 
     logger.info(
       "Created editable PDF field: field_name=%r rect=%s "
@@ -4371,7 +4388,7 @@ NEVER transpose rows and columns.
     if not text:
       return []
 
-    cap = 0.9 * field.get("char_h", 9.0)
+    cap = field.get("char_h", 9.0)
 
     base = field["id"]
     rect = field["rect"]
@@ -5281,14 +5298,31 @@ missing_data, recommendations. Human-readable text in Japanese.
         widget.border_color = None
         widget.fill_color = None
 
-        page.add_widget(widget)
+        added = page.add_widget(widget)
 
         doc = page.parent
-        doc.xref_set_key(widget.xref, "Q", "1")
+        xref = getattr(added, "xref", 0) or widget.xref
 
-        widget.update()
+        if not xref:
+          # Fallback: find the widget we just created by its field name.
+          for w in page.widgets() or []:
+            if w.field_name == field_name:
+              xref = w.xref
+              widget = w
+              break
 
-        logger.info("Widget Q=%s", doc.xref_get_key(widget.xref, "Q"))
+        try:
+          if xref:
+            doc.xref_set_key(xref, "Q", "1")
+            widget.xref = xref
+            widget.update()
+            logger.info(
+              "Widget %r Q=%s", field_name, doc.xref_get_key(xref, "Q")
+            )
+          else:
+            logger.warning("No xref found for widget %r; not centered", field_name)
+        except Exception:
+          logger.exception("Could not center widget %r", field_name)
 
         applied_count += 1
 
@@ -6488,7 +6522,7 @@ missing_data, recommendations. Human-readable text in Japanese.
         filename=filename, page=field["page"], field_name=field["id"],
         x0=rect.x0 + 1, y0=rect.y0 + 1, x1=rect.x1 - 1, y1=rect.y1 - 1,
         text="", coordinate_space="pdf_points", exact=True,
-        font_size=6.5, multiline=True,
+        font_size=field.get("char_h", 9.0), multiline=True,
       )]
 
     edits = self._expand_field_edit(field, sample, filename)
