@@ -17,6 +17,7 @@ from app.db.models.project import Project
 from app.db.models.line_conversation import LineConversation
 from app.db.models.line_message import LineMessage, LineMessageImageLink
 from app.db.models.user import User
+from app.db.models.image import Image, ImageTagLink
 from app.core.dependencies import get_current_user, require_company_manager
 from app.core.security import generate_unique_conversation_line_link_code
 from app.schemas.conversation import (
