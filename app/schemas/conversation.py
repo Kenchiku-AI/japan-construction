@@ -6,7 +6,6 @@ from pydantic import BaseModel, ConfigDict
 
 from app.db.models.conversation_item import ConversationItemStatus
 
-
 class ConversationCreate(BaseModel):
   name: str
   company_id: UUID
@@ -81,6 +80,14 @@ class ConversationRead(BaseModel):
   updated_at: datetime
 
   model_config = {"from_attributes": True}
+
+class ConversationInfoRead(BaseModel):
+  id: UUID
+  name: str
+  line_chat_id: Optional[str] = None
+  line_link_code: str
+
+  model_config = ConfigDict(from_attributes=True)
 
 class ImageTagRead(BaseModel):
   id: UUID
