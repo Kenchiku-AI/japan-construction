@@ -23,6 +23,7 @@ from app.schemas.conversation import (
   ConversationCreate,
   ConversationUpdate,
   ConversationRead,
+  ConversationInfoRead,
   ConversationMessagesRead,
 )
 
@@ -45,6 +46,33 @@ async def get_conversation_with_item_types(
   )
 
   return result.scalar_one()
+
+@router.get(
+  "/{conversation_id}/info",
+  response_model=ConversationInfoRead,
+)
+async def get_conversation_info(
+    conversation_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+  result = await db.execute(
+    select(LineConversation).where(
+      LineConversation.id == conversation_id,
+    )
+  )
+  conversation = result.scalar_one_or_none()
+
+  if (
+    conversation is None
+    or (
+      current_user.role != "admin"
+      and conversation.company_id != current_user.company_id
+    )
+  ):
+    raise HTTPException(status_code=404, detail="Conversation not found")
+
+  return conversation
 
 @router.post(
   "",
