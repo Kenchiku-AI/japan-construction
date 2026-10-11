@@ -25,6 +25,7 @@ from app.schemas.conversation import (
   ConversationRead,
   ConversationInfoRead,
   ConversationMessagesRead,
+  LineMessageRead,
 )
 
 router = APIRouter(
