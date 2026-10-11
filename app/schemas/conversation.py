@@ -81,3 +81,49 @@ class ConversationRead(BaseModel):
   updated_at: datetime
 
   model_config = {"from_attributes": True}
+
+class ImageTagRead(BaseModel):
+  id: UUID
+  name: str
+  description: str | None = None
+
+  model_config = ConfigDict(from_attributes=True)
+
+class ConversationMessageImageRead(BaseModel):
+  id: UUID
+  image_url: str
+  status: str
+  width: int | None = None
+  height: int | None = None
+  description: str | None = None
+  created_at: datetime | None = None
+  processing_type: str | None = None
+  tags: list[ImageTagRead] = []
+
+  model_config = ConfigDict(from_attributes=True)
+
+class LineMessageImageRead(BaseModel):
+  image_id: UUID
+  image: ConversationMessageImageRead | None = None
+
+class LineMessageRead(BaseModel):
+  id: UUID
+  line_platform_message_id: str
+  message_type: str
+  text: str | None = None
+  sender_line_user_id: str
+  sender_number: int
+  line_user_id: str | None = None
+  line_chat_id: str | None = None
+  line_chat_type: str | None = None
+  line_timestamp: datetime | None = None
+  created_at: datetime | None = None
+  images: list[LineMessageImageRead] = []
+
+  model_config = ConfigDict(from_attributes=True)
+
+class ConversationMessagesRead(BaseModel):
+  conversation_id: UUID
+  start_time: datetime
+  end_time: datetime
+  messages: list[LineMessageRead]
