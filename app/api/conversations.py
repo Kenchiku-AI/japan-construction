@@ -1,8 +1,10 @@
 from uuid import UUID
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.encoders import jsonable_encoder
+from sqlalchemy import select, delete, inspect as sqlalchemy_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
@@ -13,12 +15,15 @@ from app.db.models.conversation_item_type import (
 from app.db.models.user import User
 from app.db.models.project import Project
 from app.db.models.line_conversation import LineConversation
+from app.db.models.line_message import LineMessage, LineMessageImageLink
+from app.db.models.user import User
 from app.core.dependencies import get_current_user, require_company_manager
 from app.core.security import generate_unique_conversation_line_link_code
 from app.schemas.conversation import (
   ConversationCreate,
   ConversationUpdate,
   ConversationRead,
+  ConversationMessagesRead,
 )
 
 router = APIRouter(
@@ -213,3 +218,130 @@ async def delete_conversation(
   await db.commit()
 
   return None
+
+
+
+@router.get(
+  "/{conversation_id}/messages",
+  response_model=list[LineMessageRead],
+)
+async def get_conversation_messages(
+  conversation_id: UUID,
+  db: AsyncSession = Depends(get_db),
+  current_user: User = Depends(get_current_user),
+):
+  result = await db.execute(
+    select(LineConversation).where(
+      LineConversation.id == conversation_id
+    )
+  )
+  conversation = result.scalar_one_or_none()
+
+  if not conversation:
+    raise HTTPException(
+      status_code=404,
+      detail="Conversation not found",
+    )
+
+  if (
+    current_user.role != "admin"
+    and conversation.company_id != current_user.company_id
+  ):
+    raise HTTPException(
+      status_code=404,
+      detail="Conversation not found",
+    )
+
+  result = await db.execute(
+    select(LineMessage)
+    .options(
+      selectinload(LineMessage.image_links)
+      .selectinload(LineMessageImageLink.image)
+      .selectinload(Image.tag_links)
+      .selectinload(ImageTagLink.tag)
+    )
+    .where(
+      LineMessage.conversation_id == conversation_id,
+      LineMessage.company_id == conversation.company_id,
+    )
+    .order_by(
+      LineMessage.line_timestamp.asc(),
+      LineMessage.created_at.asc(),
+      LineMessage.id.asc(),
+    )
+  )
+
+  messages = result.scalars().all()
+
+  sender_first_seen = {}
+
+  for message in messages:
+    sender_id = message.sender_line_user_id
+
+    if sender_id not in sender_first_seen:
+      sender_first_seen[sender_id] = (
+        message.line_timestamp or message.created_at,
+        str(message.id),
+      )
+
+  ordered_senders = sorted(
+    sender_first_seen,
+    key=lambda sender_id: (
+      sender_first_seen[sender_id][0] is None,
+      sender_first_seen[sender_id][0],
+      sender_first_seen[sender_id][1],
+    ),
+  )
+
+  sender_numbers = {
+    sender_id: index + 1
+    for index, sender_id in enumerate(ordered_senders)
+  }
+
+  return [
+    {
+      "id": message.id,
+      "line_platform_message_id": message.line_platform_message_id,
+      "message_type": message.message_type.value,
+      "text": message.text,
+      "sender_line_user_id": message.sender_line_user_id,
+      "sender_number": sender_numbers[message.sender_line_user_id],
+      "line_user_id": message.line_user_id,
+      "line_chat_id": message.line_chat_id,
+      "line_chat_type": (
+        message.line_chat_type.value
+        if message.line_chat_type else None
+      ),
+      "line_timestamp": message.line_timestamp,
+      "created_at": message.created_at,
+      "images": [
+        {
+          "image_id": link.image_id,
+          "image": (
+            {
+              "id": link.image.id,
+              "image_url": link.image.image_url,
+              "status": link.image.status,
+              "width": link.image.width,
+              "height": link.image.height,
+              "description": link.image.description,
+              "created_at": link.image.created_at,
+              "processing_type": link.image.processing_type,
+              "tags": [
+                {
+                  "id": tag_link.tag.id,
+                  "name": tag_link.tag.name,
+                  "description": tag_link.tag.description,
+                }
+                for tag_link in link.image.tag_links
+                if tag_link.tag is not None
+              ],
+            }
+            if link.image else None
+          ),
+        }
+        for link in message.image_links
+      ],
+    }
+    for message in messages
+  ]
