@@ -10,11 +10,13 @@ import re
 import shutil
 from typing import Any
 from openai import OpenAI
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
+from openpyxl import load_workbook
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageDraw, ImageFont
+from decimal import Decimal, InvalidOperation
 import base64
 import os
 import fitz
@@ -26,6 +28,7 @@ from app.db.models.form_job import (
   FormJobFile,
   FormJobStatus,
 )
+from app.models.catalog_item import CatalogItem
 from app.services.forms.company_graph import build_company_graph
 from app.services.forms.storage import FormStorage
 
@@ -8027,3 +8030,187 @@ NEVER produce an English value such as:
 Instead, write:
 "フォームを安全に処理できませんでした。"
 """
+
+  async def _process_quotation_import(self, job, input_files) -> None:
+
+    def normalize_text(value: Any) -> str | None:
+      if value is None:
+        return None
+      value = str(value).strip()
+      return value or None
+
+    def normalize_number(value: Any) -> Decimal | None:
+      if value is None or value == "":
+        return None
+
+      try:
+        if isinstance(value, str):
+          value = value.replace(",", "").replace("¥", "").strip()
+
+        number = Decimal(str(value))
+
+        if number == 0:
+          return None
+
+        return number
+      except (InvalidOperation, ValueError, TypeError):
+        return None
+
+    def normalize_datetime(value: Any) -> datetime | None:
+      if isinstance(value, datetime):
+        return value
+
+      if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+
+      return None
+
+    workbook_path = Path(input_files[0])
+    workbook = load_workbook(
+      workbook_path,
+      read_only=True,
+      data_only=True,
+    )
+
+    try:
+      worksheet = workbook.active
+      rows = worksheet.iter_rows(values_only=True)
+
+      header_row = None
+      header_index = None
+
+      for row_index, row in enumerate(rows):
+        headers = [
+          normalize_text(value)
+          for value in row
+        ]
+
+        if "コード" in headers and "名称" in headers:
+          header_row = headers
+          header_index = row_index
+          break
+
+      if header_row is None:
+        raise ValueError("Could not find the required columns: コード and 名称")
+
+      column_indexes = {
+        name: index
+        for index, name in enumerate(header_row)
+        if name
+      }
+
+      def get_value(row, column_name):
+        index = column_indexes.get(column_name)
+
+        if index is None or index >= len(row):
+          return None
+
+        return row[index]
+
+      imported = {}
+
+      for row in rows:
+        code = normalize_text(get_value(row, "コード"))
+        name = normalize_text(get_value(row, "名称"))
+
+        if not code or not name:
+          continue
+
+        list_price = (
+          normalize_number(get_value(row, "税抜上代"))
+          or normalize_number(get_value(row, "税抜売上単価１"))
+        )
+
+        unit_cost = (
+          normalize_number(get_value(row, "税抜標準原価"))
+          or normalize_number(get_value(row, "税抜仕入単価"))
+          or normalize_number(get_value(row, "税抜売上原価"))
+        )
+
+        supplier_code = normalize_text(
+          get_value(row, "主たる仕入先")
+        )
+
+        supplier_name = None
+        supplier_name_index = column_indexes.get("主たる仕入先")
+
+        if supplier_name_index is not None:
+          next_index = supplier_name_index + 1
+
+          if next_index < len(row):
+            supplier_name = normalize_text(row[next_index])
+
+        imported[code] = {
+          "code": code,
+          "name": name,
+          "name_kana": normalize_text(get_value(row, "フリガナ")),
+          "unit": normalize_text(get_value(row, "単位")),
+          "supplier_code": supplier_code,
+          "supplier_name": supplier_name,
+          "list_price": list_price,
+          "unit_cost": unit_cost,
+          "source_updated_at": normalize_datetime(
+            get_value(row, "更新日")
+          ),
+        }
+
+      if not imported:
+        raise ValueError("No valid catalog items were found in the workbook")
+
+      existing_result = await self.session.execute(
+        select(CatalogItem).where(
+          CatalogItem.company_id == job.company_id,
+          CatalogItem.code.in_(list(imported.keys())),
+        )
+      )
+
+      existing_items = {
+        item.code: item
+        for item in existing_result.scalars().all()
+      }
+
+      created_count = 0
+      updated_count = 0
+      unchanged_count = 0
+
+      for code, values in imported.items():
+        item = existing_items.get(code)
+
+        if item is None:
+          item = CatalogItem(
+            company_id=job.company_id,
+            **values,
+          )
+          self.session.add(item)
+          created_count += 1
+          continue
+
+        changed = False
+
+        for field, value in values.items():
+          if value is None:
+            continue
+
+          if getattr(item, field) != value:
+            setattr(item, field, value)
+            changed = True
+
+        if changed:
+          updated_count += 1
+        else:
+          unchanged_count += 1
+
+      job.result_json = {
+        "job_type": "quotation_import",
+        "filename": workbook_path.name,
+        "total_rows_imported": len(imported),
+        "created": created_count,
+        "updated": updated_count,
+        "unchanged": unchanged_count,
+      }
+      job.status = FormJobStatus.completed
+
+      await self.session.commit()
+
+    finally:
+      workbook.close()
