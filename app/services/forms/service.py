@@ -109,14 +109,7 @@ class FormJobService:
         workspace = Path(temp_dir)
 
         input_dir = workspace / "input"
-        normalized_dir = workspace / "normalized"
-        cleaned_dir = workspace / "cleaned"
-        output_dir = workspace / "output"
-
         input_dir.mkdir()
-        normalized_dir.mkdir()
-        cleaned_dir.mkdir()
-        output_dir.mkdir()
 
         input_files = await self._download_input_files(
           job,
@@ -127,6 +120,29 @@ class FormJobService:
           raise ValueError(
             "The form job does not contain any input files."
           )
+
+        if job.job_type == "quotation_import":
+          await self._process_quotation_import(
+            job=job,
+            input_files=input_files,
+          )
+          return
+
+        if job.job_type == "drawing_estimate":
+          await self._process_drawing_estimate(
+            job=job,
+            input_files=input_files,
+          )
+          return
+
+        normalized_dir = workspace / "normalized"
+        normalized_dir.mkdir()
+
+        cleaned_dir = workspace / "cleaned"
+        cleaned_dir.mkdir()
+
+        output_dir = workspace / "output"
+        output_dir.mkdir()
 
         input_files = self._normalize_input_files(
           input_files=input_files,
