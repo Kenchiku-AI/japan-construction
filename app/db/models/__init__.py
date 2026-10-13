@@ -42,3 +42,4 @@ from app.db.models.image import (
   ImageTagLink,
 )
 from app.db.models.form_job import FormJob, FormJobStatus, FormJobOrigin
+from app.db.models.catalog_item import CatalogItem
