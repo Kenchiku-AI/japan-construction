@@ -15,6 +15,7 @@ class FormJobCreate(BaseModel):
   name: str
   description: str | None = None
   project_id: UUID | None = None
+  job_type: str | None = None
   filename: str
   content_type: str
 
