@@ -58,13 +58,13 @@ def _build_email_template(title: str, message: str, button_text: str, button_url
 </html>
 """
 
-def send_invitation_email(email: str, company_name: str, invite_token: str) -> None:
+def send_invitation_email(email: str, company_name: str, invite_token: str, client_url: str) -> None:
   params = urlencode({
     "invitationToken": invite_token,
     "email": email,
   })
 
-  invite_link = f"{settings.WEB_CLIENT_URL}/signup?{params}"
+  invite_link = f"{client_url}/signup?{params}"
 
   subject = f"{company_name} への招待"
 
@@ -104,8 +104,8 @@ def send_invitation_email(email: str, company_name: str, invite_token: str) -> N
     logger.exception("Error sending email to %s", email)
     raise
 
-def send_password_reset_email(email: str, reset_token: str) -> None:
-  reset_link = f"{settings.WEB_CLIENT_URL}/new-password?token={reset_token}"
+def send_password_reset_email(email: str, reset_token: str, client_url: str) -> None:
+  reset_link = f"{client_url}/new-password?token={reset_token}"
 
   subject = "パスワード再設定のご案内"
 
@@ -148,7 +148,7 @@ def send_password_reset_email(email: str, reset_token: str) -> None:
     logger.exception("Error sending email to %s", email)
     raise
 
-def send_project_guest_access_email(email: str, project_name: str, company_name: str) -> None:
+def send_project_guest_access_email(email: str, project_name: str, company_name: str, client_url: str) -> None:
   subject = f"プロジェクト「{project_name}」へのアクセス権が付与されました"
 
   message = f"""
@@ -156,7 +156,7 @@ def send_project_guest_access_email(email: str, project_name: str, company_name:
 以下のボタンからログインして、プロジェクトをご確認ください。
 """
 
-  login_url = f"{settings.WEB_CLIENT_URL}/login"
+  login_url = f"{client_url}/login"
 
   html_body = _build_email_template(
     title="プロジェクトへのアクセス権付与",
@@ -189,8 +189,8 @@ def send_project_guest_access_email(email: str, project_name: str, company_name:
     logger.exception("Error sending guest access email to %s", email)
     raise
 
-def send_guest_invitation_email(email: str, project_name: str, company_name: str, set_password_token: str) -> None:
-  set_password_link = f"{settings.WEB_CLIENT_URL}/new-password?token={set_password_token}&newUser=true"
+def send_guest_invitation_email(email: str, project_name: str, company_name: str, set_password_token: str, client_url: str) -> None:
+  set_password_link = f"{client_url}/new-password?token={set_password_token}&newUser=true"
 
   subject = f"プロジェクト「{project_name}」への招待"
 
@@ -234,8 +234,8 @@ def send_guest_invitation_email(email: str, project_name: str, company_name: str
     logger.exception("Error sending guest invitation email to %s", email)
     raise
 
-def send_existing_user_invitation_email(email: str, company_name: str, invite_token: str) -> None:
-  invite_link = f"{settings.WEB_CLIENT_URL}/accept-invitation?invitationToken={invite_token}"
+def send_existing_user_invitation_email(email: str, company_name: str, invite_token: str, client_url: str) -> None:
+  invite_link = f"{client_url}/accept-invitation?invitationToken={invite_token}"
 
   subject = f"{company_name} への招待"
 
@@ -275,7 +275,7 @@ def send_existing_user_invitation_email(email: str, company_name: str, invite_to
     logger.exception("Error sending existing user invitation email to %s", email)
     raise
 
-def send_line_group_linked_email(email: str, company_name: str, project_name: str) -> None:
+def send_line_group_linked_email(email: str, company_name: str, project_name: str, client_url: str) -> None:
   subject = f"LINEグループが「{project_name}」に連携されました — {company_name}"
 
   message = f"""
@@ -287,14 +287,14 @@ def send_line_group_linked_email(email: str, company_name: str, project_name: st
     title="LINEグループ連携完了",
     message=message,
     button_text="建築AIを開く",
-    button_url=settings.WEB_CLIENT_URL,
+    button_url=client_url,
   )
 
   text_body = f"""
 {company_name} のプロジェクト「{project_name}」がLINEグループと連携されました。
 今後、このLINEグループから送信されたメッセージは自動的にプロジェクトの報告書に反映されます。
 
-{settings.WEB_CLIENT_URL}
+{client_url}
 """
 
   try:
@@ -315,13 +315,13 @@ def send_line_group_linked_email(email: str, company_name: str, project_name: st
     logger.exception("Error sending LINE group linked email to %s", email)
     raise
 
-def send_company_created_email(email: str, company_name: str, invite_token: str) -> None:
+def send_company_created_email(email: str, company_name: str, invite_token: str, client_url: str) -> None:
   params = urlencode({
     "invitationToken": invite_token,
     "email": email,
   })
 
-  signup_link = f"{settings.WEB_CLIENT_URL}/signup?{params}"
+  signup_link = f"{client_url}/signup?{params}"
 
   subject = "Kenchiku AIへようこそ"
 
@@ -366,13 +366,14 @@ def send_company_invitation_email(
   email: str,
   company_name: str,
   invite_token: str,
+  client_url: str,
 ) -> None:
   params = urlencode({
     "invitationToken": invite_token,
     "email": email,
   })
 
-  signup_link = f"{settings.WEB_CLIENT_URL}/signup?{params}"
+  signup_link = f"{client_url}/signup?{params}"
 
   subject = f"{company_name}からKenchiku AIへの招待"
 
@@ -418,8 +419,9 @@ def send_company_created_admin_email(
   company_id: str,
   company_name: str,
   manager_email: str | None,
+  client_url: str,
 ) -> None:
-  company_url = f"{settings.WEB_CLIENT_URL}/companies/{company_id}"
+  company_url = f"{client_url}/companies/{company_id}"
 
   subject = f"新しい会社が作成されました — {company_name}"
 

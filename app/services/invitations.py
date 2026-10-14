@@ -2,12 +2,12 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import BackgroundTasks, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.security import generate_invite_token, hash_token
-from app.core.dependencies import require_company_manager
+from app.core.dependencies import require_company_manager, get_web_client_url
 from app.db.models import User, Company, Invitation, Project
 from app.db.models.project_guest_link import ProjectGuestLink
 from app.db.models.password_reset_token import PasswordResetToken
@@ -25,6 +25,7 @@ INVITE_EXPIRATION_HOURS = 48
 async def create_company_invitation(
   payload: CompanyInvitationCreate,
   db: AsyncSession,
+  request: Request,
   current_user: User | None,
   background_tasks: BackgroundTasks,
 ) -> Invitation:
@@ -66,6 +67,7 @@ async def create_company_invitation(
       payload.email,
       company.name,
       token,
+      get_web_client_url(request),
     )
   elif current_user is not None:
     # New user is being invited to an existing company
@@ -74,6 +76,7 @@ async def create_company_invitation(
       payload.email,
       company.name,
       token,
+      get_web_client_url(request),
     )
   else:
     # Invitation is being created as part of creating a new company
@@ -82,6 +85,7 @@ async def create_company_invitation(
       payload.email,
       company.name,
       token,
+      get_web_client_url(request),
     )
 
   return invitation
@@ -89,6 +93,7 @@ async def create_company_invitation(
 async def create_project_guest_invitation(
   payload: ProjectGuestInvitationCreate,
   db: AsyncSession,
+  request: Request,
   current_user: User,
   background_tasks: BackgroundTasks,
 ) -> ProjectGuestLink:
@@ -134,10 +139,10 @@ async def create_project_guest_invitation(
       token = secrets.token_urlsafe(32)
 
       reset_entry = PasswordResetToken(
-          id=str(uuid4()),
-          user_id=existing_user.id,
-          token_hash=hash_token(token),
-          expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+        id=str(uuid4()),
+        user_id=existing_user.id,
+        token_hash=hash_token(token),
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
       )
       db.add(reset_entry)
 
@@ -149,6 +154,7 @@ async def create_project_guest_invitation(
         email=existing_user.email,
         project_name=project.name,
         company_name=company.name,
+        client_url=get_web_client_url(request),
       )
     else:
       background_tasks.add_task(
@@ -157,6 +163,7 @@ async def create_project_guest_invitation(
         project_name=project.name,
         company_name=company.name,
         set_password_token=token,
+        client_url=get_web_client_url(request),
       )
 
     return link
@@ -195,6 +202,7 @@ async def create_project_guest_invitation(
       project_name=project.name,
       company_name=company.name,
       set_password_token=token,
+      client_url=get_web_client_url(request),
     )
 
     return link

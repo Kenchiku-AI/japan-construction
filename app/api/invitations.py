@@ -1,11 +1,21 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
+from fastapi import (
+  APIRouter, 
+  BackgroundTasks, 
+  Depends, 
+  Header, 
+  HTTPException, 
+  Request,
+)
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user
+from app.core.dependencies import (
+  get_current_user, 
+  get_web_client_url,
+)
 from app.core.security import (
   hash_token, 
   create_access_token, 
@@ -132,6 +142,7 @@ async def accept_invitation(
 @router.post("/{invitation_id}/resend")
 async def resend_company_invitation(
   invitation_id: UUID,
+  request: Request,
   background_tasks: BackgroundTasks,
   db: AsyncSession = Depends(get_db),
 ):
@@ -155,6 +166,7 @@ async def resend_company_invitation(
     invitation.email,
     company.name,
     token,
+    get_web_client_url(request)
   )
 
   return {"success": True}
