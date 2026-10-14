@@ -702,7 +702,7 @@ async def create_admin(
     send_password_reset_email,
     user.email,
     token,
-    get_web_client_url(request)
+    get_web_client_url(request),
   )
 
   return {

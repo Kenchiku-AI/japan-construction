@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.core.config import settings
+from app.core.dependencies import get_web_client_url
 from app.core.security import (
   verify_password,
   create_access_token,
@@ -313,6 +314,7 @@ async def logout(
 async def forgot_password(
   background_tasks: BackgroundTasks,
   payload: ForgotPasswordRequest,
+  request: Request,
   db: AsyncSession = Depends(get_db),
 ):
   result = await db.execute(
@@ -342,6 +344,7 @@ async def forgot_password(
     send_password_reset_email,
     user.email,
     token,
+    get_web_client_url(request),
   )
 
   return {"success": True}
