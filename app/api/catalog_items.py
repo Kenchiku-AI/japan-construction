@@ -35,7 +35,7 @@ router = APIRouter(
 )
 async def list_catalog_items(
   company_id: UUID,
-  search: str | None = Query(default=None, min_length=1),
+  q: str | None = None,
   limit: int = Query(default=100, ge=1, le=500),
   offset: int = Query(default=0, ge=0),
   db: AsyncSession = Depends(get_db),
@@ -50,8 +50,8 @@ async def list_catalog_items(
     CatalogItem.company_id == company_id,
   )
 
-  if search:
-    search_term = f"%{search.strip()}%"
+  if q:
+    search_term = f"%{q.strip()}%"
     query = query.where(
       or_(
         CatalogItem.code.ilike(search_term),
