@@ -75,6 +75,13 @@ class FormJob(Base):
     index=True,
   )
 
+  job_type = Column(
+    String(100),
+    nullable=True,
+    default=None,
+    index=True,
+  )
+
   origin = Column(
     Enum(
       FormJobOrigin,

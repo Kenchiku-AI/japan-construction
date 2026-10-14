@@ -89,6 +89,7 @@ async def create_form_job(
   form_job = FormJob(
     company_id=payload.company_id,
     project_id=payload.project_id,
+    job_type=payload.job_type,
     name=payload.name.strip(),
     description=payload.description,
     status=FormJobStatus.pending,
@@ -136,12 +137,14 @@ async def create_form_job(
     created_at=form_job.created_at,
   )
 
+
 @router.get(
   "",
   response_model=list[FormJobResponse],
 )
 async def list_form_jobs(
   company_id: UUID,
+  job_type: str | None = None,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
@@ -150,7 +153,7 @@ async def list_form_jobs(
     company_id,
   )
 
-  result = await db.execute(
+  query = (
     select(FormJob)
     .options(
       selectinload(FormJob.files),
@@ -158,7 +161,19 @@ async def list_form_jobs(
     .where(
       FormJob.company_id == company_id,
     )
-    .order_by(
+  )
+
+  if job_type is not None:
+    query = query.where(
+      FormJob.job_type == job_type,
+    )
+  else:
+    query = query.where(
+      FormJob.job_type.is_(None),
+    )
+
+  result = await db.execute(
+    query.order_by(
       FormJob.created_at.desc(),
     ),
   )
