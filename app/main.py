@@ -16,7 +16,8 @@ from app.api import (
   custom_fields,
   custom_relationships,
   custom_objects,
-  form_jobs
+  form_jobs,
+  catalog_items
 )
 from app.core.config import settings
 from app.middleware.logging import LoggingMiddleware
@@ -55,3 +56,4 @@ app.include_router(custom_fields.router)
 app.include_router(custom_relationships.router)
 app.include_router(custom_objects.router)
 app.include_router(form_jobs.router)
+app.include_router(catalog_items.router)
