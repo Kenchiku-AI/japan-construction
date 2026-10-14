@@ -138,3 +138,11 @@ async def require_company_or_project_guest_access(
       status_code=status.HTTP_403_FORBIDDEN,
       detail="Not authorized to access this company's custom fields or relationships",
     )
+
+def get_web_client_url(request: Request) -> str:
+  origin = request.headers.get("origin")
+
+  if origin:
+    return origin
+
+  return settings.WEB_CLIENT_URL

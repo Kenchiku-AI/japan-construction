@@ -49,6 +49,7 @@ async def create_super_user():
     send_password_reset_email(
       user.email,
       token,
+      settings.WEB_CLIENT_URL
     )
 
     print(f"Super user created + reset email sent to {user.email}")

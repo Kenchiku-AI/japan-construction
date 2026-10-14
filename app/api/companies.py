@@ -3,13 +3,24 @@ from datetime import datetime, timedelta, timezone
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import (
+  APIRouter, 
+  Depends, 
+  HTTPException, 
+  status, 
+  BackgroundTasks, 
+  Request,
+)
 from sqlalchemy import and_, desc, func, select, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.core.dependencies import get_current_user, require_company_manager
+from app.core.dependencies import (
+  get_current_user, 
+  require_company_manager,
+  get_web_client_url,
+)
 from app.db.models import (
   Company,
   Project,
@@ -245,6 +256,7 @@ async def search_companies(
 )
 async def create_company(
   payload: CompanyCreate,
+  request: Request,
   background_tasks: BackgroundTasks,
   db: AsyncSession = Depends(get_db),
 ):
@@ -354,6 +366,7 @@ async def create_company(
       company.id,
       company.name,
       payload.manager_email,
+      get_web_client_url(request),
     )
 
   return CompanyCreateResponse(
