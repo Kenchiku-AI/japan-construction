@@ -12,10 +12,10 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user, require_company_manager
+from app.core.dependencies import get_current_user, require_company_manager
 from app.db.models.user import User
 from app.db.session import get_db
-from app.models.catalog_item import CatalogItem
+from app.db.models.catalog_item import CatalogItem
 from app.schemas.catalog_item import (
   CatalogItemCreate,
   CatalogItemResponse,

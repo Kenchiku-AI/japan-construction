@@ -28,7 +28,7 @@ from app.db.models.form_job import (
   FormJobFile,
   FormJobStatus,
 )
-from app.models.catalog_item import CatalogItem
+from app.db.models.catalog_item import CatalogItem
 from app.services.forms.company_graph import build_company_graph
 from app.services.forms.storage import FormStorage
 
