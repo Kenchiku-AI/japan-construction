@@ -124,8 +124,8 @@ class FormJobService:
             "The form job does not contain any input files."
           )
 
-        if job.job_type == "quotation_import":
-          await self._process_quotation_import(
+        if job.job_type == "catalog_items":
+          await self._process_catalog_items(
             job=job,
             input_files=input_files,
           )
@@ -8031,7 +8031,7 @@ Instead, write:
 "フォームを安全に処理できませんでした。"
 """
 
-  async def _process_quotation_import(self, job, input_files) -> None:
+  async def _process_catalog_items(self, job, input_files) -> None:
 
     def normalize_text(value: Any) -> str | None:
       if value is None:
@@ -8201,7 +8201,7 @@ Instead, write:
           unchanged_count += 1
 
       job.result_json = {
-        "job_type": "quotation_import",
+        "job_type": "catalog_items",
         "filename": workbook_path.name,
         "total_rows_imported": len(imported),
         "created": created_count,
