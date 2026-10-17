@@ -12,7 +12,11 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, require_company_manager
+from app.core.dependencies import (
+  get_current_user, 
+  require_company_manager,
+  require_company_member,
+)
 from app.db.models.user import User
 from app.db.session import get_db
 from app.db.models.catalog_item import CatalogItem
@@ -41,7 +45,7 @@ async def list_catalog_items(
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  require_company_manager(
+  require_company_member(
     current_user,
     company_id,
   )
@@ -143,20 +147,13 @@ async def create_catalog_item(
 )
 async def update_catalog_item(
   item_id: UUID,
-  company_id: UUID,
   payload: CatalogItemUpdate,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  require_company_manager(
-    current_user,
-    company_id,
-  )
-
   result = await db.execute(
     select(CatalogItem).where(
       CatalogItem.id == item_id,
-      CatalogItem.company_id == company_id,
     ),
   )
 
@@ -167,6 +164,11 @@ async def update_catalog_item(
       status_code=status.HTTP_404_NOT_FOUND,
       detail="Catalog item not found",
     )
+
+  require_company_manager(
+    current_user,
+    item.company_id,
+  )
 
   values = payload.model_dump(exclude_unset=True)
 
@@ -191,7 +193,6 @@ async def update_catalog_item(
   if "code" in values and values["code"] != item.code:
     existing_result = await db.execute(
       select(CatalogItem.id).where(
-        CatalogItem.company_id == company_id,
         CatalogItem.code == values["code"],
         CatalogItem.id != item_id,
       ),
@@ -225,19 +226,12 @@ async def update_catalog_item(
 )
 async def delete_catalog_item(
   item_id: UUID,
-  company_id: UUID,
   db: AsyncSession = Depends(get_db),
   current_user: User = Depends(get_current_user),
 ):
-  require_company_manager(
-    current_user,
-    company_id,
-  )
-
   result = await db.execute(
     select(CatalogItem).where(
       CatalogItem.id == item_id,
-      CatalogItem.company_id == company_id,
     ),
   )
 
@@ -248,6 +242,11 @@ async def delete_catalog_item(
       status_code=status.HTTP_404_NOT_FOUND,
       detail="Catalog item not found",
     )
+
+  require_company_manager(
+    current_user,
+    item.company_id,
+  )
 
   await db.delete(item)
   await db.commit()
